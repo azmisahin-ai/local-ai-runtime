@@ -1,6 +1,10 @@
 name: macOS compatibility (experimental)
 
 on:
+  push:
+    branches:
+      - main
+  pull_request:
   workflow_dispatch:
   schedule:
     - cron: '0 7 * * 1'
@@ -16,7 +20,10 @@ jobs:
   macos:
     name: macOS Intel / Apple Clang (experimental)
     runs-on: macos-15-intel
-    timeout-minutes: 35
+    # This is a fast compatibility gate, not a source-build fallback. If a
+    # dependency bottle is unavailable, fail with an actionable log rather
+    # than silently compiling Boost for tens of minutes.
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -33,14 +40,18 @@ jobs:
           export HOMEBREW_NO_AUTO_UPDATE=1
           for formula in boost curl libarchive openssl@3; do
             if ! brew list --versions "$formula" >/dev/null 2>&1; then
-              brew install "$formula"
+              echo "Installing prebuilt Homebrew bottle: $formula"
+              if ! brew install --force-bottle "$formula"; then
+                echo "::error title=macOS dependency bottle unavailable::$formula has no usable bottle on this runner. Source builds are intentionally disabled to avoid hour-long CI jobs."
+                exit 1
+              fi
             fi
           done
           for tool in cmake ninja pkg-config; do
             if ! command -v "$tool" >/dev/null 2>&1; then
               case "$tool" in
-                pkg-config) brew install pkg-config ;;
-                *) brew install "$tool" ;;
+                pkg-config) brew install --force-bottle pkg-config ;;
+                *) brew install --force-bottle "$tool" ;;
               esac
             fi
             command -v "$tool"

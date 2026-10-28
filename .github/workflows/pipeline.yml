@@ -53,6 +53,80 @@ jobs:
           python -m json.tool config/engines.example.json > $null
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Identify vcpkg cache identity
+        id: vcpkg-cache-identity
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:VCPKG_INSTALLATION_ROOT)) {
+            throw 'vcpkg is not available on this runner.'
+          }
+          $vcpkgRoot = $env:VCPKG_INSTALLATION_ROOT
+          $vcpkgExe = Join-Path $vcpkgRoot 'vcpkg.exe'
+          if (-not (Test-Path $vcpkgExe)) { throw "vcpkg executable not found: $vcpkgExe" }
+
+          $vcpkgCommit = (& git -C $vcpkgRoot rev-parse HEAD 2>$null | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0 -or $vcpkgCommit -notmatch '^[0-9a-fA-F]{40}$') {
+            $versionText = (& $vcpkgExe version 2>&1 | Out-String).Trim()
+            if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($versionText)) {
+              throw 'Could not identify the installed vcpkg version for safe cache keys.'
+            }
+            $bytes = [System.Text.Encoding]::UTF8.GetBytes($versionText)
+            $hash = [System.Security.Cryptography.SHA256]::HashData($bytes)
+            $vcpkgCommit = [Convert]::ToHexString($hash).ToLowerInvariant().Substring(0, 16)
+          } else {
+            $vcpkgCommit = $vcpkgCommit.Substring(0, 12).ToLowerInvariant()
+          }
+
+          # Key by the actual compiler version, not the frequently changing
+          # hosted-image label. vcpkg still independently validates ABI hashes.
+          $compiler = 'msvc-unknown'
+          $vsWhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+          if (Test-Path $vsWhere) {
+            $vsPath = (& $vsWhere -latest -products '*' -property installationPath 2>$null | Select-Object -First 1)
+            if ($vsPath) {
+              $msvcRoot = Join-Path $vsPath 'VC/Tools/MSVC'
+              $msvcDir = Get-ChildItem $msvcRoot -Directory -ErrorAction SilentlyContinue | Sort-Object Name -Descending | Select-Object -First 1
+              if ($msvcDir) {
+                $cl = Join-Path $msvcDir.FullName 'bin/Hostx64/x64/cl.exe'
+                if (Test-Path $cl) { $compiler = (Get-Item $cl).VersionInfo.FileVersion }
+              }
+            }
+          }
+          if ($compiler -eq 'msvc-unknown') {
+            throw 'Could not identify the MSVC compiler version; refusing to use an ambiguous binary-cache key.'
+          }
+          $identity = "vcpkg-$vcpkgCommit-msvc-$compiler" -replace '[^A-Za-z0-9._-]', '_'
+          "identity=$identity" >> $env:GITHUB_OUTPUT
+
+          $binaryCache = Join-Path $env:RUNNER_TEMP 'lar-vcpkg-binary-cache'
+          $downloadsCache = Join-Path $env:RUNNER_TEMP 'lar-vcpkg-downloads'
+          New-Item -ItemType Directory -Force -Path $binaryCache, $downloadsCache | Out-Null
+          "VCPKG_DEFAULT_BINARY_CACHE=$binaryCache" >> $env:GITHUB_ENV
+          "VCPKG_DOWNLOADS=$downloadsCache" >> $env:GITHUB_ENV
+          Write-Host "vcpkg cache identity: $identity"
+          Write-Host "vcpkg binary cache: $binaryCache"
+          Write-Host "vcpkg download cache: $downloadsCache"
+
+      - name: Restore vcpkg dependency caches
+        id: vcpkg-cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            ${{ runner.temp }}\lar-vcpkg-binary-cache
+            ${{ runner.temp }}\lar-vcpkg-downloads
+          key: windows-vcpkg-${{ runner.arch }}-${{ steps.vcpkg-cache-identity.outputs.identity }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+          restore-keys: |
+            windows-vcpkg-${{ runner.arch }}-${{ steps.vcpkg-cache-identity.outputs.identity }}-
+
+      - name: Report dependency cache status
+        shell: pwsh
+        run: |
+          if ('${{ steps.vcpkg-cache.outputs.cache-hit }}' -eq 'true') {
+            Write-Host 'vcpkg binary/source cache: exact hit' -ForegroundColor Green
+          } else {
+            Write-Host 'vcpkg binary/source cache: miss or compatible fallback; vcpkg will validate package ABI hashes.' -ForegroundColor Yellow
+          }
+
       - name: Configure
         shell: pwsh
         run: |
@@ -60,8 +134,13 @@ jobs:
           if ($version -notmatch '^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$') { throw "Invalid release version: $version" }
           if ([string]::IsNullOrWhiteSpace($env:VCPKG_INSTALLATION_ROOT)) { throw 'vcpkg is not available on this runner.' }
           $toolchain = Join-Path $env:VCPKG_INSTALLATION_ROOT 'scripts/buildsystems/vcpkg.cmake'
-          cmake -S . -B build "-DCMAKE_TOOLCHAIN_FILE=$toolchain" -DVCPKG_MANIFEST_MODE=ON "-DLAR_VERSION=$version" -DLAR_BUILD_TESTS=ON
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & cmake -S . -B build "-DCMAKE_TOOLCHAIN_FILE=$toolchain" -DVCPKG_MANIFEST_MODE=ON "-DLAR_VERSION=$version" -DLAR_BUILD_TESTS=ON 2>&1 | Tee-Object -FilePath configure-vcpkg.log
+          $configureExitCode = $LASTEXITCODE
+          if ($configureExitCode -ne 0) {
+            Write-Host 'CMake/vcpkg configure failed. Final diagnostic lines:' -ForegroundColor Red
+            Get-Content configure-vcpkg.log -Tail 160
+            exit $configureExitCode
+          }
 
       - name: Build
         run: cmake --build build --config Release --parallel 2
@@ -161,6 +240,15 @@ jobs:
             }
           }
           Get-FileHash $package -Algorithm SHA256 | Format-List
+
+      - name: Upload Windows configure diagnostics on failure
+        if: ${{ failure() && hashFiles('configure-vcpkg.log') != '' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-configure-diagnostics-${{ github.sha }}
+          path: configure-vcpkg.log
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Upload Windows package
         if: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') }}
