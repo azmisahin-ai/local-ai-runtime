@@ -1,0 +1,132 @@
+#!/usr/bin/env python3
+"""End-to-end smoke test: runtime -> child process -> local OpenAI-compatible API."""
+import argparse
+import json
+import os
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+
+def free_port():
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+def request(url, method="GET", body=None, timeout=2):
+    data = None if body is None else json.dumps(body).encode("utf-8")
+    req = urllib.request.Request(url, data=data, method=method)
+    if data is not None:
+        req.add_header("Content-Type", "application/json")
+    with urllib.request.urlopen(req, timeout=timeout) as response:
+        raw = response.read().decode("utf-8")
+        content_type = response.headers.get("Content-Type", "")
+        return response.status, raw, content_type
+
+
+def wait_until(check, timeout_s, description):
+    end = time.monotonic() + timeout_s
+    last_error = None
+    while time.monotonic() < end:
+        try:
+            value = check()
+            if value:
+                return value
+        except (OSError, urllib.error.URLError, TimeoutError, ValueError) as exc:
+            last_error = exc
+        time.sleep(0.15)
+    raise RuntimeError(f"Timed out waiting for {description}: {last_error}")
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--runtime", required=True)
+    parser.add_argument("--fake-engine-script", required=True)
+    parser.add_argument("--web-dir", required=True)
+    args = parser.parse_args()
+
+    runtime = str(Path(args.runtime).resolve())
+    fake_script = str(Path(args.fake_engine_script).resolve())
+    web_dir = str(Path(args.web_dir).resolve())
+    for path in (runtime, fake_script, web_dir):
+        if not Path(path).exists():
+            raise RuntimeError(f"Required smoke-test path does not exist: {path}")
+
+    runtime_port = free_port()
+    engine_port = free_port()
+    with tempfile.TemporaryDirectory(prefix="lar-http-smoke-") as temporary:
+        temp = Path(temporary)
+        config_path = temp / "engines.json"
+        config = {
+            "server": {"host": "127.0.0.1", "port": runtime_port},
+            "engines": [{
+                "id": "fake-engine",
+                "display_name": "CI fake OpenAI-compatible engine",
+                "executable_path": sys.executable,
+                "model_path": "",
+                "working_directory": str(temp),
+                "args": ["-u", fake_script, "--port", str(engine_port)],
+                "upstream_base_url": f"http://127.0.0.1:{engine_port}",
+                "capabilities": ["chat"],
+                "default_for_chat": True
+            }]
+        }
+        config_path.write_text(json.dumps(config), encoding="utf-8")
+        base = f"http://127.0.0.1:{runtime_port}"
+        process = subprocess.Popen(
+            [runtime, "--config", str(config_path), "--web-dir", web_dir],
+            cwd=str(temp), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        try:
+            wait_until(lambda: request(base + "/health")[0] == 200, 15, "runtime health endpoint")
+            status, page, content_type = request(base + "/")
+            assert status == 200 and "text/html" in content_type and "Local AI Runtime" in page
+
+            status, engines_raw, _ = request(base + "/v1/engines")
+            engines = json.loads(engines_raw)["data"]
+            assert status == 200 and len(engines) == 1 and engines[0]["status"] == "stopped"
+
+            request(base + "/v1/engines/fake-engine/start", method="POST", body={})
+
+            def models_ready():
+                status, raw, _ = request(base + "/v1/models")
+                return json.loads(raw) if status == 200 else None
+
+            models = wait_until(models_ready, 15, "proxied model list")
+            assert models["data"][0]["id"] == "fake-model"
+
+            status, raw, content_type = request(
+                base + "/v1/chat/completions", method="POST",
+                body={"model": "fake-model", "messages": [{"role": "user", "content": "hello"}]},
+            )
+            assert status == 200 and "application/json" in content_type
+            result = json.loads(raw)
+            assert result["choices"][0]["message"]["content"] == "LAR_HTTP_SMOKE_OK"
+
+            request(base + "/v1/engines/fake-engine/stop", method="POST", body={})
+            status, engines_raw, _ = request(base + "/v1/engines")
+            engines = json.loads(engines_raw)["data"]
+            assert status == 200 and engines[0]["status"] == "stopped"
+            print("HTTP smoke test passed: dashboard, health, engine lifecycle, models proxy, chat proxy.")
+        finally:
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=5)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as exc:
+        print(f"HTTP smoke test failed: {exc}", file=sys.stderr)
+        raise

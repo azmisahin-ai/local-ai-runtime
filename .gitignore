@@ -1,0 +1,17 @@
+/build/
+/build-*/
+/out/
+/.tools/
+/vcpkg_installed/
+.vs/
+.idea/
+.vscode/
+config/engines.json
+models/
+logs/
+*.log
+.DS_Store
+Thumbs.db
+
+__pycache__/
+*.pyc

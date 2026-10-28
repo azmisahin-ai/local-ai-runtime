@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Linux (GCC, CMake, tests)
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python for HTTP integration test
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build libboost-dev
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DLAR_BUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build --parallel 2
+
+      - name: Run all tests
+        run: ctest --test-dir build --output-on-failure
+
+  windows:
+    name: Windows (MSVC, vcpkg, tests)
+    runs-on: windows-2022
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python for HTTP integration test
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Validate runner vcpkg installation
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:VCPKG_INSTALLATION_ROOT)) {
+            throw 'VCPKG_INSTALLATION_ROOT is not available on this runner.'
+          }
+          $toolchain = Join-Path $env:VCPKG_INSTALLATION_ROOT 'scripts/buildsystems/vcpkg.cmake'
+          if (-not (Test-Path $toolchain)) { throw "vcpkg toolchain missing: $toolchain" }
+          Write-Host "Using vcpkg at $env:VCPKG_INSTALLATION_ROOT"
+
+      - name: Configure (vcpkg manifest mode)
+        shell: pwsh
+        run: |
+          $toolchain = Join-Path $env:VCPKG_INSTALLATION_ROOT 'scripts/buildsystems/vcpkg.cmake'
+          cmake -S . -B build "-DCMAKE_TOOLCHAIN_FILE=$toolchain" -DVCPKG_MANIFEST_MODE=ON -DLAR_BUILD_TESTS=ON
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build
+        run: cmake --build build --config Release --parallel 2
+
+      - name: Run all tests
+        run: ctest --test-dir build -C Release --output-on-failure

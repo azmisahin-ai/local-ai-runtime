@@ -1,0 +1,84 @@
+cmake_minimum_required(VERSION 3.24)
+project(local_ai_runtime VERSION 0.1.0 LANGUAGES CXX)
+
+if(POLICY CMP0167)
+    cmake_policy(SET CMP0167 NEW)
+endif()
+
+option(LAR_BUILD_TESTS "Build Local AI Runtime tests" ON)
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+find_package(Boost 1.74 QUIET)
+if(NOT Boost_FOUND)
+    message(FATAL_ERROR
+        "Boost 1.74+ headers were not found. On Windows, run scripts/build.ps1 (it bootstraps vcpkg and installs manifest dependencies). "
+        "On Ubuntu/Debian, install them with: sudo apt-get install build-essential cmake libboost-dev. "
+        "If using CMake directly on Windows, pass -DCMAKE_TOOLCHAIN_FILE=<vcpkg-root>/scripts/buildsystems/vcpkg.cmake.")
+endif()
+find_package(Threads REQUIRED)
+
+add_library(lar_core
+    src/config.cpp
+    src/process.cpp
+)
+target_include_directories(lar_core PUBLIC include ${Boost_INCLUDE_DIRS})
+target_compile_definitions(lar_core PUBLIC BOOST_ERROR_CODE_HEADER_ONLY BOOST_SYSTEM_NO_DEPRECATED)
+target_link_libraries(lar_core PUBLIC Threads::Threads)
+if(WIN32)
+    target_link_libraries(lar_core PUBLIC ws2_32)
+endif()
+
+add_executable(local-ai-runtime src/main.cpp src/server.cpp)
+target_include_directories(local-ai-runtime PRIVATE include ${Boost_INCLUDE_DIRS})
+target_link_libraries(local-ai-runtime PRIVATE lar_core)
+target_compile_definitions(local-ai-runtime PRIVATE
+    LAR_VERSION="${PROJECT_VERSION}"
+    LAR_DEFAULT_CONFIG="config/engines.json"
+    LAR_EXAMPLE_CONFIG="config/engines.example.json"
+    LAR_DEFAULT_WEB_DIR="web"
+)
+
+if(MSVC)
+    foreach(target lar_core local-ai-runtime)
+        target_compile_options(${target} PRIVATE /W4 /permissive- /utf-8)
+    endforeach()
+else()
+    foreach(target lar_core local-ai-runtime)
+        target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
+    endforeach()
+endif()
+
+if(LAR_BUILD_TESTS)
+    enable_testing()
+    add_executable(lar_fake_engine tests/fake_engine.cpp)
+    add_executable(lar_core_tests tests/core_tests.cpp)
+    target_link_libraries(lar_core_tests PRIVATE lar_core)
+    target_compile_definitions(lar_core_tests PRIVATE
+        LAR_TEST_CONFIG="${CMAKE_CURRENT_SOURCE_DIR}/config/engines.example.json"
+        LAR_FAKE_ENGINE="$<TARGET_FILE:lar_fake_engine>"
+    )
+    add_dependencies(lar_core_tests lar_fake_engine)
+    add_test(NAME lar_core_tests COMMAND lar_core_tests)
+
+    # Full HTTP smoke coverage uses only Python's standard library. Core tests
+    # remain available on machines without Python; CI installs Python explicitly.
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND)
+        add_test(
+            NAME lar_http_smoke
+            COMMAND "${Python3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/http_smoke.py"
+                    --runtime "$<TARGET_FILE:local-ai-runtime>"
+                    --fake-engine-script "${CMAKE_CURRENT_SOURCE_DIR}/tests/fake_openai_server.py"
+                    --web-dir "${CMAKE_CURRENT_SOURCE_DIR}/web"
+        )
+        set_tests_properties(lar_http_smoke PROPERTIES
+            TIMEOUT 60
+            WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+        )
+    else()
+        message(STATUS "Python 3 not found: the optional HTTP smoke test will be skipped.")
+    endif()
+endif()

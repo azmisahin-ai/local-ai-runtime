@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>Local AI Runtime</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">LOCAL-FIRST · OPEN SOURCE</p>
+        <h1>Local AI Runtime</h1>
+        <p class="subtitle">Manage local AI engine processes from one place.</p>
+      </div>
+      <div class="status-pill"><span id="api-dot" class="dot"></span><span id="api-status">Checking API…</span></div>
+    </header>
+
+    <section class="panel">
+      <div class="section-heading">
+        <div><p class="eyebrow">RUNTIME</p><h2>Engines</h2></div>
+        <button id="refresh" class="button secondary" type="button">Refresh</button>
+      </div>
+      <p class="hint">Only engines explicitly configured on this machine are shown. This starter does not download or install models.</p>
+      <div id="engine-list" class="engine-list"><div class="empty">Loading engines…</div></div>
+      <p id="engine-error" class="error" role="status" aria-live="polite"></p>
+    </section>
+
+    <section class="panel chat-panel">
+      <div class="section-heading"><div><p class="eyebrow">OPENAI-COMPATIBLE PROXY</p><h2>Test chat</h2></div></div>
+      <p class="hint">Start your configured llama.cpp engine before sending a message. Requests are forwarded to the local upstream URL in your configuration.</p>
+      <form id="chat-form">
+        <label for="message">Message</label>
+        <textarea id="message" rows="3" required maxlength="12000" placeholder="Ask your local model something…"></textarea>
+        <div class="form-footer"><span class="hint">Non-streaming test request</span><button id="send" class="button primary" type="submit">Send message</button></div>
+      </form>
+      <p id="chat-error" class="error" role="status" aria-live="polite"></p>
+      <div id="answer-wrap" class="answer-wrap" hidden><h3>Model response</h3><pre id="answer"></pre></div>
+    </section>
+
+    <footer><span>Local AI Runtime · 0.1.0-alpha</span><span>Loopback only · No telemetry</span></footer>
+  </main>
+</body>
+</html>

@@ -1,0 +1,24 @@
+{
+  "server": {
+    "host": "127.0.0.1",
+    "port": 8000
+  },
+  "engines": [
+    {
+      "id": "llama-cpp",
+      "display_name": "llama.cpp server",
+      "executable_path": "C:/AI/llama.cpp/llama-server.exe",
+      "model_path": "C:/AI/models/your-model.gguf",
+      "working_directory": "",
+      "args": [
+        "--host", "127.0.0.1",
+        "--port", "8081",
+        "--ctx-size", "4096",
+        "--model", "{model_path}"
+      ],
+      "upstream_base_url": "http://127.0.0.1:8081",
+      "capabilities": ["chat", "streaming-chat", "embeddings-if-supported-by-engine"],
+      "default_for_chat": true
+    }
+  ]
+}

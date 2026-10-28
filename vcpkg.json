@@ -1,0 +1,10 @@
+{
+  "name": "local-ai-runtime",
+  "version-string": "0.1.0",
+  "description": "Local-first process manager and API gateway for existing AI engines",
+  "dependencies": [
+    "boost-beast",
+    "boost-property-tree",
+    "boost-system"
+  ]
+}
