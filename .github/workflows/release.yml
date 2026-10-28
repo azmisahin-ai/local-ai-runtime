@@ -1,7 +1,9 @@
-name: Build and publish release assets
+name: Build preview packages and publish release assets
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
   workflow_dispatch:
@@ -16,7 +18,8 @@ permissions:
   contents: read
 
 env:
-  LAR_RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+  # Main-branch pushes publish CI preview artifacts only; version tags publish releases.
+  LAR_RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || (startsWith(github.ref, 'refs/tags/v') && github.ref_name || '0.1.0-dev') }}
 
 concurrency:
   group: release-${{ github.ref }}
@@ -127,9 +130,10 @@ jobs:
       - name: Upload Windows package
         uses: actions/upload-artifact@v7
         with:
-          name: release-windows
+          name: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && 'release-windows' || format('preview-windows-{0}', github.sha) }}
           path: dist/local-ai-runtime-windows-x64.zip
           if-no-files-found: error
+          retention-days: 14
 
   linux:
     name: Linux x64 package
@@ -222,9 +226,10 @@ jobs:
       - name: Upload Linux package
         uses: actions/upload-artifact@v7
         with:
-          name: release-linux
+          name: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && 'release-linux' || format('preview-linux-{0}', github.sha) }}
           path: dist/local-ai-runtime-linux-x64.tar.gz
           if-no-files-found: error
+          retention-days: 14
 
   publish:
     name: Publish GitHub Release

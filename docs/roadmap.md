@@ -16,11 +16,13 @@ The roadmap distinguishes implemented code from platform/model combinations that
 - [x] Tag-based Windows/Linux release workflow with SHA-256 manifest
 - [x] Confirm hosted Windows/MSVC CI on the public repository (green at commit `1f020c4`)
 - [x] Confirm hosted macOS CI on the public repository (green at commit `1f020c4`)
-- [ ] Test the release workflow by publishing a prerelease tag after the packaged-archive health checks pass
+- [ ] Publish the first prerelease tag after the user-facing llama.cpp setup is ready; current workflow dry-run/package rehearsal is green
 - [ ] Real `llama-server` smoke test on Windows and one CPU-only environment
 - [ ] Real CUDA smoke test with GPU model, VRAM, driver, model quantization and backend recorded
 - [ ] Startup readiness probe separated from process-running state
-- [x] Add extracted Windows/Linux archive checks for version, dashboard/launcher files, and a live `/health` response in the release workflow (awaiting first tag-triggered run)
+- [x] Add extracted Windows/Linux archive checks for version, dashboard/launcher files, and a live `/health` response in the release workflow
+- [x] Auto-build Windows/Linux preview artifacts on each `main` push; public releases remain tag-gated
+- [x] Surface preview builds from the website while no public release exists
 
 ## 0.2-alpha — product reliability
 

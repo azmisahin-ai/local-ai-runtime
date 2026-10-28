@@ -26,3 +26,8 @@ This project follows a lightweight Keep a Changelog structure. GitHub Release no
 ### Security
 - Keep the runtime API bound to loopback by default.
 - Release binaries are not self-replaced automatically in this alpha; manual review is required before installing a package.
+
+## Unreleased
+
+- Build Windows/Linux preview archives automatically on each `main` push, smoke-test extracted packages, and upload commit-specific artifacts with 14-day retention.
+- Expose the preview workflow from the website before the first public release exists.
