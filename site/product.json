@@ -6,7 +6,7 @@
   "repository": "https://github.com/azmisahin-ai/local-ai-runtime",
   "releasesApi": "https://api.github.com/repos/azmisahin-ai/local-ai-runtime/releases?per_page=10",
   "releasesPage": "https://github.com/azmisahin-ai/local-ai-runtime/releases",
-  "actionsPage": "https://github.com/azmisahin-ai/local-ai-runtime/actions",
+  "actionsPage": "https://github.com/azmisahin-ai/local-ai-runtime/actions/workflows/pipeline.yml",
   "issuesPage": "https://github.com/azmisahin-ai/local-ai-runtime/issues",
   "features": [
     {
@@ -41,7 +41,7 @@
     },
     {
       "name": "Windows and Linux CI",
-      "description": "Pull requests and non-main branches run Windows/MSVC and Ubuntu/GCC CI. Main pushes run one canonical build/test/package pipeline with preview archive launch and /health checks; the same targets are not rebuilt in a second workflow.",
+      "description": "One canonical pipeline validates pull requests and, on each main push, builds/tests/packages Windows and Linux once. The website deploys as the final job only after both extracted packages pass smoke tests.",
       "status": "preview"
     },
     {
@@ -51,12 +51,12 @@
     },
     {
       "name": "Release downloads and checksums",
-      "description": "Tag-driven Windows x64 and Linux x64 packages with SHA-256 manifests. The release workflow is implemented; the first public version has not yet been tagged.",
+      "description": "The canonical pipeline publishes Windows x64 and Linux x64 packages with SHA-256 manifests only after a v* tag passes both platform build/test/package checks. The first public version has not yet been tagged.",
       "status": "preview"
     },
     {
       "name": "Automatic preview packages",
-      "description": "Every main-branch push runs the canonical Windows/Linux build, test, packaging and smoke-test pipeline; GitHub Actions stores commit-specific preview archives for 14 days. The static Pages deployment is separate, does not compile the application, and only runs when website files change. Stable public downloads still require a version tag.",
+      "description": "Every main push uses one pipeline run: Windows/Linux build, test, package and extracted-archive health checks run in parallel; the GitHub Pages deployment runs last and only when both package jobs succeed. Preview archives are retained for 14 days; version tags publish Releases after package checks.",
       "status": "preview"
     },
     {

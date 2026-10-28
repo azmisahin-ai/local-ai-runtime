@@ -11,17 +11,13 @@ This project follows a lightweight Keep a Changelog structure. GitHub Release no
 - Validate the Linux portable package's dynamic dependencies before uploading preview/release artifacts.
 - Bound completed download job history, reap finished worker threads, verify an existing model before reporting it as installed, and remove newly activated engine files if config registration fails.
 - Bundle Linux runtime shared-library dependencies and preserve SONAME aliases in portable release packages; the release workflow checks extracted package startup via `/health`.
-
 - Compile all MSVC test targets with `/utf-8` so Unicode-path test literals are interpreted consistently with the UTF-8 config/process contract.
 - Run hosted macOS CI on the explicit `macos-15-intel` label while the standard ARM64 pool is reporting runner-allocation capacity failures.
-
 - Add a dashboard form to configure an already installed `llama-server` and local `.gguf` model, persist the configuration safely, and apply it while all managed engines are stopped.
 - Add live engine readiness checks using `/health` with a `/v1/models` fallback; distinguish readiness from process-running state and keep chat disabled until ready.
 - Add setup endpoint tests for invalid model paths, configuration persistence, and refusing changes while an engine is running.
-
 - Validate extracted Windows and Linux release archives by launching the packaged runtime and checking `/health` before publishing a GitHub Release.
 - Add a manual, non-publishing release rehearsal that uploads installable packages as workflow artifacts before a version tag is created.
-
 - Replace the POSIX post-fork C++ child setup with `posix_spawn` file actions and a process-group attribute. This avoids calling non-async-signal-safe C++/filesystem code after `fork()` from a multithreaded HTTP server, a plausible cause of the macOS child-start hang.
 - Replace the Python child-process fixture with a native C++/Boost.Beast fake HTTP engine, removing Python-launcher/environment differences from the process-manager smoke test.
 - Link the native fake HTTP engine against Winsock on Windows and use header-only Boost.System consistently.
@@ -29,7 +25,12 @@ This project follows a lightweight Keep a Changelog structure. GitHub Release no
 - Make the HTTP smoke test allocate distinct runtime/upstream ports and wait for the fake engine API itself to be ready before testing proxying.
 - Make Windows and Unix developer launchers find binaries produced by the default CMake build directories as well as release-package binaries.
 - Add CI smoke tests for the actual developer launcher scripts on Windows, Linux, and macOS.
-
+- Build Windows/Linux preview archives automatically on each `main` push, smoke-test extracted packages, and upload commit-specific artifacts with 14-day retention.
+- Expose the preview workflow from the website before the first public release exists.
+- Fix Windows SHA-256 stack overflow risk by moving the 1 MiB hashing buffer to heap memory; add core-test stage diagnostics.
+- Keep fast per-push CI required for Windows and Linux packages; move experimental macOS compatibility to a weekly/manual workflow with a time limit and no Homebrew auto-update.
+- Unify pull-request validation, Windows/Linux preview packaging, tag-driven Releases, and final GitHub Pages publication in one canonical pipeline.
+- Publish the site only after both Windows and Linux package smoke tests succeed on `main`.
 
 ### Added
 - Startup update check in the local dashboard against published stable GitHub Releases; updates are not silently installed.
@@ -38,14 +39,7 @@ This project follows a lightweight Keep a Changelog structure. GitHub Release no
 - macOS compile/test CI in addition to Windows and Linux CI.
 - A Windows Winsock header-order fix for MSVC/Boost.Asio compilation.
 
+
 ### Security
 - Keep the runtime API bound to loopback by default.
 - Release binaries are not self-replaced automatically in this alpha; manual review is required before installing a package.
-
-## Unreleased
-
-- Build Windows/Linux preview archives automatically on each `main` push, smoke-test extracted packages, and upload commit-specific artifacts with 14-day retention.
-- Expose the preview workflow from the website before the first public release exists.
-
-- Fix Windows SHA-256 stack overflow risk by moving the 1 MiB hashing buffer to heap memory; add core-test stage diagnostics.
-- Keep fast per-push CI required for Windows and Linux packages; move experimental macOS compatibility to a weekly/manual workflow with a time limit and no Homebrew auto-update.

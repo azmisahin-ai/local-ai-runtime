@@ -107,7 +107,7 @@ function renderNoRelease(product) {
   latestMeta.textContent = 'No published release assets have been found yet. CI status and source code are available below.';
   downloadGrid.replaceChildren();
   downloadGrid.append(el('div', 'empty-state', 'No binary package is published yet. After the first version tag is pushed, GitHub Actions will build and attach Windows/Linux packages and SHA-256 checksums.'));
-  downloadGrid.append(externalLink(`https://github.com/${REPO}/actions/workflows/release.yml`, 'Download latest preview packages ↗', 'button button-primary'));
+  downloadGrid.append(externalLink(`https://github.com/${REPO}/actions/workflows/pipeline.yml`, 'Download latest preview packages ↗', 'button button-primary'));
   downloadGrid.append(externalLink(product.actionsPage || `https://github.com/${REPO}/actions`, 'View build and test runs ↗', 'button button-ghost'));
 }
 

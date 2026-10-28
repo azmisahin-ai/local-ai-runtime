@@ -1,7 +1,7 @@
 # Local AI Runtime
 
-[![CI](https://github.com/azmisahin-ai/local-ai-runtime/actions/workflows/ci.yml/badge.svg)](https://github.com/azmisahin-ai/local-ai-runtime/actions/workflows/ci.yml)
-[![Pages](https://github.com/azmisahin-ai/local-ai-runtime/actions/workflows/pages.yml/badge.svg)](https://github.com/azmisahin-ai/local-ai-runtime/actions/workflows/pages.yml)
+[![Pipeline](https://github.com/azmisahin-ai/local-ai-runtime/actions/workflows/pipeline.yml/badge.svg)](https://github.com/azmisahin-ai/local-ai-runtime/actions/workflows/pipeline.yml)
+[![macOS compatibility](https://github.com/azmisahin-ai/local-ai-runtime/actions/workflows/macos-compat.yml/badge.svg)](https://github.com/azmisahin-ai/local-ai-runtime/actions/workflows/macos-compat.yml)
 
 **A local-first, hardware-aware control plane for existing AI engines and models.**
 
@@ -101,9 +101,8 @@ Open http://127.0.0.1:8000. Use **Managed Components** for the verified llama.cp
 
 ## CI and releases
 
-- [CI runs](https://github.com/azmisahin-ai/local-ai-runtime/actions/workflows/ci.yml): Windows/MSVC and Ubuntu/GCC run on pull requests and pushes to non-main branches. Pushes to `main` are built and tested by the package workflow below, so the same C++ targets are not rebuilt in two workflows for each main commit. Experimental macOS Intel compatibility runs weekly or manually in the separate [macOS workflow](https://github.com/azmisahin-ai/local-ai-runtime/actions/workflows/macos-compat.yml); it does not produce a macOS release package yet. CTest uses a fake engine and does not download models or require a GPU.
-- [Website deployment](https://github.com/azmisahin-ai/local-ai-runtime/actions/workflows/pages.yml): pushes to `main` that change `site/` deploy it using GitHub Pages; source-only changes do not trigger a needless redeploy. Enable **Settings → Pages → Source → GitHub Actions** once.
-- [Preview/release workflow](https://github.com/azmisahin-ai/local-ai-runtime/actions/workflows/release.yml): this is the single canonical build/test/package pipeline for pushes to `main`; it compiles once per target OS, runs CTest, validates the web assets/manifests, packages, extracts, and smoke-tests Windows/Linux preview builds. The ZIP/TAR.GZ are uploaded as run artifacts for 14 days. A separate Pages workflow deploys only the static website. A manual run performs a versioned rehearsal without publishing. Pushing a `v*` tag repeats the build/package checks, generates SHA-256 checksums, and publishes a GitHub Release.
+- [Canonical pipeline](https://github.com/azmisahin-ai/local-ai-runtime/actions/workflows/pipeline.yml): one workflow orchestrates Windows/MSVC and Ubuntu/GCC. Pull requests build and test without packaging; each `main` push builds/tests/packages both platforms once, smoke-tests the extracted packages, and **only after both succeed** publishes the website as the final job. Commit-specific preview archives are retained for 14 days. Pushing a `v*` tag runs the same platform jobs and publishes a GitHub Release with SHA-256 checksums after both packages pass. A manual run performs a versioned rehearsal without creating a Release. Enable **Settings → Pages → Source → GitHub Actions** once.
+- [Experimental macOS compatibility](https://github.com/azmisahin-ai/local-ai-runtime/actions/workflows/macos-compat.yml): scheduled weekly or manually; it does not delay every push and does not produce a macOS release package yet. CTest uses a fake engine and does not download models or require a GPU.
 - See [release and update process](docs/release-and-update.md) before publishing a tag.
 
 GitHub Actions is the source for repeatable cross-platform build/test results. Local hardware/model checks are separate, and no NVIDIA/CUDA combination is claimed supported until that exact configuration is tested and recorded.

@@ -11,7 +11,7 @@ The roadmap distinguishes implemented code from platform/model combinations that
 - [x] Windows/Linux build helper and fake-engine core/HTTP tests
 - [x] Fix WinSock 1/2 header ordering for MSVC
 - [x] `/version` endpoint and stable-release update notification in dashboard
-- [x] Windows/MSVC and Ubuntu/GCC CI on pull requests and non-main branch pushes; main pushes use the canonical build/test/package workflow to avoid duplicate compiles; Pages deploys only when site files change; separate weekly/manual experimental macOS compatibility workflow
+- [x] one canonical pipeline validates pull requests, builds/tests/packages Windows and Linux on `main`, then deploys Pages as its final job only after both package jobs pass; separate weekly/manual experimental macOS compatibility workflow
 - [x] Project Pages site and feature manifest
 - [x] Tag-based Windows/Linux release workflow with SHA-256 manifest
 - [x] Confirm hosted Windows/MSVC CI on the public repository (green at commit `1f020c4`)
@@ -72,4 +72,4 @@ The proposed separation and catalog fields are documented in [engine distributio
 
 ### Platform CI policy
 
-Windows x64 and Linux x64 are the current per-push build/package targets. On `main`, `release.yml` is the canonical build/test/package workflow; `ci.yml` runs on pull requests, non-main branch pushes and manual dispatch so a `main` commit is not compiled twice. Pages also filters pushes by `site/**`, since the website uses live GitHub Releases metadata and only needs redeployment when website files change. macOS support is not cancelled, but remains experimental and is checked by the separate weekly/manual `macos-compat.yml` workflow so Homebrew toolchain setup does not delay every developer push. A macOS release package will only be added after repeatable build, launch, and packaging checks are available.
+Windows x64 and Linux x64 are the current per-push build/package targets. One `pipeline.yml` orchestrates PR validation, Windows/Linux build/package work, tag-driven Releases and the final Pages deployment. On `main`, the two platform jobs run once in parallel and Pages deploys only after both succeed. Pull requests build/test without packaging. macOS compatibility remains a separate weekly/manual workflow so Homebrew toolchain setup does not delay each push. macOS support is not cancelled, but remains experimental and is checked by the separate weekly/manual `macos-compat.yml` workflow so Homebrew toolchain setup does not delay every developer push. A macOS release package will only be added after repeatable build, launch, and packaging checks are available.
