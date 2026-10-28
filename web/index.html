@@ -19,18 +19,34 @@
       <div class="status-pill"><span id="api-dot" class="dot"></span><span id="api-status">Checking API…</span></div>
     </header>
 
+    <nav class="dashboard-nav" aria-label="Dashboard sections">
+      <a href="#catalog-panel">Component library</a>
+      <a href="#runtime-panel">Installed engines</a>
+      <a href="#chat-panel">Test chat</a>
+    </nav>
+
     <section id="update-notice" class="update-notice" role="status" aria-live="polite" hidden>
       <div><p class="eyebrow">SOFTWARE UPDATE</p><h2 id="update-title">Checking for updates…</h2><p id="update-copy" class="hint"></p></div>
       <a id="update-link" class="button primary" href="https://github.com/azmisahin-ai/local-ai-runtime/releases" target="_blank" rel="noopener noreferrer">View releases</a>
     </section>
 
-    <section class="panel catalog-panel">
+    <section id="catalog-panel" class="panel catalog-panel">
       <div class="section-heading">
         <div><p class="eyebrow">MANAGED COMPONENTS</p><h2>Install an AI engine and model</h2></div>
         <button id="catalog-refresh" class="button secondary" type="button">Refresh catalog</button>
       </div>
-      <p class="hint">Downloads come only from reviewed upstream sources. Each package is verified before installation. Model weights are stored separately from the runtime; review license terms and disk requirements before confirming.</p>
-      <p class="hint">Recommended first test: install the llama.cpp CPU package and the Qwen2.5 1.5B Q4_K_M model (about 1.12 GB). NVIDIA users can choose a CUDA package if their driver is compatible. Keep engines stopped while installing components.</p>
+      <p class="hint">Search and filter the library, review the license, then install. Engines and model weights are separate downloads and remain in your local user-data folder. Packages are verified before activation.</p>
+      <p class="hint">First test: install the llama.cpp CPU runtime and Qwen2.5 1.5B Q4_K_M model (about 1.12 GB). NVIDIA users can select a CUDA runtime when compatible. If upstream has no stable binary for your platform, the installer will clearly identify an official prerelease build.</p>
+      <div class="catalog-toolbar">
+        <label for="catalog-search">Search components</label>
+        <input id="catalog-search" type="search" autocomplete="off" spellcheck="false" placeholder="Name, task, backend or license…">
+        <div id="catalog-filters" class="catalog-filters" role="group" aria-label="Filter components by type">
+          <button class="filter-chip active" type="button" data-catalog-filter="all" data-label="All components" aria-pressed="true">All components</button>
+          <button class="filter-chip" type="button" data-catalog-filter="engine" data-label="Engine runtimes" aria-pressed="false">Engine runtimes</button>
+          <button class="filter-chip" type="button" data-catalog-filter="model" data-label="Models" aria-pressed="false">Models</button>
+        </div>
+        <p id="catalog-summary" class="hint catalog-summary" aria-live="polite">Loading components…</p>
+      </div>
       <div id="catalog-list" class="catalog-list"><div class="empty">Loading the built-in component catalog…</div></div>
       <h3>Downloads and installation jobs</h3>
       <div id="download-list" class="download-list"><div class="empty">No downloads started.</div></div>
@@ -38,10 +54,9 @@
     </section>
 
     <section class="panel setup-panel">
-      <div class="section-heading">
-        <div><p class="eyebrow">FIRST ENGINE SETUP</p><h2>Configure llama.cpp</h2></div>
-      </div>
-      <p class="hint">Advanced/manual option: configure an existing llama-server executable and GGUF model. For one-click downloads of the built-in verified starter components, use the component catalog above. Windows Explorer “Copy as path” quotes are accepted.</p>
+      <details class="setup-details">
+        <summary><span class="eyebrow">ADVANCED OPTION</span><span class="setup-summary-title">Configure an existing llama.cpp manually</span><span class="hint">Only needed when you already have a llama-server executable and GGUF model.</span></summary>
+        <p class="hint">For the one-click verified starter setup, use the component library above. Windows Explorer “Copy as path” quotes are accepted.</p>
       <form id="llama-setup-form">
         <label for="llama-executable">llama-server executable path</label>
         <input id="llama-executable" name="executable_path" type="text" required autocomplete="off" spellcheck="false" placeholder="C:\AI\llama.cpp\llama-server.exe or /usr/local/bin/llama-server">
@@ -70,10 +85,11 @@
         </div>
       </form>
       <p id="setup-status" class="status-message" role="status" aria-live="polite"></p>
-      <p class="hint setup-links">Downloads: <a href="https://github.com/ggml-org/llama.cpp/releases" target="_blank" rel="noopener noreferrer">official llama.cpp releases</a> · Models: <a href="https://huggingface.co/models?library=gguf" target="_blank" rel="noopener noreferrer">GGUF model catalog</a>. Review each model's license before downloading.</p>
+        <p class="hint setup-links">Downloads: <a href="https://github.com/ggml-org/llama.cpp/releases" target="_blank" rel="noopener noreferrer">official llama.cpp releases</a> · Models: <a href="https://huggingface.co/models?library=gguf" target="_blank" rel="noopener noreferrer">GGUF model catalog</a>. Review each model's license before downloading.</p>
+      </details>
     </section>
 
-    <section class="panel">
+    <section id="runtime-panel" class="panel">
       <div class="section-heading">
         <div><p class="eyebrow">RUNTIME</p><h2>Engines</h2></div>
         <button id="refresh" class="button secondary" type="button">Refresh</button>
@@ -83,7 +99,7 @@
       <p id="engine-error" class="error" role="status" aria-live="polite"></p>
     </section>
 
-    <section class="panel chat-panel">
+    <section id="chat-panel" class="panel chat-panel">
       <div class="section-heading"><div><p class="eyebrow">OPENAI-COMPATIBLE PROXY</p><h2>Test chat</h2></div></div>
       <p id="chat-readiness" class="hint">Configure llama.cpp above, then start the engine. Chat enables once the local model server reports ready.</p>
       <form id="chat-form">

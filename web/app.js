@@ -15,10 +15,15 @@ const chatSendButton = document.querySelector('#send');
 const llamaSetupForm = document.querySelector('#llama-setup-form');
 const setupStatus = document.querySelector('#setup-status');
 const catalogList = document.querySelector('#catalog-list');
+const catalogSearch = document.querySelector('#catalog-search');
+const catalogSummary = document.querySelector('#catalog-summary');
+const catalogFilterButtons = [...document.querySelectorAll('[data-catalog-filter]')];
 const downloadList = document.querySelector('#download-list');
 const catalogError = document.querySelector('#catalog-error');
 const catalogRefreshButton = document.querySelector('#catalog-refresh');
 const completedDownloadJobs = new Set();
+let catalogItems = [];
+let activeCatalogFilter = 'all';
 
 const REPOSITORY_RELEASES = 'https://github.com/azmisahin-ai/local-ai-runtime/releases';
 const FALLBACK_RELEASE_API = 'https://api.github.com/repos/azmisahin-ai/local-ai-runtime/releases?per_page=10';
@@ -142,7 +147,10 @@ function catalogItemCard(item) {
   const meta = make('div', 'engine-meta');
   meta.append(make('span', 'tag', item.type || 'component'));
   if (item.backend) meta.append(make('span', 'tag', String(item.backend).toUpperCase()));
-  if (item.version) meta.append(make('span', 'tag', item.version === 'latest-stable' ? 'latest stable' : `revision ${String(item.version).slice(0, 12)}`));
+  if (item.version) {
+    const versionLabel = item.version === 'latest-compatible' ? 'latest compatible build' : (item.version === 'latest-stable' ? 'latest stable' : `revision ${String(item.version).slice(0, 12)}`);
+    meta.append(make('span', 'tag', versionLabel));
+  }
   meta.append(make('span', 'tag', item.installed ? 'installed' : formatBytes(item.size_bytes)));
   if (item.installed) meta.append(make('span', 'tag ready', 'verified file present'));
   info.append(meta);
@@ -176,30 +184,41 @@ function catalogItemCard(item) {
   const acknowledgeLabel = make('label', 'license-ack');
   const acknowledge = make('input');
   acknowledge.type = 'checkbox';
+  acknowledge.id = `license-ack-${String(item.id).replace(/[^a-zA-Z0-9_-]/g, '-')}`;
   acknowledge.checked = false;
-  const acknowledgeText = make('span', '', 'I reviewed the upstream license and want to download this component.');
-  acknowledgeLabel.append(acknowledge, acknowledgeText);
-  const install = make('button', 'button primary', item.installed ? 'Installed' : 'Download and install');
+  const acknowledgeCopy = make('span', 'license-ack-copy');
+  acknowledgeCopy.append(make('strong', '', 'Required before install'), make('span', '', 'I have reviewed and accept this component’s license.'));
+  acknowledgeLabel.htmlFor = acknowledge.id;
+  acknowledgeLabel.append(acknowledge, acknowledgeCopy);
+  const install = make('button', 'button primary', item.installed ? 'Installed' : 'Download & install');
   install.type = 'button';
   install.disabled = Boolean(item.installed) || !licenseUrl;
+  acknowledge.addEventListener('change', () => {
+    install.classList.toggle('license-confirmed', acknowledge.checked);
+    if (acknowledge.checked) install.removeAttribute('aria-describedby');
+    else install.setAttribute('aria-describedby', acknowledge.id);
+  });
   install.addEventListener('click', async () => {
     if (!acknowledge.checked) {
-      catalogError.textContent = 'Please confirm that you reviewed the license before starting this download.';
+      catalogError.textContent = 'Before downloading, tick the clearly marked “Required before install” license box on that component card.';
       acknowledge.focus();
+      acknowledgeLabel.classList.add('needs-attention');
       return;
     }
-    if (!window.confirm(`Download and install “${item.name || item.id}”? The file may be large. Only verified files will be activated.`)) return;
+    acknowledgeLabel.classList.remove('needs-attention');
+    const sizeHint = Number(item.size_bytes || 0) > 0 ? ` Approximate download: ${formatBytes(item.size_bytes)}.` : ' The exact archive size will be resolved from official release metadata.';
+    if (!window.confirm(`Download and install “${item.name || item.id}”?${sizeHint} Only files verified against the published SHA-256 will be activated.`)) return;
     install.disabled = true;
     catalogError.textContent = '';
     try {
       const started = await api(`/v1/downloads/${encodeURIComponent(item.id)}`, {
         method: 'POST', body: JSON.stringify({ accept_license: true }),
       });
-      catalogError.textContent = `Queued ${item.name || item.id} as ${started.job_id}. You can follow progress below.`;
+      catalogError.textContent = `Queued ${item.name || item.id} as ${started.job_id}. Follow the installation status below.`;
       await refreshDownloads();
     } catch (error) {
       catalogError.textContent = error.message;
-      install.disabled = Boolean(item.installed);
+      install.disabled = Boolean(item.installed) || !licenseUrl;
     }
   });
   actions.append(acknowledgeLabel, install);
@@ -208,19 +227,43 @@ function catalogItemCard(item) {
   return card;
 }
 
+function renderCatalog() {
+  const query = catalogSearch.value.trim().toLocaleLowerCase();
+  const filtered = catalogItems.filter((item) => {
+    const type = String(item.type || 'component').toLowerCase();
+    if (activeCatalogFilter !== 'all' && type !== activeCatalogFilter) return false;
+    const searchable = [item.name, item.id, item.description, item.type, item.backend, item.license, item.version]
+      .filter(Boolean).join(' ').toLocaleLowerCase();
+    return !query || searchable.includes(query);
+  });
+  catalogList.replaceChildren();
+  catalogSummary.textContent = `Showing ${filtered.length} of ${catalogItems.length} components`;
+  for (const button of catalogFilterButtons) {
+    const filter = button.dataset.catalogFilter;
+    const count = filter === 'all' ? catalogItems.length : catalogItems.filter((item) => String(item.type || 'component').toLowerCase() === filter).length;
+    button.textContent = `${button.dataset.label} (${count})`;
+    const selected = filter === activeCatalogFilter;
+    button.classList.toggle('active', selected);
+    button.setAttribute('aria-pressed', String(selected));
+  }
+  if (!filtered.length) {
+    catalogList.append(make('div', 'empty', catalogItems.length ? 'No components match this filter. Try another type or clear the search.' : 'No compatible catalog components are available for this computer yet.'));
+    return;
+  }
+  for (const item of filtered) catalogList.append(catalogItemCard(item));
+}
+
 async function refreshCatalog() {
   catalogError.textContent = '';
   catalogRefreshButton.disabled = true;
   try {
     const result = await api('/v1/catalog');
     if (!Array.isArray(result.data)) throw new Error('The component catalog response is invalid.');
-    catalogList.replaceChildren();
-    if (!result.data.length) {
-      catalogList.append(make('div', 'empty', 'No compatible catalog components are available for this computer yet.'));
-      return;
-    }
-    for (const item of result.data) catalogList.append(catalogItemCard(item));
+    catalogItems = result.data;
+    renderCatalog();
   } catch (error) {
+    catalogItems = [];
+    renderCatalog();
     catalogList.replaceChildren(make('div', 'empty', 'Could not load the component catalog.'));
     catalogError.textContent = error.message;
   } finally {
@@ -414,6 +457,11 @@ document.querySelector('#refresh').addEventListener('click', async () => {
   await Promise.all([refreshHealth(), refreshEngines(), refreshCatalog(), refreshDownloads()]);
 });
 catalogRefreshButton.addEventListener('click', refreshCatalog);
+catalogSearch.addEventListener('input', renderCatalog);
+catalogFilterButtons.forEach((button) => button.addEventListener('click', () => {
+  activeCatalogFilter = button.dataset.catalogFilter || 'all';
+  renderCatalog();
+}));
 
 document.querySelector('#chat-form').addEventListener('submit', async (event) => {
   event.preventDefault();

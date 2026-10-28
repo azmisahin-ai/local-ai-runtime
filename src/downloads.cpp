@@ -17,10 +17,12 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <optional>
 #include <regex>
 #include <sstream>
 #include <stdexcept>
 #include <string_view>
+#include <utility>
 #include <system_error>
 
 #ifdef _WIN32
@@ -53,7 +55,7 @@ struct DownloadManager::Job {
 namespace {
 namespace pt = boost::property_tree;
 
-constexpr char kGitHubLatestReleaseUrl[] = "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest";
+constexpr char kGitHubReleasesUrl[] = "https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=30";
 constexpr char kGitHubAssetPrefix[] = "https://github.com/ggml-org/llama.cpp/releases/download/";
 constexpr char kModelUrl[] = "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/dd26da440ef0330c47919d1ecae0966d24022222/qwen2.5-1.5b-instruct-q4_k_m.gguf";
 constexpr char kModelSha256[] = "6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e";
@@ -245,6 +247,7 @@ struct ReleaseAsset {
     std::string url;
     std::string sha256;
     std::uint64_t size{0};
+    bool prerelease{false};
 };
 
 bool archive_asset_extension(const std::string& name) {
@@ -292,47 +295,67 @@ bool is_supported_engine_asset_name(const std::string& raw_name, const std::stri
 }
 
 ReleaseAsset resolve_engine_asset(const std::string& variant) {
-    const auto body = fetch_https_text(kGitHubLatestReleaseUrl, 10U * 1024U * 1024U);
+    // GitHub's /releases/latest endpoint intentionally skips prereleases. Some
+    // llama.cpp stable tags publish source archives only, while the matching
+    // prebuilt Windows/Linux packages are attached to official bNNNNN builds.
+    // Scan recent releases, prefer the newest stable asset, and fall back to an
+    // official prerelease only when no stable release has a compatible binary.
+    const auto body = fetch_https_text(kGitHubReleasesUrl, 12U * 1024U * 1024U);
     std::istringstream input(body);
-    pt::ptree release;
-    try { pt::read_json(input, release); }
-    catch (const std::exception& ex) { throw std::runtime_error(std::string("Could not parse the official llama.cpp release metadata: ") + ex.what()); }
-    if (release.get<bool>("draft", false) || release.get<bool>("prerelease", false)) {
-        throw std::runtime_error("The official llama.cpp endpoint did not return a stable release.");
-    }
-    ReleaseAsset selected;
-    selected.tag = release.get<std::string>("tag_name", "");
-    if (selected.tag.empty() || selected.tag.size() > 64 ||
-        !std::all_of(selected.tag.begin(), selected.tag.end(), [](unsigned char c) {
-            return std::isalnum(c) != 0 || c == '.' || c == '-' || c == 'v';
-        })) {
-        throw std::runtime_error("The official llama.cpp release tag is missing or unsafe.");
-    }
-    const auto assets = release.get_child_optional("assets");
-    if (!assets) throw std::runtime_error("The latest stable llama.cpp release has no downloadable assets.");
-    for (const auto& entry : *assets) {
-        const auto& node = entry.second;
-        const auto name = node.get<std::string>("name", "");
-        if (!is_supported_engine_asset_name(name, variant)) continue;
-        const auto url = node.get<std::string>("browser_download_url", "");
-        if (url.rfind(kGitHubAssetPrefix, 0) != 0) throw std::runtime_error("The selected llama.cpp asset URL is outside the official GitHub release namespace.");
-        auto digest = node.get<std::string>("digest", "");
-        if (digest.rfind("sha256:", 0) == 0) digest = digest.substr(7);
-        if (!is_hex_digest(digest)) {
-            throw std::runtime_error("The official release metadata does not provide a SHA-256 digest for " + name + "; refusing to install an unverified engine archive.");
+    pt::ptree releases;
+    try { pt::read_json(input, releases); }
+    catch (const std::exception& ex) { throw std::runtime_error(std::string("Could not parse the official llama.cpp releases metadata: ") + ex.what()); }
+    if (releases.empty()) throw std::runtime_error("The official llama.cpp releases endpoint returned no releases.");
+
+    std::optional<ReleaseAsset> stable_match;
+    std::optional<ReleaseAsset> prerelease_match;
+    for (const auto& release_entry : releases) {
+        const auto& release = release_entry.second;
+        if (release.get<bool>("draft", false)) continue;
+        const bool prerelease = release.get<bool>("prerelease", false);
+        const auto tag = release.get<std::string>("tag_name", "");
+        if (tag.empty() || tag.size() > 64 ||
+            !std::all_of(tag.begin(), tag.end(), [](unsigned char c) {
+                return std::isalnum(c) != 0 || c == '.' || c == '-' || c == 'v';
+            })) {
+            continue;
         }
-        const auto size = node.get<std::uint64_t>("size", 0);
-        if (size == 0 || size > kMaximumReleaseAssetBytes) throw std::runtime_error("The selected llama.cpp asset has an invalid or unsupported archive size.");
-        if (!selected.name.empty()) throw std::runtime_error("More than one upstream release asset matched this platform/backend; the catalog needs to be updated before installation.");
-        selected.name = name;
-        selected.url = url;
-        selected.sha256 = lower_ascii(digest);
-        selected.size = size;
+        const auto assets = release.get_child_optional("assets");
+        if (!assets) continue;
+
+        std::optional<ReleaseAsset> release_match;
+        for (const auto& entry : *assets) {
+            const auto& node = entry.second;
+            const auto name = node.get<std::string>("name", "");
+            if (!is_supported_engine_asset_name(name, variant)) continue;
+            const auto url = node.get<std::string>("browser_download_url", "");
+            if (url.rfind(kGitHubAssetPrefix, 0) != 0) {
+                throw std::runtime_error("The selected llama.cpp asset URL is outside the official GitHub release namespace.");
+            }
+            auto digest = node.get<std::string>("digest", "");
+            if (digest.rfind("sha256:", 0) == 0) digest = digest.substr(7);
+            if (!is_hex_digest(digest)) {
+                // Do not downgrade verification: a matching but unchecksummed
+                // asset is not eligible for installation.
+                continue;
+            }
+            const auto size = node.get<std::uint64_t>("size", 0);
+            if (size == 0 || size > kMaximumReleaseAssetBytes) continue;
+            if (release_match) {
+                throw std::runtime_error("More than one verified upstream asset matched this platform/backend in release " + tag + "; refusing an ambiguous package selection.");
+            }
+            release_match = ReleaseAsset{tag, name, url, lower_ascii(digest), size, prerelease};
+        }
+        if (!release_match) continue;
+        auto& preferred = prerelease ? prerelease_match : stable_match;
+        if (!preferred) preferred = std::move(release_match);
+        // GitHub lists releases newest-first. A stable match wins even if a newer
+        // prerelease match was encountered; otherwise first prerelease is newest.
     }
-    if (selected.name.empty()) {
-        throw std::runtime_error("No verified llama.cpp release archive matches this OS, architecture and backend. Try the CPU option or check the official release assets.");
-    }
-    return selected;
+
+    if (stable_match) return *stable_match;
+    if (prerelease_match) return *prerelease_match;
+    throw std::runtime_error("No verified official llama.cpp release archive with a published SHA-256 matches this OS, architecture and backend. Stable releases may not include prebuilt binaries; check the official releases page for supported packages.");
 }
 
 void download_to_file(const std::string& url, const std::filesystem::path& destination,
@@ -682,8 +705,8 @@ std::string DownloadManager::catalog_json() const {
         const bool installed = !installed_dir.empty();
         out << "{\"id\":" << json_quote(id)
             << ",\"type\":\"engine\",\"name\":" << json_quote(title)
-            << ",\"description\":" << json_quote("Downloads the latest stable official llama.cpp server archive, verifies the SHA-256 digest published by GitHub, safely extracts it and registers the engine.")
-            << ",\"version\":\"latest-stable\",\"backend\":" << json_quote(backend)
+            << ",\"description\":" << json_quote("Finds the newest compatible official llama.cpp server package, preferring stable releases and falling back to an official prerelease only when no stable binary is published. Verifies GitHub's SHA-256 digest, safely extracts the archive and registers the engine.")
+            << ",\"version\":\"latest-compatible\",\"backend\":" << json_quote(backend)
             << ",\"license\":\"MIT\",\"license_url\":\"https://github.com/ggml-org/llama.cpp/blob/master/LICENSE\""
             << ",\"source_url\":\"https://github.com/ggml-org/llama.cpp/releases\""
             << ",\"size_bytes\":0,\"installed\":" << (installed ? "true" : "false")
@@ -961,12 +984,13 @@ void DownloadManager::download_model(const std::shared_ptr<Job>& job) {
 }
 
 void DownloadManager::download_engine(const std::shared_ptr<Job>& job, const std::string& variant) {
-    mutate_job(job, [](DownloadManager::Job& current) { current.state = "downloading"; current.phase = "Resolving official stable llama.cpp release and SHA-256 metadata"; });
+    mutate_job(job, [](DownloadManager::Job& current) { current.state = "downloading"; current.phase = "Finding a compatible official llama.cpp package and SHA-256 metadata (stable preferred)"; });
     const auto asset = resolve_engine_asset(variant);
     mutate_job(job, [&](DownloadManager::Job& current) {
         current.version = asset.tag;
         current.total_bytes = asset.size;
-        current.phase = "Downloading official llama.cpp " + asset.tag + " package";
+        current.phase = "Downloading official llama.cpp " + asset.tag +
+            (asset.prerelease ? " prerelease package" : " stable package");
     });
     const auto data_root = user_data_directory();
     const auto stage_root = data_root / "staging" / job->id;

@@ -4,7 +4,7 @@ The Local AI Runtime binary, inference engines, and model weights are separate p
 
 ## Current implementation and planned user flow
 
-The current preview implements a built-in, reviewed catalog through `/v1/catalog`, download jobs through `/v1/downloads`, and dashboard progress/cancel controls. It includes official llama.cpp CPU/CUDA asset discovery from the GitHub latest-stable release API and one pinned Qwen2.5 1.5B Q4_K_M GGUF model. The first download requires explicit upstream license acknowledgement; arbitrary URLs are not accepted. This implementation is a starter catalog, not yet a general-purpose registry format for every engine family.
+The current preview implements a built-in, reviewed catalog through `/v1/catalog`, download jobs through `/v1/downloads`, and dashboard progress/cancel controls. It includes official llama.cpp CPU/CUDA asset discovery across recent GitHub releases and one pinned Qwen2.5 1.5B Q4_K_M GGUF model. Discovery prefers the newest compatible stable binary; if none of the recent stable releases publishes a matching platform/backend archive, it falls back to a compatible official prerelease only when its SHA-256 digest is available. The selected upstream tag and channel are shown in the installation job status. The first download requires explicit upstream license acknowledgement; arbitrary URLs are not accepted. This implementation is a starter catalog, not yet a general-purpose registry format for every engine family.
 
 The product flow is:
 

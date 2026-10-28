@@ -71,7 +71,7 @@ try {
             throw "Runtime exited early with code $($process.ExitCode). Run '$exe' from PowerShell to inspect startup output."
         }
         try {
-            $null = Invoke-WebRequest -Uri 'http://127.0.0.1:8000/health' -TimeoutSec 1
+            $null = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:8000/health' -TimeoutSec 1
             $ready = $true
             break
         } catch { Start-Sleep -Milliseconds 250 }
