@@ -101,7 +101,7 @@ Open http://127.0.0.1:8000. Use **Managed Components** for the verified llama.cp
 
 ## CI and releases
 
-- [CI runs](https://github.com/azmisahin-ai/local-ai-runtime/actions/workflows/ci.yml): Windows/MSVC, Ubuntu/GCC, macOS/Clang. CTest uses a fake engine and does not download models or require a GPU.
+- [CI runs](https://github.com/azmisahin-ai/local-ai-runtime/actions/workflows/ci.yml): Windows/MSVC and Ubuntu/GCC run on every push and pull request. Experimental macOS Intel compatibility runs weekly or manually in the separate [macOS workflow](https://github.com/azmisahin-ai/local-ai-runtime/actions/workflows/macos-compat.yml); it does not produce a macOS release package yet. CTest uses a fake engine and does not download models or require a GPU.
 - [Website deployment](https://github.com/azmisahin-ai/local-ai-runtime/actions/workflows/pages.yml): each push to `main` deploys `site/` using GitHub Pages. Enable **Settings → Pages → Source → GitHub Actions** once.
 - [Preview/release workflow](https://github.com/azmisahin-ai/local-ai-runtime/actions/workflows/release.yml): every push to `main` automatically builds, tests, packages, extracts, and smoke-tests Windows/Linux preview builds; the ZIP/TAR.GZ are uploaded as run artifacts for 14 days. A manual run performs a versioned rehearsal without publishing. Pushing a `v*` tag repeats the tests, generates SHA-256 checksums, and publishes a GitHub Release.
 - See [release and update process](docs/release-and-update.md) before publishing a tag.
@@ -120,7 +120,7 @@ GitHub Actions is the source for repeatable cross-platform build/test results. L
 - `/version` and `/health` endpoints; dashboard checks the public release feed for stable update notices.
 - Built-in managed component catalog for the official llama.cpp release (CPU/CUDA variants) and a pinned Qwen2.5 1.5B GGUF starter model. Downloads are cancellable, size-bounded, HTTPS-only, SHA-256 checked, and safely extracted; model license confirmation is required.
 - `/v1/catalog`, `/v1/downloads`, per-job progress/cancel routes and dashboard installation progress.
-- Fake-engine core and HTTP end-to-end tests; Windows/Linux/macOS CI definitions. CI validates the installer API without downloading external binaries or model weights.
+- Fake-engine core and HTTP end-to-end tests; required Windows/Linux CI plus scheduled/manual experimental macOS compatibility checks. CI validates the installer API without downloading external binaries or model weights.
 - Public project page and tag-driven Windows/Linux release pipeline.
 
 Not implemented yet: comprehensive hardware/backend detection and recommendations, unattended self-updates, platform installers, audio/vision/embedding adapters, streaming chat, authentication and MCP. The managed catalog downloads the first llama.cpp package and one pinned GGUF model, but it does not yet automatically install every engine/model family or prove the binary works with a real model on every platform. See [roadmap](docs/roadmap.md).

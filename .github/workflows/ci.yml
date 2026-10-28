@@ -25,11 +25,6 @@ jobs:
           - name: Ubuntu x64 / GCC
             os: ubuntu-24.04
             platform: linux
-          - name: macOS 15 Intel / Apple Clang
-            # The ARM64 macOS-15 pool showed repeated runner-allocation failures.
-            # Keep macOS CI on the separately labelled Intel hosted pool for now.
-            os: macos-15-intel
-            platform: macos
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
@@ -46,12 +41,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential cmake ninja-build pkg-config libboost-dev libcurl4-openssl-dev libarchive-dev libssl-dev
 
-      - name: Install macOS dependencies
-        if: runner.os == 'macOS'
-        run: |
-          brew update
-          brew install cmake ninja pkg-config boost curl libarchive openssl@3
-
       - name: Configure Windows (vcpkg manifest mode)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -64,26 +53,16 @@ jobs:
           cmake -S . -B build "-DCMAKE_TOOLCHAIN_FILE=$toolchain" -DVCPKG_MANIFEST_MODE=ON -DLAR_BUILD_TESTS=ON
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Configure Unix
-        if: runner.os != 'Windows'
+      - name: Configure Linux
+        if: runner.os == 'Linux'
         shell: bash
-        run: |
-          if [[ "$RUNNER_OS" == "macOS" ]]; then
-            PREFIX_PATH="$(brew --prefix curl);$(brew --prefix libarchive);$(brew --prefix openssl@3)"
-            cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DLAR_BUILD_TESTS=ON "-DCMAKE_PREFIX_PATH=${PREFIX_PATH}"
-          else
-            cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DLAR_BUILD_TESTS=ON
-          fi
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DLAR_BUILD_TESTS=ON
 
       - name: Build
         run: cmake --build build --config Release --parallel 2
 
       - name: Run CTest
         run: ctest --test-dir build -C Release --output-on-failure
-
-      - name: Repeat native macOS process-spawn smoke test for flakiness
-        if: runner.os == 'macOS'
-        run: ctest --test-dir build -C Release --repeat until-fail:5 -R '^lar_http_smoke$' --output-on-failure
 
       - name: Smoke-test Windows developer launcher
         if: runner.os == 'Windows'
@@ -103,8 +82,8 @@ jobs:
             }
           }
 
-      - name: Smoke-test Unix developer launcher
-        if: runner.os != 'Windows'
+      - name: Smoke-test Linux developer launcher
+        if: runner.os == 'Linux'
         shell: bash
         run: |
           set -euo pipefail

@@ -11,11 +11,11 @@ The roadmap distinguishes implemented code from platform/model combinations that
 - [x] Windows/Linux build helper and fake-engine core/HTTP tests
 - [x] Fix WinSock 1/2 header ordering for MSVC
 - [x] `/version` endpoint and stable-release update notification in dashboard
-- [x] Cross-platform CI definition: Windows/MSVC, Ubuntu/GCC, macOS/Clang
+- [x] Per-push CI for Windows/MSVC and Ubuntu/GCC; separate weekly/manual experimental macOS compatibility workflow
 - [x] Project Pages site and feature manifest
 - [x] Tag-based Windows/Linux release workflow with SHA-256 manifest
 - [x] Confirm hosted Windows/MSVC CI on the public repository (green at commit `1f020c4`)
-- [x] Confirm hosted macOS CI on the public repository (green at commit `1f020c4`)
+- [x] Confirmed macOS CI passed once at commit `1f020c4`; current macOS checks are scheduled/manual and do not block each push
 - [ ] Publish the first prerelease tag after the user-facing llama.cpp setup is ready; current workflow dry-run/package rehearsal is green
 - [ ] Real `llama-server` + GGUF smoke test on Windows and one CPU-only environment; CI currently uses a fake engine and intentionally does not fetch external components
 - [x] Dashboard setup form for an existing local `llama-server` and GGUF file; persists the engine configuration without hand-editing JSON
@@ -68,3 +68,8 @@ The proposed separation and catalog fields are documented in [engine distributio
 - [ ] Optional MCP adapter with a narrow, audited tool allowlist
 - [ ] Optional signed updater with staged download, signature/provenance verification, restart orchestration and rollback
 - [ ] Linux/macOS distributable releases only after packaging and clean-machine smoke tests
+
+
+### Platform CI policy
+
+Windows x64 and Linux x64 are the current per-push build/package targets. macOS support is not cancelled, but remains experimental and is checked by the separate weekly/manual `macos-compat.yml` workflow so Homebrew toolchain setup does not delay every developer push. A macOS release package will only be added after repeatable build, launch, and packaging checks are available.

@@ -40,14 +40,14 @@
       "status": "preview"
     },
     {
-      "name": "Cross-platform CI",
-      "description": "Build and exercise the core HTTP flow with a native C++ fake engine on Windows, Linux, and macOS GitHub-hosted runners.",
+      "name": "Windows and Linux CI",
+      "description": "Every push builds and tests the runtime on Windows/MSVC and Ubuntu/GCC, including preview package launch and /health checks.",
       "status": "preview"
     },
     {
-      "name": "macOS build validation",
-      "description": "Compile and run the current runtime smoke tests on a macOS CI runner; no packaged macOS download is promised yet.",
-      "status": "preview"
+      "name": "Experimental macOS compatibility",
+      "description": "macOS Intel build and smoke checks run in a separate weekly/manual workflow to avoid long Homebrew dependency builds on every push. A packaged macOS download is not available yet.",
+      "status": "planned"
     },
     {
       "name": "Release downloads and checksums",

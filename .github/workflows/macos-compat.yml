@@ -1,0 +1,81 @@
+name: macOS compatibility (experimental)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 7 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-compat-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    name: macOS Intel / Apple Clang (experimental)
+    runs-on: macos-15-intel
+    timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Install only missing native dependencies (no brew update)
+        shell: bash
+        run: |
+          set -euo pipefail
+          export HOMEBREW_NO_AUTO_UPDATE=1
+          for formula in boost curl libarchive openssl@3; do
+            if ! brew list --versions "$formula" >/dev/null 2>&1; then
+              brew install "$formula"
+            fi
+          done
+          for tool in cmake ninja pkg-config; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              case "$tool" in
+                pkg-config) brew install pkg-config ;;
+                *) brew install "$tool" ;;
+              esac
+            fi
+            command -v "$tool"
+          done
+
+      - name: Configure
+        shell: bash
+        run: |
+          set -euo pipefail
+          PREFIX_PATH="$(brew --prefix curl);$(brew --prefix libarchive);$(brew --prefix openssl@3)"
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DLAR_BUILD_TESTS=ON "-DCMAKE_PREFIX_PATH=${PREFIX_PATH}"
+
+      - name: Build
+        run: cmake --build build --parallel 2
+
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Repeat HTTP smoke test
+        run: ctest --test-dir build -C Release --repeat until-fail:3 -R '^lar_http_smoke$' --output-on-failure
+
+      - name: Smoke-test launcher
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/start-runtime.sh > launcher-smoke.log 2>&1 &
+          launcher_pid=$!
+          cleanup() { kill -TERM "$launcher_pid" 2>/dev/null || true; wait "$launcher_pid" 2>/dev/null || true; }
+          trap cleanup EXIT
+          ready=0
+          for attempt in $(seq 1 40); do
+            if curl --fail --silent http://127.0.0.1:8000/health >/tmp/lar-health.json; then ready=1; break; fi
+            if ! kill -0 "$launcher_pid" 2>/dev/null; then cat launcher-smoke.log; exit 1; fi
+            sleep 0.25
+          done
+          if [[ "$ready" != 1 ]]; then cat launcher-smoke.log; echo 'macOS launcher did not become ready.' >&2; exit 1; fi
+          grep -q '"status":"ok"' /tmp/lar-health.json
+          echo 'macOS compatibility smoke tests passed.'

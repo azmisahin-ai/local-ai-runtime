@@ -48,3 +48,4 @@ This project follows a lightweight Keep a Changelog structure. GitHub Release no
 - Expose the preview workflow from the website before the first public release exists.
 
 - Fix Windows SHA-256 stack overflow risk by moving the 1 MiB hashing buffer to heap memory; add core-test stage diagnostics.
+- Keep fast per-push CI required for Windows and Linux packages; move experimental macOS compatibility to a weekly/manual workflow with a time limit and no Homebrew auto-update.
