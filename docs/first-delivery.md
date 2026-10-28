@@ -33,3 +33,10 @@
 ## Update policy
 
 Current implementation is notification + link to a GitHub release. It does not silently replace the running binary. Secure unattended self-updating is a later milestone after package signatures/provenance, staged replacement, restart handling, configuration/model preservation and rollback are tested.
+
+
+## Follow-up fixes after first GitHub Actions run
+
+- The macOS smoke failure showed a timeout while requesting the proxied fake model list. The test now holds the runtime port reservation while it chooses the upstream port (so the two selected ports cannot be identical), waits until the fake engine itself answers `/v1/models`, uses a bounded proxy request timeout, and prints process logs/ports on failure. This is a defensive fix for the leading port-collision/readiness hypotheses; the original run did not expose the chosen port numbers, so only a rerun on GitHub macOS can confirm the root cause.
+- Developer launchers now detect binaries in the default CMake build output (`build/Release` for Visual Studio and `build/` for Ninja) or at the root of a release package.
+- CI now starts the application through each platform's developer launcher, checks `/health`, and stops the process.

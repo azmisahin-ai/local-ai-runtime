@@ -72,6 +72,46 @@ jobs:
       - name: Run CTest
         run: ctest --test-dir build -C Release --output-on-failure
 
+      - name: Smoke-test Windows developer launcher
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $runtime = $null
+          try {
+            $runtime = & .\scripts\Start-LocalAIRuntime.ps1 -NoBrowser -PassThru
+            if (-not $runtime -or -not $runtime.Id) { throw 'Launcher did not return the runtime process.' }
+            $health = Invoke-RestMethod -Uri 'http://127.0.0.1:8000/health' -TimeoutSec 3
+            if ($health.status -ne 'ok') { throw "Unexpected health response: $($health | ConvertTo-Json -Compress)" }
+            Write-Host "Windows launcher smoke test passed with PID $($runtime.Id)."
+          } finally {
+            if ($runtime -and -not $runtime.HasExited) {
+              Stop-Process -Id $runtime.Id -Force -ErrorAction SilentlyContinue
+              try { Wait-Process -Id $runtime.Id -Timeout 5 -ErrorAction SilentlyContinue } catch { }
+            }
+          }
+
+      - name: Smoke-test Unix developer launcher
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/start-runtime.sh > launcher-smoke.log 2>&1 &
+          launcher_pid=$!
+          cleanup() {
+            kill -TERM "$launcher_pid" 2>/dev/null || true
+            wait "$launcher_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          ready=0
+          for attempt in $(seq 1 40); do
+            if curl --fail --silent http://127.0.0.1:8000/health >/tmp/lar-health.json; then ready=1; break; fi
+            if ! kill -0 "$launcher_pid" 2>/dev/null; then cat launcher-smoke.log; exit 1; fi
+            sleep 0.25
+          done
+          if [[ "$ready" != 1 ]]; then cat launcher-smoke.log; echo 'Unix launcher did not become ready.' >&2; exit 1; fi
+          grep -q '"status":"ok"' /tmp/lar-health.json
+          echo 'Unix developer launcher smoke test passed.'
+
       - name: Validate JavaScript and product metadata
         shell: bash
         run: |

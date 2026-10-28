@@ -4,6 +4,11 @@ This project follows a lightweight Keep a Changelog structure. GitHub Release no
 
 ## Unreleased
 
+- Make the HTTP smoke test allocate distinct runtime/upstream ports, wait for the fake engine API to be ready, and print runtime/engine logs on failure; this targets the intermittent macOS proxy timeout.
+- Make Windows and Unix developer launchers find binaries produced by the default CMake build directories as well as release-package binaries.
+- Add CI smoke tests for the actual developer launcher scripts on Windows, Linux, and macOS.
+
+
 ### Added
 - Startup update check in the local dashboard against published stable GitHub Releases; updates are not silently installed.
 - Public project site with live release downloads and a version-controlled feature manifest.

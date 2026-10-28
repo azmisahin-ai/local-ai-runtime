@@ -13,10 +13,23 @@ import urllib.request
 from pathlib import Path
 
 
-def free_port():
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
+def reserve_distinct_ports():
+    """Reserve two different ephemeral ports at the same time.
+
+    Requesting a port, closing its socket, and immediately requesting another
+    port can return the same number on some OS runners. That would make the
+    fake engine point back at the runtime itself and can hang the proxy test.
+    Keep the first reservation open while asking the OS for the second port.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as runtime_sock:
+        runtime_sock.bind(("127.0.0.1", 0))
+        runtime_port = runtime_sock.getsockname()[1]
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as engine_sock:
+            engine_sock.bind(("127.0.0.1", 0))
+            engine_port = engine_sock.getsockname()[1]
+            if runtime_port == engine_port:
+                raise RuntimeError("OS returned the same port for runtime and fake engine")
+            return runtime_port, engine_port
 
 
 def request(url, method="GET", body=None, timeout=2):
@@ -68,8 +81,7 @@ def main():
         if not Path(path).exists():
             raise RuntimeError(f"Required smoke-test path does not exist: {path}")
 
-    runtime_port = free_port()
-    engine_port = free_port()
+    runtime_port, engine_port = reserve_distinct_ports()
     with tempfile.TemporaryDirectory(prefix="lar-http-smoke-") as temporary:
         temp = Path(temporary)
         config_path = temp / "engines.json"
@@ -89,9 +101,12 @@ def main():
         }
         config_path.write_text(json.dumps(config), encoding="utf-8")
         base = f"http://127.0.0.1:{runtime_port}"
+        engine_base = f"http://127.0.0.1:{engine_port}"
+        runtime_log_path = temp / "runtime.log"
+        runtime_log = runtime_log_path.open("w", encoding="utf-8")
         process = subprocess.Popen(
             [runtime, "--config", str(config_path), "--web-dir", web_dir],
-            cwd=str(temp), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            cwd=str(temp), stdout=runtime_log, stderr=subprocess.STDOUT,
         )
         try:
             wait_until(lambda: request(base + "/health")[0] == 200, 15, "runtime health endpoint")
@@ -120,11 +135,19 @@ def main():
 
             request(base + "/v1/engines/fake-engine/start", method="POST", body={})
 
+            # The start endpoint confirms process creation, not application
+            # readiness. Wait for the upstream API itself before testing proxying.
+            wait_until(
+                lambda: request(engine_base + "/v1/models")[0] == 200,
+                10,
+                "fake engine readiness",
+            )
+
             def models_ready():
-                status, raw, _ = request(base + "/v1/models")
+                status, raw, _ = request(base + "/v1/models", timeout=1)
                 return json.loads(raw) if status == 200 else None
 
-            models = wait_until(models_ready, 15, "proxied model list")
+            models = wait_until(models_ready, 10, "proxied model list")
             assert models["data"][0]["id"] == "fake-model"
 
             status, raw, content_type = request(
@@ -140,6 +163,25 @@ def main():
             engines = json.loads(engines_raw)["data"]
             assert status == 200 and engines[0]["status"] == "stopped"
             print("HTTP smoke test passed: dashboard, health/version metadata, Host/Origin guards, engine lifecycle, models proxy, chat proxy.")
+        except Exception:
+            runtime_log.flush()
+            print(
+                f"HTTP smoke diagnostics: runtime_port={runtime_port}, "
+                f"engine_port={engine_port}",
+                file=sys.stderr,
+            )
+            try:
+                runtime_output = runtime_log_path.read_text(encoding="utf-8", errors="replace")
+                if runtime_output.strip():
+                    print("--- runtime log ---", file=sys.stderr)
+                    print(runtime_output, file=sys.stderr)
+            except OSError:
+                pass
+            engine_log_path = temp / "logs" / "fake-engine.log"
+            if engine_log_path.exists():
+                print("--- fake engine log ---", file=sys.stderr)
+                print(engine_log_path.read_text(encoding="utf-8", errors="replace"), file=sys.stderr)
+            raise
         finally:
             if process.poll() is None:
                 process.terminate()
@@ -148,6 +190,7 @@ def main():
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait(timeout=5)
+            runtime_log.close()
 
 
 if __name__ == "__main__":
