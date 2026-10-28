@@ -12,7 +12,7 @@
 - Windows Winsock 2 header ordering fix (`winsock2.h` before `windows.h`, plus `WIN32_LEAN_AND_MEAN`/`NOMINMAX`).
 - POSIX process launch uses `posix_spawn` actions rather than running C++/filesystem code in a post-fork child of a multithreaded server.
 - CMake, Windows PowerShell build helper, Linux shell helper, fake-engine core test and HTTP end-to-end smoke test. The HTTP fixture is a native C++/Boost.Beast executable so CI exercises the actual native child-process path on each OS.
-- CI definition for Windows/MSVC, Ubuntu/GCC and macOS/Clang.
+- CI definition for Windows/MSVC and Ubuntu/GCC, plus separate scheduled/manual experimental macOS compatibility checks.
 - Pages workflow, dynamic release/download panel, feature manifest, release workflow, portable package launchers and SHA-256 manifest generation.
 - Dependabot configuration, issue templates, contribution/security docs, release/update process and future MCP security plan.
 
@@ -45,7 +45,7 @@ Current implementation is notification + link to a GitHub release. It does not s
 
 - The macOS smoke failure showed that a Python child process remained reported as running but did not answer its local API. The HTTP fixture now uses a native C++/Boost.Beast fake engine, waits for its readiness marker and API, and prints process state/logs on failure. This removes Python child-launch behavior from the native process manager test; hosted macOS CI must confirm the fix.
 - Developer launchers now detect binaries in the default CMake build output (`build/Release` for Visual Studio and `build/` for Ninja) or at the root of a release package.
-- CI now starts the application through each platform's developer launcher, checks `/health`, and stops the process.
+- CI starts the application through each platform's developer launcher, checks `/health`, and stops the process. Main-branch pushes use the package workflow as the canonical compile/test/package run; PR/non-main CI avoids duplicate builds.
 
 ## Dashboard llama.cpp setup slice
 

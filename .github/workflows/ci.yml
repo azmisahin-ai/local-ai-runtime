@@ -1,7 +1,11 @@
-name: CI
+name: CI (pull requests and non-main branches)
 
 on:
+  # Main pushes are fully built, tested and packaged by release.yml; keep this
+  # workflow for pull requests and non-main branch development to avoid building twice.
   push:
+    branches-ignore:
+      - main
   pull_request:
   workflow_dispatch:
 

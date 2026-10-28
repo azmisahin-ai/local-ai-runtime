@@ -11,13 +11,13 @@
 
 ## Preview builds and release rehearsal
 
-Every push to `main` now triggers Windows/Linux package builds in addition to CI and Pages. Each package runs tests, is staged as a portable archive, is extracted, and must pass `/health`. The workflow uploads commit-specific preview artifacts retained for 14 days. These are development previews, not public Releases and not recommended as stable updates.
+Every push to `main` triggers the canonical Windows/Linux build-test-package workflow and the separate lightweight Pages deployment. The general `ci.yml` workflow intentionally does not run on `main` pushes, avoiding a second full compile/test; it runs on pull requests, non-main branch pushes and manual dispatch. Each preview package runs CTest, is staged as a portable archive, is extracted, and must pass `/health`. The workflow uploads commit-specific preview artifacts retained for 14 days. These are development previews, not public Releases and not recommended as stable updates.
 
 For a version-specific rehearsal before publishing:
 
 1. Merge tested changes to `main` and update `CHANGELOG.md` and `site/product.json`.
-2. Make sure CI, the package workflow, and website deployment are green.
-3. Open **Actions → Build preview packages and publish release assets → Run workflow**, select `main`, and use a version such as `0.1.0-alpha`. The manual run is a **dry run**: it builds/tests both packages, launches each extracted archive and checks `/health`, and uploads Windows/Linux packages as workflow artifacts. It does not publish a GitHub Release or create a tag.
+2. Make sure the main-push package workflow and website deployment are green. For changes submitted via pull request, require the CI workflow to be green before merging.
+3. Open **Actions → Build/test preview packages; publish tagged releases → Run workflow**, select `main`, and use a version such as `0.1.0-alpha`. The manual run is a **dry run**: it builds/tests both packages, launches each extracted archive and checks `/health`, and uploads Windows/Linux packages as workflow artifacts. It does not publish a GitHub Release or create a tag.
 4. Download and inspect both artifacts from the completed workflow. Confirm the embedded version, launcher, dashboard and config example are present and the package starts cleanly.
 5. Only after the dry run succeeds, create and push an annotated tag:
 
@@ -33,7 +33,7 @@ Do not reuse or move an already published release tag. Cut a new version for eve
 
 ## Website deployment
 
-Enable **Settings → Pages → Build and deployment → Source: GitHub Actions** once. `.github/workflows/pages.yml` deploys the `site/` directory on every push to `main`. The release panel reads current GitHub Releases at page load, so downloadable assets do not need to be hardcoded into HTML.
+Enable **Settings → Pages → Build and deployment → Source: GitHub Actions** once. `.github/workflows/pages.yml` deploys the `site/` directory when a push to `main` changes files under `site/` (or when manually dispatched). The release panel reads current GitHub Releases at page load, so downloadable assets do not need to be hardcoded into HTML.
 
 The expected URL is `https://azmisahin-ai.github.io/local-ai-runtime/` after Pages has been enabled and the first deployment succeeds.
 

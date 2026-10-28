@@ -41,7 +41,7 @@
     },
     {
       "name": "Windows and Linux CI",
-      "description": "Every push builds and tests the runtime on Windows/MSVC and Ubuntu/GCC, including preview package launch and /health checks.",
+      "description": "Pull requests and non-main branches run Windows/MSVC and Ubuntu/GCC CI. Main pushes run one canonical build/test/package pipeline with preview archive launch and /health checks; the same targets are not rebuilt in a second workflow.",
       "status": "preview"
     },
     {
@@ -56,7 +56,7 @@
     },
     {
       "name": "Automatic preview packages",
-      "description": "Every main-branch push builds and smoke-tests Windows/Linux portable preview archives; GitHub Actions stores the build artifacts for 14 days. Stable public downloads still require a version tag.",
+      "description": "Every main-branch push runs the canonical Windows/Linux build, test, packaging and smoke-test pipeline; GitHub Actions stores commit-specific preview archives for 14 days. The static Pages deployment is separate, does not compile the application, and only runs when website files change. Stable public downloads still require a version tag.",
       "status": "preview"
     },
     {
