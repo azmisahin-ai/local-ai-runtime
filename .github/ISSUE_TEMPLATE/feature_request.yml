@@ -1,0 +1,24 @@
+name: Feature request
+description: Suggest an improvement or a new engine integration
+title: "feature: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: User problem
+      description: What are you trying to do?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+    validations:
+      required: true
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Platform, engine and licensing constraints
+    validations:
+      required: false

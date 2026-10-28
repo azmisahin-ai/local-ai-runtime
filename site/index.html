@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="Local AI Runtime is a local-first, hardware-aware manager for open AI engines, APIs, and models on your own machine or server.">
+  <title>Local AI Runtime — Your models. Your hardware.</title>
+  <link rel="icon" href="./assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./styles.css">
+  <script src="./app.js" defer></script>
+</head>
+<body>
+  <div class="ambient ambient-one"></div><div class="ambient ambient-two"></div>
+  <header class="nav container">
+    <a class="brand" href="#top" aria-label="Local AI Runtime home"><span class="brand-mark">L</span><span>local<span class="brand-accent">ai</span><small>RUNTIME</small></span></a>
+    <nav aria-label="Main navigation">
+      <a href="#features">Features</a><a href="#downloads">Downloads</a><a href="#roadmap">Roadmap</a>
+      <a class="nav-github" href="https://github.com/azmisahin-ai/local-ai-runtime" target="_blank" rel="noopener noreferrer">GitHub <span aria-hidden="true">↗</span></a>
+    </nav>
+  </header>
+
+  <main id="top">
+    <section class="hero container">
+      <div class="hero-copy">
+        <div class="status-line"><span class="pulse"></span><span id="project-status">EARLY ALPHA · OPEN SOURCE</span></div>
+        <h1>Your models.<br><span class="gradient-text">Your hardware.</span><br>Your rules.</h1>
+        <p class="hero-lede">One local control plane for the AI engines you choose. Start with what works on your machine, add engines when you need them, keep your data local.</p>
+        <div class="hero-actions"><a class="button button-primary" href="#downloads">Get the latest build <span aria-hidden="true">↓</span></a><a class="button button-ghost" href="https://github.com/azmisahin-ai/local-ai-runtime" target="_blank" rel="noopener noreferrer">Explore source <span aria-hidden="true">↗</span></a></div>
+        <div class="hero-proof"><span><i></i> Local-first</span><span><i></i> C++ core</span><span><i></i> Open source</span></div>
+      </div>
+      <div class="hero-visual" aria-label="Illustration of local AI runtime control plane">
+        <div class="orbit orbit-a"></div><div class="orbit orbit-b"></div>
+        <div class="core-node"><div class="core-glyph">⌘</div><strong>LOCAL<br>RUNTIME</strong><small>127.0.0.1</small></div>
+        <div class="engine-node node-llm"><span class="node-symbol">◈</span><span><strong>Language</strong><small>llama.cpp · planned/adapter</small></span><b class="node-dot"></b></div>
+        <div class="engine-node node-audio"><span class="node-symbol">≋</span><span><strong>Audio</strong><small>Adapter roadmap</small></span><b class="node-dot muted"></b></div>
+        <div class="engine-node node-vision"><span class="node-symbol">▧</span><span><strong>Vision</strong><small>Adapter roadmap</small></span><b class="node-dot muted"></b></div>
+        <div class="engine-node node-api"><span class="node-symbol">{ }</span><span><strong>Local API</strong><small>HTTP · localhost</small></span><b class="node-dot"></b></div>
+        <svg class="connectors" viewBox="0 0 540 490" fill="none" aria-hidden="true"><path d="M270 246 L158 122"/><path d="M270 246 L405 122"/><path d="M270 246 L156 371"/><path d="M270 246 L408 371"/><circle cx="270" cy="246" r="4"/><circle cx="158" cy="122" r="3"/><circle cx="405" cy="122" r="3"/><circle cx="156" cy="371" r="3"/><circle cx="408" cy="371" r="3"/></svg>
+        <div class="visual-caption">ONE CONTROL PLANE <span>·</span> MULTIPLE ENGINES</div>
+      </div>
+    </section>
+
+    <section class="signal-strip container" aria-label="Project principles"><div><b>01</b><span>Run locally first</span></div><div><b>02</b><span>Keep engines isolated</span></div><div><b>03</b><span>Test before claiming support</span></div><div><b>04</b><span>Grow by adapters</span></div></section>
+
+    <section id="downloads" class="section container">
+      <div class="section-intro"><p class="eyebrow">DOWNLOADS</p><h2>Start with your platform.</h2><p>Published builds and checksums are read live from GitHub Releases. Packages do not include large model weights or third-party inference engines.</p></div>
+      <div class="release-card">
+        <div class="release-top"><div><span class="release-label"><span class="pulse"></span> LATEST PUBLISHED BUILD</span><h3 id="latest-version">Checking releases…</h3><p id="latest-meta" class="muted-text">Connecting to GitHub Releases</p></div><a id="all-releases" href="https://github.com/azmisahin-ai/local-ai-runtime/releases" target="_blank" rel="noopener noreferrer" class="text-link">All releases ↗</a></div>
+        <div id="download-grid" class="download-grid"><div class="download-option"><span class="platform-icon">⊞</span><div><strong>Windows x64</strong><small>Portable ZIP · model engine not included</small></div><span class="download-wait">Loading</span></div><div class="download-option"><span class="platform-icon">⌁</span><div><strong>Linux x64</strong><small>Portable TAR.GZ · runtime dependencies apply</small></div><span class="download-wait">Loading</span></div></div>
+        <p class="checksum-note"><span aria-hidden="true">◇</span> Verify downloaded files with <code>SHA256SUMS.txt</code> when present. Review release notes before installing an update.</p>
+      </div>
+      <div class="download-footnote"><span>Need to compile it yourself?</span><a href="https://github.com/azmisahin-ai/local-ai-runtime#build-from-source" target="_blank" rel="noopener noreferrer">Build from source ↗</a><span class="bullet">·</span><a href="https://github.com/azmisahin-ai/local-ai-runtime/actions" target="_blank" rel="noopener noreferrer">CI results ↗</a></div>
+    </section>
+
+    <section id="features" class="section section-alt">
+      <div class="container">
+        <div class="section-intro"><p class="eyebrow">CAPABILITIES</p><h2>One runtime. Modular engines.</h2><p>The page reads feature status from a versioned product manifest in this repository. Every push deploys the updated site; release downloads and notes come from GitHub's release API.</p></div>
+        <div id="feature-grid" class="feature-grid"><div class="feature-card skeleton"></div><div class="feature-card skeleton"></div><div class="feature-card skeleton"></div></div>
+      </div>
+    </section>
+
+    <section id="roadmap" class="section container roadmap-section">
+      <div class="section-intro"><p class="eyebrow">ROADMAP</p><h2>Ship the foundation. Earn the next layer.</h2><p>Features move from planned to available only after implementation and reproducible tests.</p></div>
+      <div class="roadmap-grid">
+        <article class="roadmap-step current"><span class="step-no">PHASE 01</span><h3>Reliable runtime</h3><p>Windows/Linux CI, engine lifecycle, loopback API, fake-engine end-to-end tests.</p><span class="phase-status">IN PROGRESS</span></article>
+        <article class="roadmap-step"><span class="step-no">PHASE 02</span><h3>First real engine</h3><p>llama.cpp readiness checks, real model smoke tests, portable releases and checksums.</p><span class="phase-status">NEXT</span></article>
+        <article class="roadmap-step"><span class="step-no">PHASE 03</span><h3>Hardware-aware setup</h3><p>CPU/GPU detection, backend compatibility and tested recommendations for a user's machine.</p><span class="phase-status">PLANNED</span></article>
+        <article class="roadmap-step"><span class="step-no">PHASE 04</span><h3>Adapters & integrations</h3><p>Audio, vision, embeddings, application API clients and a security-reviewed MCP adapter.</p><span class="phase-status">PLANNED</span></article>
+      </div>
+    </section>
+
+    <section class="section safety-section"><div class="container safety-card"><div class="safety-icon">⌑</div><div><p class="eyebrow">LOCAL BY DEFAULT</p><h2>Your machine remains yours.</h2><p>Local API access is unauthenticated in this alpha, so the runtime binds to loopback and should never be exposed directly to a LAN or public internet. Update checks are metadata-only; the alpha never silently replaces executables.</p></div><a href="https://github.com/azmisahin-ai/local-ai-runtime/blob/main/SECURITY.md" target="_blank" rel="noopener noreferrer" class="text-link">Security policy ↗</a></div></section>
+  </main>
+
+  <footer class="site-footer"><div class="container footer-inner"><a class="brand" href="#top"><span class="brand-mark">L</span><span>local<span class="brand-accent">ai</span><small>RUNTIME</small></span></a><p>Built in the open by <a href="https://github.com/azmisahin-ai" target="_blank" rel="noopener noreferrer">azmisahin-ai</a>.</p><div><a href="https://github.com/azmisahin-ai/local-ai-runtime" target="_blank" rel="noopener noreferrer">Source</a><a href="https://github.com/azmisahin-ai/local-ai-runtime/issues" target="_blank" rel="noopener noreferrer">Issues</a></div></div><div class="container footer-bottom"><span>Open source · Apache-2.0</span><span id="site-updated">Project data loads from this repository</span></div></footer>
+</body>
+</html>

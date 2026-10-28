@@ -13,63 +13,69 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  linux:
-    name: Linux (GCC, CMake, tests)
-    runs-on: ubuntu-24.04
+  build-and-test:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64 / MSVC
+            os: windows-2022
+            platform: windows
+          - name: Ubuntu x64 / GCC
+            os: ubuntu-24.04
+            platform: linux
+          - name: macOS / Apple Clang
+            os: macos-15
+            platform: macos
+    runs-on: ${{ matrix.os }}
     steps:
-      - name: Check out source
-        uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v7
 
       - name: Set up Python for HTTP integration test
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
 
-      - name: Install system dependencies
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential cmake ninja-build libboost-dev
 
-      - name: Configure
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DLAR_BUILD_TESTS=ON
+      - name: Install macOS dependencies
+        if: runner.os == 'macOS'
+        run: |
+          brew update
+          brew install cmake ninja boost
 
-      - name: Build
-        run: cmake --build build --parallel 2
-
-      - name: Run all tests
-        run: ctest --test-dir build --output-on-failure
-
-  windows:
-    name: Windows (MSVC, vcpkg, tests)
-    runs-on: windows-2022
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v4
-
-      - name: Set up Python for HTTP integration test
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Validate runner vcpkg installation
+      - name: Configure Windows (vcpkg manifest mode)
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           if ([string]::IsNullOrWhiteSpace($env:VCPKG_INSTALLATION_ROOT)) {
-            throw 'VCPKG_INSTALLATION_ROOT is not available on this runner.'
+            throw 'VCPKG_INSTALLATION_ROOT is missing from this hosted runner.'
           }
           $toolchain = Join-Path $env:VCPKG_INSTALLATION_ROOT 'scripts/buildsystems/vcpkg.cmake'
           if (-not (Test-Path $toolchain)) { throw "vcpkg toolchain missing: $toolchain" }
-          Write-Host "Using vcpkg at $env:VCPKG_INSTALLATION_ROOT"
-
-      - name: Configure (vcpkg manifest mode)
-        shell: pwsh
-        run: |
-          $toolchain = Join-Path $env:VCPKG_INSTALLATION_ROOT 'scripts/buildsystems/vcpkg.cmake'
           cmake -S . -B build "-DCMAKE_TOOLCHAIN_FILE=$toolchain" -DVCPKG_MANIFEST_MODE=ON -DLAR_BUILD_TESTS=ON
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Configure Unix
+        if: runner.os != 'Windows'
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DLAR_BUILD_TESTS=ON
 
       - name: Build
         run: cmake --build build --config Release --parallel 2
 
-      - name: Run all tests
+      - name: Run CTest
         run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Validate JavaScript and product metadata
+        shell: bash
+        run: |
+          node --check web/app.js
+          node --check site/app.js
+          python -m json.tool site/product.json >/dev/null
+          python -m json.tool config/engines.example.json >/dev/null

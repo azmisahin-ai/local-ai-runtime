@@ -1,39 +1,35 @@
-# First implementation delivery
+# First delivery — user runtime and public project infrastructure
 
 ## Included
 
-- C++20 / CMake runtime and process-manager library.
-- JSON-configured engine manifest; explicit executable and argument-array launch.
-- `{model_path}` argument expansion, process state/PID/exit status, and logs under `logs/`.
-- Loopback HTTP API and same-origin browser dashboard.
-- `GET /health`, `GET /v1/engines`, `GET /v1/models`, engine start/stop, and non-streaming chat proxy endpoints.
-- Windows/POSIX process implementations.
-- Core tests plus a cross-platform Python standard-library HTTP smoke test using a fake local OpenAI-compatible engine.
-- GitHub Actions jobs for Windows/MSVC and Linux/GCC.
-- A Windows build helper that detects an existing vcpkg setup or bootstraps a local one before CMake configure.
+- C++20 runtime, JSON engine manifest, local process manager, per-engine log output.
+- Loopback-only HTTP API and same-origin dashboard.
+- Non-streaming OpenAI-compatible chat proxy and `/v1/models` forwarding.
+- `GET /health` and `GET /version`; the dashboard checks the GitHub Releases API for a newer applicable version and links to release notes/downloads.
+- Windows Winsock 2 header ordering fix (`winsock2.h` before `windows.h`, plus `WIN32_LEAN_AND_MEAN`/`NOMINMAX`).
+- CMake, Windows PowerShell build helper, Linux shell helper, fake-engine core test and HTTP end-to-end smoke test.
+- CI definition for Windows/MSVC, Ubuntu/GCC and macOS/Clang.
+- Pages workflow, dynamic release/download panel, feature manifest, release workflow, portable package launchers and SHA-256 manifest generation.
+- Dependabot configuration, issue templates, contribution/security docs, release/update process and future MCP security plan.
 
-## Verified for this revised bundle
+## Locally verified in this work session
 
-- Linux x86_64, GCC 14.2, CMake 3.31, Boost 1.83.
-- CMake configure succeeded and all targets compiled.
-- CTest: 2/2 passed: core/process lifecycle test and HTTP end-to-end smoke test using a fake OpenAI-compatible child engine.
-- HTTP smoke coverage: dashboard, health, engine listing/start/stop, model-list proxy, and chat proxy.
-
-Windows/MSVC CI cannot be claimed as passing until this bundle is uploaded and the GitHub Actions workflow completes. This environment did not execute a Windows build.
+- Linux x86-64, GCC 14.2, CMake configure and build succeeded.
+- CTest: **2/2 passed**: core/process lifecycle tests and HTTP end-to-end test using a local fake OpenAI-compatible engine.
+- `local-ai-runtime --version` returned `0.1.0-dev`.
+- `web/app.js` and `site/app.js` passed `node --check`.
+- Product/config JSON parsed successfully.
+- GitHub Actions, Dependabot and issue-template YAML files parsed successfully with a YAML parser.
 
 ## Not yet verified
 
-- Windows/MSVC CI run.
-- The newly added HTTP smoke test on both Linux and Windows until the revised bundle's test run completes.
-- A real `llama-server` executable and real model.
-- CUDA/GPU/VRAM/driver combinations, including the user's RTX 3060 6 GB machine.
-- audio.cpp integration.
+- Windows/MSVC build after the Winsock header fix. The initial build log shared by the user showed C1189 due to the old Winsock header being included first; this package reorders the Windows socket headers, but only hosted Windows CI can confirm it.
+- Public GitHub Actions results. The bundle has not been pushed to the user's repository from this environment.
+- GitHub Pages deployment and release publication; these workflows run only after the files are pushed and the Pages source is enabled.
+- Clean Windows package startup, VCRuntime deployment, Linux package startup in a clean container/VM.
+- Real llama.cpp + GGUF smoke test, CUDA, GPU memory, real model performance, and the user's RTX 3060 6 GB / 16 GB RAM PC.
+- `audio.cpp`, ONNX, image/video generation, embeddings, and actual MCP server support.
 
-## Known limitations
+## Update policy
 
-- The API has no authentication; keep it bound to loopback.
-- HTTP client handling uses detached per-request threads; bounded concurrency and orderly worker joining are future improvements.
-- Process `running` means OS process state, not that a model is ready to accept inference. The HTTP smoke test polls the fake engine; production engine readiness probing is still needed.
-- On Windows, stopping a process currently terminates the configured process directly; Job Object cleanup and engine-specific graceful shutdown can be improved.
-- JSON manifest validation uses Boost.PropertyTree and is basic rather than schema-complete.
-- The example config contains placeholder Windows paths and must be edited on the target machine.
+Current implementation is notification + link to a GitHub release. It does not silently replace the running binary. Secure unattended self-updating is a later milestone after package signatures/provenance, staged replacement, restart handling, configuration/model preservation and rollback are tested.

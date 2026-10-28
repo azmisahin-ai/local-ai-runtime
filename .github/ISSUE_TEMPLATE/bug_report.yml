@@ -1,0 +1,52 @@
+name: Bug report
+description: Report a reproducible runtime or build problem
+title: "bug: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Please remove personal paths, access tokens, and private model data from logs before posting.
+  - type: input
+    id: version
+    attributes:
+      label: Runtime version / commit
+      placeholder: 0.1.0-dev or a commit SHA
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows 10/11 x64
+        - Ubuntu/Debian x64
+        - macOS
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Build and hardware environment
+      description: Compiler, CMake, CPU, RAM, GPU/VRAM, driver/backend if applicable.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual result
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant sanitized log excerpt
+      render: text
+    validations:
+      required: false

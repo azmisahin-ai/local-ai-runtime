@@ -1,147 +1,114 @@
 # Local AI Runtime
 
 [![CI](https://github.com/azmisahin-ai/local-ai-runtime/actions/workflows/ci.yml/badge.svg)](https://github.com/azmisahin-ai/local-ai-runtime/actions/workflows/ci.yml)
+[![Pages](https://github.com/azmisahin-ai/local-ai-runtime/actions/workflows/pages.yml/badge.svg)](https://github.com/azmisahin-ai/local-ai-runtime/actions/workflows/pages.yml)
 
-**A local-first, hardware-aware manager for existing AI engines and models.**
+**A local-first, hardware-aware control plane for existing AI engines and models.**
 
-This is an early C++20 prototype. It orchestrates existing engine processes; it does not implement model inference itself. The product name is provisional.
+Project site: **https://azmisahin-ai.github.io/local-ai-runtime/** (available after GitHub Pages is enabled and the first deploy succeeds)
 
-## v0.1-alpha scope
+This is an early C++20 alpha. It orchestrates existing model engines; it does not implement inference itself. The product name and API are still evolving.
 
-- C++20 + CMake core.
-- Loopback-only HTTP API (`127.0.0.1` by default).
-- JSON engine manifest.
-- Process start/stop, exit status, PID, and stdout/stderr log file per engine.
-- Configurable `llama-server` executable adapter with `{model_path}` argument expansion.
-- OpenAI-compatible, non-streaming chat proxy to a configured local upstream.
-- Small same-origin browser dashboard.
-- Core/process tests plus a Python standard-library HTTP end-to-end smoke test.
-- GitHub Actions build and test jobs for Windows/MSVC and Linux/GCC.
+## For users
 
-This is **not yet a production-ready installer**. It does not download models, select a model based on hardware, schedule VRAM, guarantee CUDA compatibility, or support every OS/GPU combination. The example configuration has placeholder paths; edit it for your machine.
+### Downloads
 
-## Quick start — Windows 10/11
+Use the project site or [GitHub Releases](https://github.com/azmisahin-ai/local-ai-runtime/releases). After a version tag is published, GitHub Actions builds portable packages for Windows x64 and Linux x64 and attaches `SHA256SUMS.txt`.
 
-Requirements: Git for Windows, CMake 3.24+, and Visual Studio Build Tools/Visual Studio with **Desktop development with C++**. Python 3 is recommended for the HTTP smoke test; the C++ core tests still build without Python.
+The package includes the runtime, the web dashboard, an example configuration, a starter script, and the project license. **It does not include `llama.cpp`, other inference engines, CUDA, or model weights yet.** The example engine paths are placeholders and must be updated on your machine.
 
-From the repository root, run:
+- **Windows 10/11 x64:** extract the ZIP, open PowerShell in the extracted folder, and run:
+
+  ```powershell
+  Set-ExecutionPolicy -Scope Process Bypass
+  .\scripts\Start-LocalAIRuntime.ps1
+  ```
+
+  The script creates `config/engines.json` from the example on first start and opens the dashboard.
+- **Linux x64:** extract the TAR.GZ and run `./scripts/start-runtime.sh`. The runtime stays in the foreground; press Ctrl+C to stop.
+- **Offline use:** the local runtime does not require GitHub once installed. Release update checks are skipped if the service is unreachable. When the dashboard is opened, it requests public release metadata from GitHub; it does not upload prompts, model paths, or usage events. GitHub still receives ordinary network metadata such as the request IP address.
+
+The local dashboard checks for a newer **stable** release on startup and links to release notes/downloads. This alpha does **not** install or replace binaries silently. Review the package and release notes before updating.
+
+### Security warning
+
+The API has no authentication. It binds to `127.0.0.1` and should not be exposed directly to a LAN or the public internet. A process running on the same computer can call the API. Do not run packages from untrusted sources.
+
+## For developers
+
+### Prerequisites
+
+- CMake 3.24+
+- C++20 compiler (Visual Studio Build Tools with **Desktop development with C++** on Windows; GCC/Clang on Unix)
+- Git
+- Python 3.10+ for the HTTP end-to-end smoke test
+- vcpkg on Windows (the helper bootstraps a local copy on the first run); Boost 1.74+ headers on Unix
+
+### Build from source
+
+**Windows PowerShell** (from repository root):
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
 .\scripts\build.ps1
 ```
 
-On the first run, this helper checks `VCPKG_ROOT` / `VCPKG_INSTALLATION_ROOT`. If neither points to an existing vcpkg installation, it downloads vcpkg into `.tools/vcpkg`, bootstraps it, and lets CMake's manifest mode install the dependencies declared in `vcpkg.json`. The first run therefore requires internet access. `.tools/` and vcpkg's installed packages are ignored by Git and are not included in the source bundle.
-
-The script configures, builds, and runs the tests, failing immediately if any stage fails. Optional examples:
-
-```powershell
-.\scripts\build.ps1 -Configuration Debug
-.\scripts\build.ps1 -Clean
-```
-
-### Windows — manual CMake path
-
-If you already manage vcpkg yourself, use its toolchain file. A plain `cmake -S . -B build` on a fresh machine will not find Boost unless Boost is otherwise installed/configured.
-
-```powershell
-$env:VCPKG_ROOT = 'C:\path\to\vcpkg'
-cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_MANIFEST_MODE=ON -DLAR_BUILD_TESTS=ON
-cmake --build build --config Release
-ctest --test-dir build -C Release --output-on-failure
-```
-
-## Linux — Ubuntu/Debian
-
-Install the system dependencies once:
+**Ubuntu/Debian:**
 
 ```bash
 sudo apt-get update
 sudo apt-get install -y build-essential cmake libboost-dev python3
+./scripts/build.sh
 ```
 
-Then use the helper or equivalent CMake commands:
+Or configure manually on Unix:
 
 ```bash
-./scripts/build.sh
-# or
 cmake -S . -B build -DLAR_BUILD_TESTS=ON
 cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
 
-## Configure an engine
+The Windows helper configures vcpkg manifest mode. Do not first configure the same build directory without the vcpkg toolchain and then reuse it; the helper detects and clears a stale generated build tree when needed.
 
-Copy the example file and edit the executable/model paths. Do not commit machine-specific config.
+### Run the development build
 
-PowerShell:
-
-```powershell
-Copy-Item config/engines.example.json config/engines.json
-notepad config/engines.json
-```
-
-Example fragment:
-
-```json
-{
-  "id": "llama-cpp",
-  "display_name": "llama.cpp server",
-  "executable_path": "C:/AI/llama.cpp/llama-server.exe",
-  "model_path": "C:/AI/models/your-model.gguf",
-  "working_directory": "",
-  "args": ["--host", "127.0.0.1", "--port", "8081", "--model", "{model_path}"],
-  "upstream_base_url": "http://127.0.0.1:8081",
-  "capabilities": ["chat"],
-  "default_for_chat": true
-}
-```
-
-Arguments are arrays and passed directly to the executable; there is no shell interpolation. Only `{model_path}` is expanded. Logs are written to `logs/<engine-id>.log` under the runtime's current working directory.
-
-## Run
-
-Run from the repository root so `web/` and `config/` resolve. For a Visual Studio multi-configuration build:
+From repository root, after building:
 
 ```powershell
+# Windows
 .\build\Release\local-ai-runtime.exe
 ```
 
-The default address is `http://127.0.0.1:8000`. Open it in a browser. To see CLI options, pass `--help`.
+```bash
+# Linux/macOS
+./build/local-ai-runtime
+```
 
-## API
+Open http://127.0.0.1:8000. To configure a real engine, copy `config/engines.example.json` to `config/engines.json` and edit the executable/model paths for your machine.
 
-| Method | Endpoint | Purpose |
-|---|---|---|
-| `GET` | `/health` | Runtime health |
-| `GET` | `/v1/engines` | Configured engines and process state |
-| `GET` | `/v1/models` | Proxy the selected engine's model list |
-| `POST` | `/v1/engines/{id}/start` | Start a configured engine |
-| `POST` | `/v1/engines/{id}/stop` | Stop a configured engine |
-| `POST` | `/v1/chat/completions` | Forward a non-streaming chat request to the local default engine |
+## CI and releases
 
-Streaming, full OpenAI API compatibility, engine readiness probes, process auto-restart, installers, audio, vision, model downloads, and hardware discovery are not implemented in this first slice.
+- [CI runs](https://github.com/azmisahin-ai/local-ai-runtime/actions/workflows/ci.yml): Windows/MSVC, Ubuntu/GCC, macOS/Clang. CTest uses a fake engine and does not download models or require a GPU.
+- [Website deployment](https://github.com/azmisahin-ai/local-ai-runtime/actions/workflows/pages.yml): each push to `main` deploys `site/` using GitHub Pages. Enable **Settings → Pages → Source → GitHub Actions** once.
+- [Release workflow](https://github.com/azmisahin-ai/local-ai-runtime/actions/workflows/release.yml): pushing a `v*` tag runs Windows and Linux tests, packages portable downloads, generates SHA-256 checksums, and publishes a GitHub Release.
+- See [release and update process](docs/release-and-update.md) before publishing a tag.
 
-## Tests and GitHub Actions
+GitHub Actions is the source for repeatable cross-platform build/test results. Local hardware/model checks are separate, and no NVIDIA/CUDA combination is claimed supported until that exact configuration is tested and recorded.
 
-`ctest` runs:
+## Current feature slice
 
-- `lar_core_tests`: config validation, safe argument expansion, and process lifecycle.
-- `lar_http_smoke` (when Python 3 is available): starts the runtime and a fake local OpenAI-compatible engine, then verifies dashboard, health, engine start/stop, model proxy, and chat proxy end-to-end. No real model or GPU is required.
+- C++20 core, CMake builds, JSON engine manifest.
+- Start/stop explicitly configured child processes without shell command concatenation.
+- Per-engine output/error logs and basic process status.
+- Loopback-only HTTP API and same-origin dashboard.
+- Non-streaming OpenAI-compatible chat proxy and `/v1/models` forwarding.
+- `/version` and `/health` endpoints; dashboard checks the public release feed for stable update notices.
+- Fake-engine core and HTTP end-to-end tests; Windows/Linux/macOS CI definitions.
+- Public project page and tag-driven Windows/Linux release pipeline.
 
-GitHub Actions installs Boost and builds/tests on Ubuntu, and uses the hosted Windows runner's vcpkg installation to build/test with MSVC. This catches compile and general behavior regressions across both operating systems. It cannot prove that a particular NVIDIA driver, CUDA build, real model, or GPU memory configuration works; these require hardware smoke tests and must be reported separately.
-
-## Security baseline
-
-- Binds only to loopback in this alpha; non-loopback bind addresses are rejected.
-- Rejects non-loopback Host headers and cross-origin browser requests.
-- Limits request bodies to 4 MiB and upstream response bodies to 16 MiB.
-- Starts children using an explicit argument vector, never `system()` or shell command concatenation.
-- Does not download models or execute model-provided install scripts.
-- No telemetry.
-
-There is no authentication. Any local process able to reach the loopback API may use it. Do not expose it to a LAN or the public internet.
+Not implemented yet: real-model downloads/management, automatic hardware/backend selection, CUDA/VRAM probes, a secure unattended self-updater, installers, audio/vision/embedding adapters, streaming chat, authentication, and MCP. See [roadmap](docs/roadmap.md).
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md), [docs/architecture.md](docs/architecture.md), [docs/roadmap.md](docs/roadmap.md), and [docs/first-delivery.md](docs/first-delivery.md). Add regression tests for behavioral changes and never claim hardware/model compatibility unless the exact combination has been tested and recorded.
+See [CONTRIBUTING.md](CONTRIBUTING.md), [architecture](docs/architecture.md), [engine/model distribution strategy](docs/engine-distribution.md), [release/update process](docs/release-and-update.md), [MCP plan](docs/mcp-integration.md), and [security policy](SECURITY.md). Update `site/product.json` when user-visible features or their status change. Add regression tests for behavior changes.

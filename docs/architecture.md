@@ -21,7 +21,7 @@ logs/<engine-id>.log
 - **Core/config:** reads a user-owned JSON manifest; validates engine IDs, loopback binding and upstream URLs.
 - **Process manager:** starts one configured engine with a direct argument vector; monitors exit state; captures stdout/stderr to a per-engine log; requests stop and uses a forced fallback on POSIX.
 - **HTTP API:** exposes status/start/stop/chat proxy routes. The listener binds only to IPv4 loopback.
-- **UI:** static same-origin browser page with no build-time JavaScript dependencies.
+- **UI:** static same-origin browser page with no build-time JavaScript dependencies. At startup it checks the public GitHub release feed for a newer version; this is a notification/link, not a silent updater.
 - **Engine adapter:** v0.1 uses process launch plus an OpenAI-compatible local upstream. Model inference remains inside the engine process.
 
 ## Important invariants
@@ -31,6 +31,13 @@ logs/<engine-id>.log
 3. Do not infer CUDA support from the presence of a GPU.
 4. Keep model weights and machine-specific configuration out of Git.
 5. Separate process-running status from health-tested status; this prototype currently reports process status only.
+
+## Version and update boundary
+
+- `GET /version` returns the embedded version and the public repository/release-feed URLs.
+- The dashboard checks releases only when the UI starts. Development/prerelease builds can see prereleases; stable builds are offered stable releases only.
+- The dashboard does not download or execute update binaries. An unattended updater is blocked on signed provenance, a per-platform staging/restart mechanism, rollback, and tests for partial updates.
+- The Pages site reads the version-controlled `site/product.json` feature manifest and the public GitHub Releases API. `pages.yml` redeploys `site/` on every push to `main`.
 
 ## Known design debt
 
