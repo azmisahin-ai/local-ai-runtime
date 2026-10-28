@@ -111,6 +111,7 @@
     <section id="chat-panel" class="panel chat-panel">
       <div class="section-heading"><div><p class="eyebrow">OPENAI-COMPATIBLE PROXY</p><h2>Test chat</h2></div></div>
       <p id="chat-readiness" class="hint">Configure llama.cpp above, then start the engine. Chat enables once the local model server reports ready.</p>
+      <p class="hint">Baseline test: ask a short question such as “Sadece 2+2 işleminin sonucunu yaz.” The starter model is small; answer quality can vary by language. Request timing and token counts may be included in local diagnostics, but prompts and model responses are not logged.</p>
       <form id="chat-form">
         <label for="message">Message</label>
         <textarea id="message" rows="3" required maxlength="12000" placeholder="Ask your local model something…"></textarea>

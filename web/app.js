@@ -49,7 +49,9 @@ async function api(path, options = {}) {
   if (!response.ok) {
     const message = typeof data === 'object' ? data?.error?.message || JSON.stringify(data) : data;
     if (!path.startsWith('/v1/chat/')) reportDiagnosticEvent('ui.request.failed', `${options.method || 'GET'} ${path} returned ${response.status}: ${String(message || '').slice(0, 900)}`);
-    throw new Error(message || `Request failed (${response.status})`);
+    const error = new Error(message || `Request failed (${response.status})`);
+    error.httpStatus = response.status;
+    throw error;
   }
   return data;
 }
@@ -540,18 +542,51 @@ document.querySelector('#chat-form').addEventListener('submit', async (event) =>
   const message = document.querySelector('#message').value.trim();
   if (!message) return;
   const send = document.querySelector('#send');
+  const startedAt = performance.now();
   send.disabled = true;
   send.textContent = 'Waiting…';
+  reportDiagnosticEvent('ui.chat.request_started', `input_chars=${message.length}; stream=false`);
   try {
     const result = await api('/v1/chat/completions', {
       method: 'POST',
-      body: JSON.stringify({ model: 'local-model', messages: [{ role: 'user', content: message }], stream: false }),
+      body: JSON.stringify({
+        model: 'local-model',
+        messages: [
+          {
+            role: 'system',
+            content: 'You are a helpful assistant. Answer the user directly and concisely in the same language as the user. Do not claim you cannot answer ordinary greetings or requests. Do not provide code unless the user asks for code.',
+          },
+          { role: 'user', content: message },
+        ],
+        temperature: 0.2,
+        max_tokens: 256,
+        stream: false,
+      }),
     });
-    const content = result?.choices?.[0]?.message?.content;
+    const choice = result?.choices?.[0];
+    const content = choice?.message?.content;
     answer.textContent = typeof content === 'string' ? content : JSON.stringify(result, null, 2);
     answerWrap.hidden = false;
+    const metrics = [
+      `elapsed_ms=${Math.round(performance.now() - startedAt)}`,
+      `input_chars=${message.length}`,
+      `choice_count=${Array.isArray(result?.choices) ? result.choices.length : 0}`,
+      `response_chars=${typeof content === 'string' ? content.length : 0}`,
+      `finish_reason=${String(choice?.finish_reason || 'unknown').slice(0, 40)}`,
+    ];
+    const usage = result?.usage;
+    for (const key of ['prompt_tokens', 'completion_tokens', 'total_tokens']) {
+      if (Number.isFinite(usage?.[key])) metrics.push(`${key}=${usage[key]}`);
+    }
+    reportDiagnosticEvent('ui.chat.request_succeeded', metrics.join('; '));
   } catch (error) {
     chatError.textContent = error.message;
+    reportDiagnosticEvent('ui.chat.request_failed', [
+      `elapsed_ms=${Math.round(performance.now() - startedAt)}`,
+      `input_chars=${message.length}`,
+      `http_status=${Number.isInteger(error?.httpStatus) ? error.httpStatus : 0}`,
+      `error_type=${String(error?.name || 'Error').slice(0, 40)}`,
+    ].join('; '));
   } finally {
     send.disabled = false;
     send.textContent = 'Send message';

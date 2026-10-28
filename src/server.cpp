@@ -451,7 +451,8 @@ http::response<http::string_body> handle_request(const http::request<http::strin
             if (event.size() > 64 || detail.size() > 1200 || event.rfind("ui.", 0) != 0) {
                 return error_response(http::status::unprocessable_entity, version, "Diagnostic event is outside the allowed format.");
             }
-            log_diagnostic("WARN", event, detail);
+            const bool is_failure = event.ends_with(".failed") || event == "ui.error" || event == "ui.unhandledrejection";
+            log_diagnostic(is_failure ? "WARN" : "INFO", event, detail);
             return json_response(http::status::accepted, version, "{\"status\":\"recorded-locally\"}");
         } catch (const boost::property_tree::json_parser_error& ex) {
             return error_response(http::status::bad_request, version, std::string("Invalid diagnostic event JSON: ") + ex.what());

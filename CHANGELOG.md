@@ -4,6 +4,9 @@ This project follows a lightweight Keep a Changelog structure. GitHub Release no
 
 ## Unreleased
 
+- Improve the dashboard chat smoke test with a concise same-language system instruction and conservative sampling/token limits for the starter model.
+- Record local-only chat request metadata (timing, HTTP status, character counts, finish reason, and available token usage) without logging prompts or model responses.
+- Clarify that small starter-model answer quality can vary and provide a simple baseline test prompt.
 - Fix llama.cpp package discovery: inspect recent official releases, prefer the newest stable binary when one is published, and fall back to a digest-verified official prerelease only when required for the current platform/backend. Display the selected upstream tag in download progress.
 - Organize the component library with search, type filters, more visible license acknowledgement controls, and in-page links to the library, installed engines, and chat test. Collapse the advanced manual engine setup by default.
 - Use PowerShell `Invoke-WebRequest -UseBasicParsing` in the launcher health check to avoid the interactive script-parsing warning.
