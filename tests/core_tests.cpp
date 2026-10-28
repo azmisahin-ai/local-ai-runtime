@@ -10,6 +10,9 @@
 #include <thread>
 
 namespace {
+void stage(const char* name) {
+    std::cerr << "[core-tests] " << name << std::endl;
+}
 void require(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
 }
@@ -17,10 +20,12 @@ void require(bool condition, const char* message) {
 
 int main() {
     try {
+        stage("engine id validation");
         require(lar::is_valid_engine_id("llama_cpp-1"), "valid engine id rejected");
         require(!lar::is_valid_engine_id("../llama"), "path traversal engine id accepted");
         require(!lar::is_valid_engine_id(""), "empty engine id accepted");
 
+        stage("archive path safety");
         // Engine archives are untrusted inputs; extraction must reject paths that
         // could escape the installation staging root on Windows or Unix.
         require(lar::DownloadManager::is_safe_archive_entry_path("bin/llama-server"), "safe archive path rejected");
@@ -29,6 +34,7 @@ int main() {
         require(!lar::DownloadManager::is_safe_archive_entry_path("C:\\outside.exe"), "Windows drive path accepted");
         require(!lar::DownloadManager::is_safe_archive_entry_path("folder\\..\\outside"), "Windows separator traversal accepted");
 
+        stage("SHA-256 file streaming");
         const auto digest_suffix = std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
         const auto digest_path = std::filesystem::temp_directory_path() / ("lar-sha256-" + digest_suffix + ".txt");
         {
@@ -39,6 +45,7 @@ int main() {
                 "SHA-256 verifier returned incorrect result");
         std::filesystem::remove(digest_path);
 
+        stage("example config loading");
         const auto config = lar::load_config(LAR_TEST_CONFIG);
         require(config.host == "127.0.0.1", "default host must bind to loopback");
         require(config.port == 8000, "example port should be 8000");
@@ -55,6 +62,7 @@ int main() {
         }
         require(saw_model, "model path should be one argument (spaces preserved)");
 
+        stage("UTF-8 config round-trip");
         // Configuration persistence must preserve path arguments and valid JSON.
         auto roundtrip = config;
         roundtrip.engines.front().executable_path = std::filesystem::current_path() / "tools" / "llama-server";
@@ -76,6 +84,7 @@ int main() {
         require(unicode_model_argument, "model argument did not preserve UTF-8 path encoding");
         std::filesystem::remove(roundtrip_path);
 
+        stage("unknown engine handling");
         {
             std::vector<lar::EngineConfig> invalid_configs;
             lar::EngineManager manager(std::move(invalid_configs));
@@ -84,6 +93,7 @@ int main() {
             require(!error.empty(), "unknown engine should return an actionable error");
         }
 
+        stage("child process start/stop");
         lar::EngineConfig fake;
         fake.id = "fake-engine";
         fake.display_name = "Fake process for integration tests";

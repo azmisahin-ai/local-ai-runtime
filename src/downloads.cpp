@@ -610,7 +610,10 @@ std::string DownloadManager::sha256_file(const std::filesystem::path& path) {
     if (!input) throw std::runtime_error("Could not open file for SHA-256 verification.");
     std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> ctx(EVP_MD_CTX_new(), EVP_MD_CTX_free);
     if (!ctx || EVP_DigestInit_ex(ctx.get(), EVP_sha256(), nullptr) != 1) throw std::runtime_error("Could not initialize SHA-256 verification.");
-    std::array<char, 1024 * 1024> buffer{};
+    // A 1 MiB automatic array can exhaust the default 1 MiB MSVC thread stack
+    // before this function even reads a file. Keep the streaming buffer on the
+    // heap; this is also used to hash large model files during installation.
+    std::vector<char> buffer(1024 * 1024);
     while (input) {
         input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
         const auto count = input.gcount();

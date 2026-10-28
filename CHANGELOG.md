@@ -46,3 +46,5 @@ This project follows a lightweight Keep a Changelog structure. GitHub Release no
 
 - Build Windows/Linux preview archives automatically on each `main` push, smoke-test extracted packages, and upload commit-specific artifacts with 14-day retention.
 - Expose the preview workflow from the website before the first public release exists.
+
+- Fix Windows SHA-256 stack overflow risk by moving the 1 MiB hashing buffer to heap memory; add core-test stage diagnostics.
