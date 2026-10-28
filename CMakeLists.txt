@@ -57,6 +57,14 @@ endif()
 if(LAR_BUILD_TESTS)
     enable_testing()
     add_executable(lar_fake_engine tests/fake_engine.cpp)
+    add_executable(lar_fake_http_engine tests/fake_http_engine.cpp)
+    target_include_directories(lar_fake_http_engine PRIVATE ${Boost_INCLUDE_DIRS})
+    target_compile_definitions(lar_fake_http_engine PRIVATE BOOST_ERROR_CODE_HEADER_ONLY BOOST_SYSTEM_NO_DEPRECATED)
+    target_link_libraries(lar_fake_http_engine PRIVATE Threads::Threads)
+    if(WIN32)
+        target_compile_definitions(lar_fake_http_engine PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+        target_link_libraries(lar_fake_http_engine PRIVATE ws2_32)
+    endif()
     add_executable(lar_core_tests tests/core_tests.cpp)
     target_link_libraries(lar_core_tests PRIVATE lar_core)
     target_compile_definitions(lar_core_tests PRIVATE
@@ -75,7 +83,7 @@ if(LAR_BUILD_TESTS)
             COMMAND "${Python3_EXECUTABLE}"
                     "${CMAKE_CURRENT_SOURCE_DIR}/tests/http_smoke.py"
                     --runtime "$<TARGET_FILE:local-ai-runtime>"
-                    --fake-engine-script "${CMAKE_CURRENT_SOURCE_DIR}/tests/fake_openai_server.py"
+                    --fake-engine "$<TARGET_FILE:lar_fake_http_engine>"
                     --web-dir "${CMAKE_CURRENT_SOURCE_DIR}/web"
         )
         set_tests_properties(lar_http_smoke PROPERTIES

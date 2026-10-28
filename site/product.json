@@ -12,7 +12,7 @@
     { "name": "Local-first runtime", "description": "The control API binds to loopback by default. Model inference stays in the engine you configure.", "status": "preview" },
     { "name": "Engine lifecycle", "description": "Start and stop explicitly configured engine processes, inspect process state, and keep per-engine logs. A real inference engine and model must be installed separately in this alpha.", "status": "preview" },
     { "name": "OpenAI-style chat proxy", "description": "Forward non-streaming chat requests to a local OpenAI-compatible engine.", "status": "preview" },
-    { "name": "Windows and Linux CI", "description": "Build and exercise the core HTTP flow with a fake engine on GitHub-hosted runners.", "status": "preview" },
+    { "name": "Cross-platform CI", "description": "Build and exercise the core HTTP flow with a native C++ fake engine on Windows, Linux, and macOS GitHub-hosted runners.", "status": "preview" },
     { "name": "macOS build validation", "description": "Compile and run the current runtime smoke tests on a macOS CI runner; no packaged macOS download is promised yet.", "status": "preview" },
     { "name": "Release downloads and checksums", "description": "Tag-driven Windows x64 and Linux x64 packages with SHA-256 manifests.", "status": "planned" },
     { "name": "Update notifications", "description": "The local dashboard can check published stable releases and point users to release notes. Installation remains user-confirmed.", "status": "preview" },

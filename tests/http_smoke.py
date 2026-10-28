@@ -2,7 +2,6 @@
 """End-to-end smoke test: runtime -> child process -> local OpenAI-compatible API."""
 import argparse
 import json
-import os
 import socket
 import subprocess
 import sys
@@ -70,14 +69,14 @@ def expect_forbidden(url, headers, description):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--runtime", required=True)
-    parser.add_argument("--fake-engine-script", required=True)
+    parser.add_argument("--fake-engine", required=True)
     parser.add_argument("--web-dir", required=True)
     args = parser.parse_args()
 
     runtime = str(Path(args.runtime).resolve())
-    fake_script = str(Path(args.fake_engine_script).resolve())
+    fake_engine = str(Path(args.fake_engine).resolve())
     web_dir = str(Path(args.web_dir).resolve())
-    for path in (runtime, fake_script, web_dir):
+    for path in (runtime, fake_engine, web_dir):
         if not Path(path).exists():
             raise RuntimeError(f"Required smoke-test path does not exist: {path}")
 
@@ -92,10 +91,10 @@ def main():
             "engines": [{
                 "id": "fake-engine",
                 "display_name": "CI fake OpenAI-compatible engine",
-                "executable_path": sys.executable,
+                "executable_path": fake_engine,
                 "model_path": "",
                 "working_directory": str(engine_working_directory),
-                "args": ["-u", fake_script, "--port", str(engine_port)],
+                "args": ["--port", str(engine_port)],
                 "upstream_base_url": f"http://127.0.0.1:{engine_port}",
                 "capabilities": ["chat"],
                 "default_for_chat": True
@@ -138,7 +137,8 @@ def main():
             request(base + "/v1/engines/fake-engine/start", method="POST", body={})
 
             # The start endpoint confirms process creation, not application
-            # readiness. Wait for the upstream API itself before testing proxying.
+            # readiness. The native C++ fake engine avoids Python-launcher/environment
+            # differences on hosted macOS runners and tests the actual child-process path.
             try:
                 wait_until(
                     lambda: request(engine_base + "/v1/models")[0] == 200,

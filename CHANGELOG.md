@@ -5,7 +5,9 @@ This project follows a lightweight Keep a Changelog structure. GitHub Release no
 ## Unreleased
 
 - Replace the POSIX post-fork C++ child setup with `posix_spawn` file actions and a process-group attribute. This avoids calling non-async-signal-safe C++/filesystem code after `fork()` from a multithreaded HTTP server, a plausible cause of the macOS child-start hang.
-- Strengthen the HTTP smoke test to assert that the fake engine emitted its startup marker and ran in the configured working directory; print process status and logs on startup failure.
+- Replace the Python child-process fixture with a native C++/Boost.Beast fake HTTP engine, removing Python-launcher/environment differences from the process-manager smoke test.
+- Link the native fake HTTP engine against Winsock on Windows and use header-only Boost.System consistently.
+- Keep explicit startup/readiness assertions and process/log diagnostics when the fake engine cannot be reached.
 - Make the HTTP smoke test allocate distinct runtime/upstream ports and wait for the fake engine API itself to be ready before testing proxying.
 - Make Windows and Unix developer launchers find binaries produced by the default CMake build directories as well as release-package binaries.
 - Add CI smoke tests for the actual developer launcher scripts on Windows, Linux, and macOS.
