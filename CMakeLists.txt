@@ -29,6 +29,9 @@ target_compile_definitions(lar_core PUBLIC BOOST_ERROR_CODE_HEADER_ONLY BOOST_SY
 target_link_libraries(lar_core PUBLIC Threads::Threads)
 if(WIN32)
     target_link_libraries(lar_core PUBLIC ws2_32)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # Expose glibc's posix_spawn_file_actions_addchdir_np declaration.
+    target_compile_definitions(lar_core PRIVATE _GNU_SOURCE)
 endif()
 
 add_executable(local-ai-runtime src/main.cpp src/server.cpp)

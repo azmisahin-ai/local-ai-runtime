@@ -72,6 +72,10 @@ jobs:
       - name: Run CTest
         run: ctest --test-dir build -C Release --output-on-failure
 
+      - name: Repeat macOS process-spawn smoke test for flakiness
+        if: runner.os == 'macOS'
+        run: ctest --test-dir build -C Release --repeat until-fail:5 -R '^lar_http_smoke$' --output-on-failure
+
       - name: Smoke-test Windows developer launcher
         if: runner.os == 'Windows'
         shell: pwsh

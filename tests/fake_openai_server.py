@@ -2,6 +2,7 @@
 """Tiny stdlib-only OpenAI-compatible engine used exclusively by CI smoke tests."""
 import argparse
 import json
+import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
@@ -48,6 +49,7 @@ def main():
     parser.add_argument("--port", type=int, required=True)
     args = parser.parse_args()
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
+    print(f"FAKE_ENGINE_READY host=127.0.0.1 port={args.port} cwd={os.getcwd()}", flush=True)
     server.serve_forever()
 
 

@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <vector>
 #include <utility>
+#include <cstring>
 
 #ifdef _WIN32
 #include <io.h>
@@ -15,7 +16,10 @@
 #include <fcntl.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <spawn.h>
 #include <unistd.h>
+
+extern char** environ;
 #endif
 
 namespace lar {
@@ -205,38 +209,96 @@ bool ManagedProcess::start(const EngineConfig& config, std::string& error) {
         return false;
     }
 #else
+    // This method is called by an HTTP request thread. After fork(), a multithreaded
+    // process may safely call only async-signal-safe functions before exec(). The old
+    // child path used std::filesystem, std::string, and std::vector after fork; on
+    // macOS those operations can deadlock on locks inherited from other threads.
+    // posix_spawn performs redirection, process-group setup, and chdir through its
+    // defined spawn actions without running C++ code in a post-fork child.
     const int log_fd = ::open(log_path.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644);
     if (log_fd < 0) {
         error = "Cannot open engine log file: " + log_path.string();
         state_ = ProcessState::failed;
         return false;
     }
-    const pid_t child = ::fork();
-    if (child < 0) {
+
+    std::vector<std::string> storage;
+    storage.reserve(args.size() + 1);
+    storage.push_back(executable.string());
+    for (const auto& arg : args) storage.push_back(replace_model_token(arg, config.model_path.string()));
+    std::vector<char*> argv;
+    argv.reserve(storage.size() + 1);
+    for (auto& item : storage) argv.push_back(item.data());
+    argv.push_back(nullptr);
+
+    posix_spawn_file_actions_t file_actions{};
+    int spawn_error = ::posix_spawn_file_actions_init(&file_actions);
+    if (spawn_error != 0) {
         ::close(log_fd);
-        error = "fork() failed with errno " + std::to_string(errno);
+        error = "posix_spawn_file_actions_init failed: " + std::string(std::strerror(spawn_error));
         state_ = ProcessState::failed;
         return false;
     }
-    if (child == 0) {
-        (void)::setpgid(0, 0);
-        if (::chdir(cwd.c_str()) != 0) _exit(126);
-        (void)::dup2(log_fd, STDOUT_FILENO);
-        (void)::dup2(log_fd, STDERR_FILENO);
+
+    auto fail_file_action = [&](const char* operation, int code) {
+        (void)::posix_spawn_file_actions_destroy(&file_actions);
         ::close(log_fd);
-        std::vector<std::string> storage;
-        storage.reserve(args.size() + 1);
-        storage.push_back(executable.string());
-        for (const auto& arg : args) storage.push_back(replace_model_token(arg, config.model_path.string()));
-        std::vector<char*> argv;
-        argv.reserve(storage.size() + 1);
-        for (auto& item : storage) argv.push_back(item.data());
-        argv.push_back(nullptr);
-        ::execv(executable.c_str(), argv.data());
-        _exit(127);
+        error = std::string(operation) + " failed: " + std::strerror(code);
+        state_ = ProcessState::failed;
+        return false;
+    };
+
+    // Change directory in the spawn action, not in a forked child.
+    spawn_error = ::posix_spawn_file_actions_addchdir_np(&file_actions, cwd.c_str());
+    if (spawn_error != 0) return fail_file_action("posix_spawn chdir action", spawn_error);
+
+    spawn_error = ::posix_spawn_file_actions_addopen(
+        &file_actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
+    if (spawn_error != 0) return fail_file_action("posix_spawn stdin action", spawn_error);
+
+    spawn_error = ::posix_spawn_file_actions_adddup2(&file_actions, log_fd, STDOUT_FILENO);
+    if (spawn_error != 0) return fail_file_action("posix_spawn stdout action", spawn_error);
+    spawn_error = ::posix_spawn_file_actions_adddup2(&file_actions, log_fd, STDERR_FILENO);
+    if (spawn_error != 0) return fail_file_action("posix_spawn stderr action", spawn_error);
+    if (log_fd > STDERR_FILENO) {
+        spawn_error = ::posix_spawn_file_actions_addclose(&file_actions, log_fd);
+        if (spawn_error != 0) return fail_file_action("posix_spawn log close action", spawn_error);
     }
+
+    posix_spawnattr_t attributes{};
+    spawn_error = ::posix_spawnattr_init(&attributes);
+    if (spawn_error != 0) {
+        (void)::posix_spawn_file_actions_destroy(&file_actions);
+        ::close(log_fd);
+        error = "posix_spawnattr_init failed: " + std::string(std::strerror(spawn_error));
+        state_ = ProcessState::failed;
+        return false;
+    }
+    spawn_error = ::posix_spawnattr_setpgroup(&attributes, 0);
+    if (spawn_error == 0) {
+        spawn_error = ::posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETPGROUP);
+    }
+    if (spawn_error != 0) {
+        (void)::posix_spawnattr_destroy(&attributes);
+        (void)::posix_spawn_file_actions_destroy(&file_actions);
+        ::close(log_fd);
+        error = "posix_spawn process-group setup failed: " + std::string(std::strerror(spawn_error));
+        state_ = ProcessState::failed;
+        return false;
+    }
+
+    pid_t child = -1;
+    spawn_error = ::posix_spawn(&child, executable.c_str(), &file_actions, &attributes,
+                                argv.data(), environ);
+    (void)::posix_spawnattr_destroy(&attributes);
+    (void)::posix_spawn_file_actions_destroy(&file_actions);
     ::close(log_fd);
-    (void)::setpgid(child, child);
+    if (spawn_error != 0) {
+        error = "posix_spawn failed for '" + executable.string() + "': " + std::strerror(spawn_error);
+        state_ = ProcessState::failed;
+        return false;
+    }
+
     pid_ = static_cast<int>(child);
     state_ = ProcessState::running;
     exit_code_ = 0;

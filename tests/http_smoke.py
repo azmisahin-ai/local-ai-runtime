@@ -85,6 +85,8 @@ def main():
     with tempfile.TemporaryDirectory(prefix="lar-http-smoke-") as temporary:
         temp = Path(temporary)
         config_path = temp / "engines.json"
+        engine_working_directory = temp / "engine-cwd"
+        engine_working_directory.mkdir()
         config = {
             "server": {"host": "127.0.0.1", "port": runtime_port},
             "engines": [{
@@ -92,7 +94,7 @@ def main():
                 "display_name": "CI fake OpenAI-compatible engine",
                 "executable_path": sys.executable,
                 "model_path": "",
-                "working_directory": str(temp),
+                "working_directory": str(engine_working_directory),
                 "args": ["-u", fake_script, "--port", str(engine_port)],
                 "upstream_base_url": f"http://127.0.0.1:{engine_port}",
                 "capabilities": ["chat"],
@@ -137,11 +139,28 @@ def main():
 
             # The start endpoint confirms process creation, not application
             # readiness. Wait for the upstream API itself before testing proxying.
-            wait_until(
-                lambda: request(engine_base + "/v1/models")[0] == 200,
-                10,
-                "fake engine readiness",
-            )
+            try:
+                wait_until(
+                    lambda: request(engine_base + "/v1/models")[0] == 200,
+                    10,
+                    "fake engine readiness",
+                )
+                engine_log_path = temp / "logs" / "fake-engine.log"
+                engine_log = engine_log_path.read_text(encoding="utf-8", errors="replace")
+                assert "FAKE_ENGINE_READY" in engine_log, f"Fake engine startup marker missing from {engine_log_path}: {engine_log}"
+                assert str(engine_working_directory) in engine_log, (
+                    "Fake engine did not run in its configured working directory: " + engine_log
+                )
+            except Exception:
+                # Include the process state alongside stderr/stdout so a spawn
+                # failure, a crashed engine, and a reachable-but-unready engine
+                # can be distinguished from one another in CI logs.
+                try:
+                    status, status_raw, _ = request(base + "/v1/engines", timeout=1)
+                    print(f"Engine status after readiness failure (HTTP {status}): {status_raw}", file=sys.stderr)
+                except Exception as status_error:
+                    print(f"Could not query engine status after readiness failure: {status_error}", file=sys.stderr)
+                raise
 
             def models_ready():
                 status, raw, _ = request(base + "/v1/models", timeout=1)
