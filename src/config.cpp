@@ -64,6 +64,34 @@ std::filesystem::path path_from_utf8(const std::string& value) {
     return std::filesystem::path(encoded);
 }
 
+void restrict_managed_llama_cors(EngineConfig& engine) {
+    if (engine.id != "llama-cpp" || engine.executable_path.empty()) return;
+    auto normalized_path = engine.executable_path.lexically_normal().generic_string();
+    std::transform(normalized_path.begin(), normalized_path.end(), normalized_path.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    // Upgrade already-installed first-party managed engines without rewriting
+    // user config files. A manually configured llama-server outside this path
+    // keeps its explicitly supplied arguments.
+    if (normalized_path.find("/engines/llama.cpp/") == std::string::npos) return;
+
+    std::vector<std::string> safe_args;
+    safe_args.reserve(engine.args.size() + 3);
+    for (std::size_t i = 0; i < engine.args.size(); ++i) {
+        const auto& arg = engine.args[i];
+        if (arg == "--cors-origins") {
+            if (i + 1 < engine.args.size()) ++i;
+            continue;
+        }
+        if (arg == "--cors-credentials" || arg == "--no-cors-credentials") continue;
+        safe_args.push_back(arg);
+    }
+    safe_args.push_back("--cors-origins");
+    safe_args.push_back("localhost");
+    safe_args.push_back("--no-cors-credentials");
+    engine.args = std::move(safe_args);
+}
+
 } // namespace
 
 bool is_valid_engine_id(const std::string& id) {
@@ -105,6 +133,7 @@ RuntimeConfig load_config(const std::filesystem::path& path) {
         engine.model_path = path_from_utf8(node.get<std::string>("model_path", ""));
         engine.working_directory = path_from_utf8(node.get<std::string>("working_directory", ""));
         engine.args = read_string_array(node, "args");
+        restrict_managed_llama_cors(engine);
         engine.upstream_base_url = trim(node.get<std::string>("upstream_base_url", ""));
         engine.capabilities = read_string_array(node, "capabilities");
         engine.default_for_chat = node.get<bool>("default_for_chat", false);

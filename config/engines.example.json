@@ -19,6 +19,9 @@
         "2048",
         "--n-gpu-layers",
         "0",
+        "--cors-origins",
+        "localhost",
+        "--no-cors-credentials",
         "-m",
         "{model_path}"
       ],

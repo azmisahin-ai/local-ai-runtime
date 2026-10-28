@@ -4,6 +4,11 @@ This project follows a lightweight Keep a Changelog structure. GitHub Release no
 
 ## Unreleased
 
+- Fix Windows restart recovery: use the configured runtime port, reuse a healthy existing instance, and identify the PID/path of a listener that does not answer `/health`; prompt before stopping only an unresponsive Local AI Runtime process.
+- Log startup attempts and startup failures before opening the listening socket, so port conflicts can be diagnosed even when the dashboard cannot load. Print the “listening” message only after the bind succeeds.
+- Add a loopback-only graceful shutdown endpoint so the launcher can stop an older runtime and its managed engine cleanly before switching to a different extracted copy.
+- Restrict CORS origins and disable credentialed CORS for the managed llama.cpp server; migrate existing first-party managed engine configs at load time without rewriting user config files.
+- Test duplicate-instance port conflicts and verify that startup-failure events are included in local diagnostics.
 - Improve the dashboard chat smoke test with a concise same-language system instruction and conservative sampling/token limits for the starter model.
 - Record local-only chat request metadata (timing, HTTP status, character counts, finish reason, and available token usage) without logging prompts or model responses.
 - Clarify that small starter-model answer quality can vary and provide a simple baseline test prompt.

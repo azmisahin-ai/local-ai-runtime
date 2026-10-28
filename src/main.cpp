@@ -1,4 +1,6 @@
 #include "lar/config.hpp"
+#include "lar/diagnostics.hpp"
+#include "lar/downloads.hpp"
 #include "lar/process.hpp"
 #include "lar/server.hpp"
 
@@ -49,6 +51,9 @@ int main(int argc, char** argv) {
             std::cout << LAR_VERSION << '\n';
             return 0;
         }
+        lar::initialize_diagnostic_log(lar::DownloadManager::user_data_directory(), LAR_VERSION);
+        lar::log_diagnostic("INFO", "runtime.starting", "startup sequence entered");
+
         if (!std::filesystem::exists(config_path)) {
             if (config_was_explicit) {
                 throw std::runtime_error("The requested config file does not exist: " + config_path.string());
@@ -65,12 +70,10 @@ int main(int argc, char** argv) {
         }
         const auto config = lar::load_config(config_path);
         lar::EngineManager engines(config.engines);
-        std::cout << "Local AI Runtime " << LAR_VERSION << " listening on http://127.0.0.1:" << config.port << "\n"
-                  << "Configured engines: " << config.engines.size() << "\n"
-                  << "Press Ctrl+C to stop.\n";
         lar::run_http_server(config, engines, web_dir);
         return 0;
     } catch (const std::exception& ex) {
+        lar::log_diagnostic("ERROR", "runtime.startup_failed", ex.what());
         std::cerr << "Fatal: " << ex.what() << '\n';
         return 1;
     }

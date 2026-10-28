@@ -293,7 +293,8 @@ EngineConfig build_llama_config(const boost::property_tree::ptree& body, const R
     engine.working_directory = executable.parent_path();
     engine.args = {"--host", "127.0.0.1", "--port", std::to_string(port),
                    "--ctx-size", std::to_string(context), "--n-gpu-layers",
-                   backend == "gpu" ? "auto" : "0", "-m", "{model_path}"};
+                   backend == "gpu" ? "auto" : "0", "--cors-origins", "localhost",
+                   "--no-cors-credentials", "-m", "{model_path}"};
     engine.upstream_base_url = "http://127.0.0.1:" + std::to_string(port);
     engine.capabilities = {"chat"};
     engine.default_for_chat = true;
@@ -410,6 +411,10 @@ http::response<http::string_body> handle_request(const http::request<http::strin
     if (request.method() == http::verb::get && target == "/health") {
         return json_response(http::status::ok, version,
             "{\"status\":\"ok\",\"version\":" + json_quoted(LAR_VERSION) + ",\"bind\":\"loopback\"}");
+    }
+    if (request.method() == http::verb::post && target == "/v1/runtime/shutdown") {
+        log_diagnostic("INFO", "runtime.shutdown_requested", "source=local-launcher");
+        return json_response(http::status::accepted, version, "{\"status\":\"shutting-down\"}");
     }
     if (request.method() == http::verb::get && target == "/version") {
         return json_response(http::status::ok, version,
@@ -615,10 +620,16 @@ void serve_client(tcp::socket socket, RuntimeConfig config, EngineManager& engin
         parser.body_limit(4U * 1024U * 1024U);
         http::read(stream, buffer, parser);
         auto request = parser.release();
+        const bool is_shutdown_request = request.method() == http::verb::post &&
+            request.target() == "/v1/runtime/shutdown";
         auto response = handle_request(request, config, engines, downloads, web_dir);
+        const bool shutdown_after_response = is_shutdown_request && response.result() == http::status::accepted;
         http::write(stream, response);
         beast::error_code ignored;
         stream.socket().shutdown(tcp::socket::shutdown_send, ignored);
+        // Only request shutdown after an authorized acknowledgement has been
+        // written. Rejected cross-origin requests must never stop the runtime.
+        if (shutdown_after_response) request_shutdown(0);
     } catch (const boost::system::system_error& ex) {
         if (ex.code() == http::error::body_limit) {
             auto response = error_response(http::status::payload_too_large, 11, "Request body exceeds the 4 MiB limit.");
@@ -639,13 +650,16 @@ void run_http_server(const RuntimeConfig& config, EngineManager& engines,
     std::signal(SIGINT, request_shutdown);
     std::signal(SIGTERM, request_shutdown);
     shutdown_requested = 0;
-    initialize_diagnostic_log(DownloadManager::user_data_directory(), LAR_VERSION);
     asio::io_context ioc{1};
     const auto address = asio::ip::make_address(config.host == "localhost" ? "127.0.0.1" : config.host);
     tcp::acceptor acceptor{ioc, tcp::endpoint{address, config.port}};
     acceptor.set_option(asio::socket_base::reuse_address(true));
     acceptor.non_blocking(true);
     DownloadManager downloads(config, engines);
+    std::cout << "Local AI Runtime " << LAR_VERSION << " listening on http://127.0.0.1:"
+              << config.port << "\n"
+              << "Configured engines: " << config.engines.size() << "\n"
+              << "Press Ctrl+C to stop.\n" << std::flush;
     log_diagnostic("INFO", "runtime.started", "bind=loopback port=" + std::to_string(config.port));
     while (shutdown_requested == 0) {
         tcp::socket socket{ioc};

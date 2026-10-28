@@ -3,6 +3,7 @@
 #include "lar/downloads.hpp"
 #include "lar/process.hpp"
 
+#include <algorithm>
 #include <filesystem>
 #include <iostream>
 #include <fstream>
@@ -52,6 +53,10 @@ int main() {
         require(config.port == 8000, "example port should be 8000");
         require(config.engines.size() == 1, "example must provide one llama.cpp adapter example");
         require(config.engines.front().id == "llama-cpp", "unexpected example engine id");
+        require(std::find(config.engines.front().args.begin(), config.engines.front().args.end(), "--cors-origins") != config.engines.front().args.end(),
+                "example llama.cpp args should restrict CORS to localhost");
+        require(std::find(config.engines.front().args.begin(), config.engines.front().args.end(), "--no-cors-credentials") != config.engines.front().args.end(),
+                "example llama.cpp args should disable credentialed CORS");
 
         auto engine = config.engines.front();
         engine.model_path = std::filesystem::path("models/test model.gguf");
@@ -73,6 +78,33 @@ int main() {
         lar::save_config(roundtrip_path, roundtrip);
         const auto loaded_roundtrip = lar::load_config(roundtrip_path);
         require(loaded_roundtrip.engines.size() == roundtrip.engines.size(), "saved config engine count changed");
+
+        stage("managed llama.cpp CORS migration");
+        auto legacy_config = config;
+        auto& legacy_llama = legacy_config.engines.front();
+        legacy_llama.executable_path = std::filesystem::temp_directory_path() /
+            "LocalAIRuntime" / "engines" / "llama.cpp" / "b11969-cpu" /
+            ("llama-server" + std::string(
+#ifdef _WIN32
+                ".exe"
+#else
+                ""
+#endif
+            ));
+        legacy_llama.args = {"--host", "127.0.0.1", "--port", "8081", "--cors-origins", "*",
+                             "--cors-credentials", "-m", "{model_path}"};
+        const auto legacy_path = std::filesystem::temp_directory_path() / ("lar-legacy-config-" + suffix + ".json");
+        lar::save_config(legacy_path, legacy_config);
+        const auto migrated = lar::load_config(legacy_path);
+        const auto& migrated_args = migrated.engines.front().args;
+        const auto cors_flag = std::find(migrated_args.begin(), migrated_args.end(), "--cors-origins");
+        require(cors_flag != migrated_args.end() && std::next(cors_flag) != migrated_args.end() &&
+                *std::next(cors_flag) == "localhost", "managed llama.cpp legacy config should restrict CORS to localhost");
+        require(std::find(migrated_args.begin(), migrated_args.end(), "--cors-credentials") == migrated_args.end(),
+                "managed llama.cpp legacy config should remove credentialed CORS");
+        require(std::find(migrated_args.begin(), migrated_args.end(), "--no-cors-credentials") != migrated_args.end(),
+                "managed llama.cpp legacy config should disable credentialed CORS");
+        std::filesystem::remove(legacy_path);
         require(loaded_roundtrip.engines.front().executable_path == roundtrip.engines.front().executable_path,
                 "saved executable path did not round-trip");
         require(loaded_roundtrip.engines.front().model_path == roundtrip.engines.front().model_path,

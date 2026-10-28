@@ -24,7 +24,7 @@ The package includes the runtime, the web dashboard, an example configuration, a
   .\scripts\Start-LocalAIRuntime.ps1
   ```
 
-  The script creates the user configuration on first start and opens the dashboard. Settings, downloaded engines/models and logs are stored under `%LOCALAPPDATA%\LocalAIRuntime`, outside the extracted application folder, so they survive replacing the app package. For troubleshooting, use **Export diagnostics** in the dashboard; [the report guide](docs/diagnostics.md) explains what it contains and how to share it safely.
+  The script creates the user configuration on first start and opens the dashboard. Settings, downloaded engines/models and logs are stored under `%LOCALAPPDATA%\LocalAIRuntime`, outside the extracted application folder, so they survive replacing the app package. Closing the browser tab does not stop the runtime; run the launcher again to reopen a healthy existing instance. If an unresponsive `local-ai-runtime.exe` still owns the configured port, the launcher identifies its PID and asks before stopping that runtime process. It will not stop unrelated programs. For troubleshooting, use **Export diagnostics** in the dashboard; if the dashboard cannot load, inspect `%LOCALAPPDATA%\LocalAIRuntime\logs\runtime.log`. See [the report guide](docs/diagnostics.md) for what is recorded and how to share it safely.
 - **Linux x64:** extract the TAR.GZ and run `./scripts/start-runtime.sh`. The runtime stays in the foreground; press Ctrl+C to stop. On Linux, user data is stored in `$XDG_DATA_HOME/local-ai-runtime` when set, otherwise `~/.local/share/local-ai-runtime`. On macOS developer runs, it defaults to `~/Library/Application Support/LocalAIRuntime` (or follows `XDG_DATA_HOME` when set).
 
 #### First model setup
@@ -116,6 +116,7 @@ GitHub Actions is the source for repeatable cross-platform build/test results. L
 - Non-streaming OpenAI-compatible chat proxy and `/v1/models` forwarding.
 - `POST /v1/setup/llama-cpp` to validate and save local `llama-server`/GGUF paths, backend mode, context size and engine port.
 - `/v1/engines` reports process state and API readiness separately; the dashboard does not enable chat until the default engine is ready.
+- `POST /v1/runtime/shutdown` is a loopback-only graceful shutdown used by the Windows launcher when replacing an older runtime instance; managed engine processes are stopped as the runtime exits.
 - `/version` and `/health` endpoints; dashboard checks the public release feed for stable update notices.
 - Built-in managed component catalog for the official llama.cpp release (CPU/CUDA variants) and a pinned Qwen2.5 1.5B GGUF starter model. Downloads are cancellable, size-bounded, HTTPS-only, SHA-256 checked, and safely extracted; model license confirmation is required.
 - `/v1/catalog`, `/v1/downloads`, per-job progress/cancel routes and dashboard installation progress.

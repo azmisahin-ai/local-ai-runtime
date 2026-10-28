@@ -130,6 +130,18 @@ def main():
         )
         try:
             wait_until(lambda: request(base + "/health")[0] == 200, 15, "runtime health endpoint")
+
+            # A duplicate instance must exit cleanly and leave a startup-failure
+            # event in the local diagnostics log instead of looking like a hang.
+            duplicate = subprocess.run(
+                [runtime, "--config", str(config_path), "--web-dir", web_dir],
+                cwd=str(temp), env=test_env, capture_output=True, text=True, timeout=10,
+            )
+            assert duplicate.returncode != 0, "A second runtime should not bind the same port"
+            persisted_runtime_log = data_root / "logs" / "runtime.log"
+            startup_events = persisted_runtime_log.read_text(encoding="utf-8", errors="replace")
+            assert "runtime.startup_failed" in startup_events, startup_events
+
             expect_forbidden(
                 base + "/health",
                 {"Host": f"attacker.invalid:{runtime_port}"},
@@ -333,6 +345,8 @@ def main():
             assert configured_llama["model_path"] == str(model_path)
             assert configured_llama["default_for_chat"] is True
             assert "--n-gpu-layers" in configured_llama["args"] and "0" in configured_llama["args"]
+            assert configured_llama["args"][configured_llama["args"].index("--cors-origins") + 1] == "localhost"
+            assert "--no-cors-credentials" in configured_llama["args"]
             status, engines_raw, _ = request(base + "/v1/engines")
             engines = json.loads(engines_raw)["data"]
             llama_status = next(item for item in engines if item["id"] == "llama-cpp")
@@ -351,7 +365,24 @@ def main():
             configured_llama = next(item for item in persisted["engines"] if item["id"] == "llama-cpp")
             assert "--n-gpu-layers" in configured_llama["args"]
             assert "auto" in configured_llama["args"], "GPU setup should use automatic layer placement"
-            print("HTTP smoke test passed: dashboard, health/version, security guards, readiness probe, engine lifecycle, chat/models proxy, GGUF validation, quoted paths, CPU/GPU setup persistence.")
+            assert configured_llama["args"][configured_llama["args"].index("--cors-origins") + 1] == "localhost"
+            assert "--no-cors-credentials" in configured_llama["args"]
+            denied_shutdown = urllib.request.Request(
+                base + "/v1/runtime/shutdown", data=b"{}", method="POST",
+                headers={"Content-Type": "application/json", "Origin": "https://attacker.invalid"},
+            )
+            try:
+                urllib.request.urlopen(denied_shutdown, timeout=2)
+                raise AssertionError("Cross-origin shutdown requests must be rejected")
+            except urllib.error.HTTPError as exc:
+                assert exc.code == 403, f"Expected 403 for cross-origin shutdown, got HTTP {exc.code}"
+            assert process.poll() is None, "Rejected cross-origin request must not shut down the runtime"
+
+            status, shutdown_raw, _ = request(base + "/v1/runtime/shutdown", method="POST", body={})
+            assert status == 202 and json.loads(shutdown_raw)["status"] == "shutting-down"
+            wait_until(lambda: process.poll() is not None, 5, "graceful runtime shutdown")
+            assert process.returncode == 0, f"Runtime exited with {process.returncode} after graceful shutdown"
+            print("HTTP smoke test passed: dashboard, health/version, duplicate-startup diagnostics, security guards, readiness probe, engine lifecycle, chat/models proxy, GGUF validation, quoted paths, restricted engine CORS, CPU/GPU setup persistence, graceful shutdown.")
         except Exception:
             runtime_log.flush()
             print(

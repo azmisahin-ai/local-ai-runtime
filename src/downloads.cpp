@@ -1149,7 +1149,8 @@ void DownloadManager::configure_llama_engine(const std::filesystem::path& execut
     const auto context = configured_context_size(engine);
     const bool use_gpu = variant == "cuda12" || variant == "cuda13" || variant == "gpu" || variant == "native";
     engine.args = {"--host", "127.0.0.1", "--port", std::to_string(port), "--ctx-size", std::to_string(context),
-                   "--n-gpu-layers", use_gpu ? "auto" : "0", "-m", "{model_path}"};
+                   "--n-gpu-layers", use_gpu ? "auto" : "0", "--cors-origins", "localhost",
+                   "--no-cors-credentials", "-m", "{model_path}"};
     engine.upstream_base_url = "http://127.0.0.1:" + std::to_string(port);
     engine.capabilities = {"chat"};
     engine.default_for_chat = true;
