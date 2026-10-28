@@ -82,6 +82,35 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or $actual.Trim() -ne $version) { throw "Packaged Windows executable failed version check: $actual" }
           if (-not (Test-Path (Join-Path $verify 'web/index.html'))) { throw 'Packaged dashboard is missing.' }
           if (-not (Test-Path (Join-Path $verify 'scripts/Start-LocalAIRuntime.ps1'))) { throw 'Packaged Windows launcher is missing.' }
+
+          # Validate that the extracted, relocatable package can actually serve HTTP.
+          $stdout = Join-Path $verify 'runtime-smoke.stdout.log'
+          $stderr = Join-Path $verify 'runtime-smoke.stderr.log'
+          $runtime = Start-Process -FilePath (Join-Path $verify 'local-ai-runtime.exe') `
+            -ArgumentList @('--config', (Join-Path $verify 'config/engines.example.json'), '--web-dir', (Join-Path $verify 'web')) `
+            -WorkingDirectory $verify -PassThru -WindowStyle Hidden `
+            -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          try {
+            $ready = $false
+            for ($i = 0; $i -lt 40; $i++) {
+              if ($runtime.HasExited) { throw "Packaged runtime exited before health check (code $($runtime.ExitCode))." }
+              try {
+                $health = Invoke-RestMethod -Uri 'http://127.0.0.1:8000/health' -TimeoutSec 1
+                if ($health.status -eq 'ok') { $ready = $true; break }
+              } catch { }
+              Start-Sleep -Milliseconds 250
+            }
+            if (-not $ready) {
+              if (Test-Path $stdout) { Get-Content $stdout }
+              if (Test-Path $stderr) { Get-Content $stderr }
+              throw 'Extracted Windows release package did not pass /health within 10 seconds.'
+            }
+          } finally {
+            if ($runtime -and -not $runtime.HasExited) {
+              Stop-Process -Id $runtime.Id -Force -ErrorAction SilentlyContinue
+              try { Wait-Process -Id $runtime.Id -Timeout 5 -ErrorAction SilentlyContinue } catch { }
+            }
+          }
           Get-FileHash $package -Algorithm SHA256 | Format-List
 
       - name: Upload Windows package
@@ -157,6 +186,25 @@ jobs:
           test "$("$VERIFY/local-ai-runtime" --version)" = "$VERSION"
           test -f "$VERIFY/web/index.html"
           test -x "$VERIFY/scripts/start-runtime.sh"
+
+          # Validate that the extracted package actually serves HTTP, not just --version.
+          "$VERIFY/local-ai-runtime" --config "$VERIFY/config/engines.example.json" --web-dir "$VERIFY/web" >"$VERIFY/runtime-smoke.log" 2>&1 &
+          runtime_pid=$!
+          cleanup_runtime() {
+            kill -TERM "$runtime_pid" 2>/dev/null || true
+            wait "$runtime_pid" 2>/dev/null || true
+          }
+          trap cleanup_runtime EXIT
+          ready=0
+          for attempt in $(seq 1 40); do
+            if curl --fail --silent http://127.0.0.1:8000/health >"$VERIFY/health.json"; then ready=1; break; fi
+            if ! kill -0 "$runtime_pid" 2>/dev/null; then cat "$VERIFY/runtime-smoke.log"; exit 1; fi
+            sleep 0.25
+          done
+          if [[ "$ready" != 1 ]]; then cat "$VERIFY/runtime-smoke.log"; echo 'Extracted Linux release package did not pass /health within 10 seconds.' >&2; exit 1; fi
+          grep -q '"status":"ok"' "$VERIFY/health.json"
+          cleanup_runtime
+          trap - EXIT
           sha256sum "$PACKAGE"
 
       - name: Upload Linux package
