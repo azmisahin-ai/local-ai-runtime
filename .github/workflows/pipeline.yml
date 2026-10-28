@@ -1,11 +1,14 @@
-name: Build/test preview packages; publish tagged releases
+name: Build, test, package & publish
 
 on:
+  # One canonical workflow: PRs validate; main builds/packages and deploys Pages
+  # only after both platform packages pass; v* tags publish Releases.
   push:
     branches:
       - main
     tags:
       - 'v*'
+  pull_request:
   workflow_dispatch:
     inputs:
       version:
@@ -22,12 +25,12 @@ env:
   LAR_RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || (startsWith(github.ref, 'refs/tags/v') && github.ref_name || '0.1.0-dev') }}
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: local-ai-runtime-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   windows:
-    name: Windows x64 package
+    name: Windows x64 build / test / package
     runs-on: windows-2022
     steps:
       - name: Checkout tagged source
@@ -37,6 +40,18 @@ jobs:
         uses: actions/setup-python@v7
         with:
           python-version: '3.12'
+
+      - name: Validate web assets and manifests
+        shell: pwsh
+        run: |
+          node --check web/app.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --check site/app.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m json.tool site/product.json > $null
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m json.tool config/engines.example.json > $null
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Configure
         shell: pwsh
@@ -61,7 +76,33 @@ jobs:
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure
 
+      - name: Smoke-test Windows developer launcher (PR validation)
+        if: ${{ github.event_name == 'pull_request' }}
+        shell: pwsh
+        run: |
+          $runtime = $null
+          try {
+            $runtime = & .\scripts\Start-LocalAIRuntime.ps1 -NoBrowser -PassThru
+            if (-not $runtime -or -not $runtime.Id) { throw 'Launcher did not return the runtime process.' }
+            $ready = $false
+            for ($i = 0; $i -lt 40; $i++) {
+              if ($runtime.HasExited) { throw "Runtime exited before health check (code $($runtime.ExitCode))." }
+              try {
+                $health = Invoke-RestMethod -Uri 'http://127.0.0.1:8000/health' -TimeoutSec 1
+                if ($health.status -eq 'ok') { $ready = $true; break }
+              } catch { }
+              Start-Sleep -Milliseconds 250
+            }
+            if (-not $ready) { throw 'Developer launcher did not pass /health within 10 seconds.' }
+          } finally {
+            if ($runtime -and -not $runtime.HasExited) {
+              Stop-Process -Id $runtime.Id -Force -ErrorAction SilentlyContinue
+              try { Wait-Process -Id $runtime.Id -Timeout 5 -ErrorAction SilentlyContinue } catch { }
+            }
+          }
+
       - name: Package portable Windows runtime
+        if: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') }}
         shell: pwsh
         run: |
           $version = $env:LAR_RELEASE_VERSION -replace '^v', ''
@@ -122,6 +163,7 @@ jobs:
           Get-FileHash $package -Algorithm SHA256 | Format-List
 
       - name: Upload Windows package
+        if: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') }}
         uses: actions/upload-artifact@v7
         with:
           name: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && 'release-windows' || format('preview-windows-{0}', github.sha) }}
@@ -130,7 +172,7 @@ jobs:
           retention-days: 14
 
   linux:
-    name: Linux x64 package
+    name: Linux x64 build / test / package
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout tagged source
@@ -174,7 +216,26 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
+      - name: Smoke-test Linux developer launcher (PR validation)
+        if: ${{ github.event_name == 'pull_request' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/start-runtime.sh > launcher-smoke.log 2>&1 &
+          runtime_pid=$!
+          cleanup() { kill -TERM "$runtime_pid" 2>/dev/null || true; wait "$runtime_pid" 2>/dev/null || true; }
+          trap cleanup EXIT
+          ready=0
+          for attempt in $(seq 1 40); do
+            if curl --fail --silent http://127.0.0.1:8000/health >/tmp/lar-health.json; then ready=1; break; fi
+            if ! kill -0 "$runtime_pid" 2>/dev/null; then cat launcher-smoke.log; exit 1; fi
+            sleep 0.25
+          done
+          if [[ "$ready" != 1 ]]; then cat launcher-smoke.log; echo 'Developer launcher did not become ready.' >&2; exit 1; fi
+          grep -q '"status":"ok"' /tmp/lar-health.json
+
       - name: Package portable Linux runtime
+        if: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') }}
         shell: bash
         run: |
           set -euo pipefail
@@ -266,6 +327,7 @@ jobs:
           sha256sum "$PACKAGE"
 
       - name: Upload Linux package
+        if: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') }}
         uses: actions/upload-artifact@v7
         with:
           name: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && 'release-linux' || format('preview-linux-{0}', github.sha) }}
@@ -305,3 +367,35 @@ jobs:
           else
             gh release create "$TAG_NAME" release-assets/* --verify-tag --title "$TAG_NAME" --generate-notes --repo "$GITHUB_REPOSITORY"
           fi
+
+
+  publish-pages:
+    name: Publish website (after packages pass)
+    if: ${{ success() && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) }}
+    needs: [windows, linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v6
+
+      - name: Validate site metadata
+        run: python -m json.tool site/product.json >/dev/null
+
+      - name: Upload static site artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+
+      - name: Deploy website
+        id: deployment
+        uses: actions/deploy-pages@v5
