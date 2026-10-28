@@ -25,8 +25,10 @@ jobs:
           - name: Ubuntu x64 / GCC
             os: ubuntu-24.04
             platform: linux
-          - name: macOS / Apple Clang
-            os: macos-15
+          - name: macOS 15 Intel / Apple Clang
+            # The ARM64 macOS-15 pool showed repeated runner-allocation failures.
+            # Keep macOS CI on the separately labelled Intel hosted pool for now.
+            os: macos-15-intel
             platform: macos
     runs-on: ${{ matrix.os }}
     steps:
