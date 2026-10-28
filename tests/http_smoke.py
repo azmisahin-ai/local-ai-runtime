@@ -139,6 +139,34 @@ def main():
             assert version_info["version"] and version_info["repository"].endswith("/local-ai-runtime")
             assert "releases_api_url" in version_info and "api.github.com" in version_info["releases_api_url"]
 
+            # Managed catalog and download job endpoints must be safe to inspect
+            # without network side effects. Downloads require explicit license
+            # acknowledgement and only allow built-in, reviewed item IDs.
+            status, catalog_raw, catalog_type = request(base + "/v1/catalog")
+            catalog = json.loads(catalog_raw)
+            assert status == 200 and "application/json" in catalog_type
+            items = {item["id"]: item for item in catalog["data"]}
+            assert "qwen2.5-1.5b-q4km" in items
+            model_item = items["qwen2.5-1.5b-q4km"]
+            assert model_item["license"] == "Apache-2.0"
+            assert model_item["size_bytes"] == 1117320736
+            assert model_item["sha256"] == "6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e"
+            assert "llama.cpp-cpu" in items
+            status, jobs_raw, _ = request(base + "/v1/downloads")
+            assert status == 200 and json.loads(jobs_raw)["data"] == []
+            try:
+                request(base + "/v1/downloads/qwen2.5-1.5b-q4km", method="POST", body={"accept_license": False})
+                raise AssertionError("Download must require explicit license acknowledgement")
+            except urllib.error.HTTPError as exc:
+                assert exc.code == 422, f"Expected 422 for missing license acknowledgement, got {exc.code}"
+            try:
+                request(base + "/v1/downloads/not-in-catalog", method="POST", body={"accept_license": True})
+                raise AssertionError("Unknown catalog items must be rejected")
+            except urllib.error.HTTPError as exc:
+                assert exc.code == 422, f"Expected 422 for unknown catalog item, got {exc.code}"
+            status, jobs_raw, _ = request(base + "/v1/downloads")
+            assert status == 200 and json.loads(jobs_raw)["data"] == [], "Rejected downloads must not create jobs or start network requests"
+
             status, engines_raw, _ = request(base + "/v1/engines")
             engines = json.loads(engines_raw)["data"]
             assert status == 200 and len(engines) == 1 and engines[0]["status"] == "stopped"

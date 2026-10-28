@@ -1,8 +1,10 @@
 #include "lar/config.hpp"
+#include "lar/downloads.hpp"
 #include "lar/process.hpp"
 
 #include <filesystem>
 #include <iostream>
+#include <fstream>
 #include <chrono>
 #include <stdexcept>
 #include <thread>
@@ -18,6 +20,24 @@ int main() {
         require(lar::is_valid_engine_id("llama_cpp-1"), "valid engine id rejected");
         require(!lar::is_valid_engine_id("../llama"), "path traversal engine id accepted");
         require(!lar::is_valid_engine_id(""), "empty engine id accepted");
+
+        // Engine archives are untrusted inputs; extraction must reject paths that
+        // could escape the installation staging root on Windows or Unix.
+        require(lar::DownloadManager::is_safe_archive_entry_path("bin/llama-server"), "safe archive path rejected");
+        require(!lar::DownloadManager::is_safe_archive_entry_path("../outside"), "parent traversal archive path accepted");
+        require(!lar::DownloadManager::is_safe_archive_entry_path("/absolute/path"), "absolute archive path accepted");
+        require(!lar::DownloadManager::is_safe_archive_entry_path("C:\\outside.exe"), "Windows drive path accepted");
+        require(!lar::DownloadManager::is_safe_archive_entry_path("folder\\..\\outside"), "Windows separator traversal accepted");
+
+        const auto digest_suffix = std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+        const auto digest_path = std::filesystem::temp_directory_path() / ("lar-sha256-" + digest_suffix + ".txt");
+        {
+            std::ofstream digest_file(digest_path, std::ios::binary);
+            digest_file << "abc";
+        }
+        require(lar::DownloadManager::sha256_file(digest_path) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+                "SHA-256 verifier returned incorrect result");
+        std::filesystem::remove(digest_path);
 
         const auto config = lar::load_config(LAR_TEST_CONFIG);
         require(config.host == "127.0.0.1", "default host must bind to loopback");

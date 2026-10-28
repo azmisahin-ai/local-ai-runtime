@@ -15,18 +15,31 @@ find_package(Boost 1.74 QUIET)
 if(NOT Boost_FOUND)
     message(FATAL_ERROR
         "Boost 1.74+ headers were not found. On Windows, run scripts/build.ps1 (it bootstraps vcpkg and installs manifest dependencies). "
-        "On Ubuntu/Debian, install them with: sudo apt-get install build-essential cmake libboost-dev. "
+        "On Ubuntu/Debian, install them with: sudo apt-get install build-essential cmake libboost-dev libcurl4-openssl-dev libarchive-dev libssl-dev. "
         "If using CMake directly on Windows, pass -DCMAKE_TOOLCHAIN_FILE=<vcpkg-root>/scripts/buildsystems/vcpkg.cmake.")
 endif()
 find_package(Threads REQUIRED)
+find_package(LibArchive REQUIRED)
+find_package(OpenSSL REQUIRED)
+if(WIN32)
+    find_package(CURL REQUIRED)
+    set(LAR_CURL_TARGET CURL::libcurl)
+else()
+    # Prefer pkg-config on Unix so static curl builds include all transitive
+    # codec/TLS dependencies instead of failing at link time with DSO errors.
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(LIBCURL REQUIRED IMPORTED_TARGET libcurl)
+    set(LAR_CURL_TARGET PkgConfig::LIBCURL)
+endif()
 
 add_library(lar_core
     src/config.cpp
     src/process.cpp
+    src/downloads.cpp
 )
 target_include_directories(lar_core PUBLIC include ${Boost_INCLUDE_DIRS})
 target_compile_definitions(lar_core PUBLIC BOOST_ERROR_CODE_HEADER_ONLY BOOST_SYSTEM_NO_DEPRECATED)
-target_link_libraries(lar_core PUBLIC Threads::Threads)
+target_link_libraries(lar_core PUBLIC Threads::Threads ${LAR_CURL_TARGET} LibArchive::LibArchive OpenSSL::Crypto)
 if(WIN32)
     target_link_libraries(lar_core PUBLIC ws2_32)
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")

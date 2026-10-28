@@ -24,11 +24,24 @@
       <a id="update-link" class="button primary" href="https://github.com/azmisahin-ai/local-ai-runtime/releases" target="_blank" rel="noopener noreferrer">View releases</a>
     </section>
 
+    <section class="panel catalog-panel">
+      <div class="section-heading">
+        <div><p class="eyebrow">MANAGED COMPONENTS</p><h2>Install an AI engine and model</h2></div>
+        <button id="catalog-refresh" class="button secondary" type="button">Refresh catalog</button>
+      </div>
+      <p class="hint">Downloads come only from reviewed upstream sources. Each package is verified before installation. Model weights are stored separately from the runtime; review license terms and disk requirements before confirming.</p>
+      <p class="hint">Recommended first test: install the llama.cpp CPU package and the Qwen2.5 1.5B Q4_K_M model (about 1.12 GB). NVIDIA users can choose a CUDA package if their driver is compatible. Keep engines stopped while installing components.</p>
+      <div id="catalog-list" class="catalog-list"><div class="empty">Loading the built-in component catalog…</div></div>
+      <h3>Downloads and installation jobs</h3>
+      <div id="download-list" class="download-list"><div class="empty">No downloads started.</div></div>
+      <p id="catalog-error" class="error" role="status" aria-live="polite"></p>
+    </section>
+
     <section class="panel setup-panel">
       <div class="section-heading">
         <div><p class="eyebrow">FIRST ENGINE SETUP</p><h2>Configure llama.cpp</h2></div>
       </div>
-      <p class="hint">Use a local llama-server executable and a GGUF model you have already downloaded. This form saves paths to config/engines.json; it does not download executable files or model weights. Windows Explorer “Copy as path” quotes are accepted.</p>
+      <p class="hint">Advanced/manual option: configure an existing llama-server executable and GGUF model. For one-click downloads of the built-in verified starter components, use the component catalog above. Windows Explorer “Copy as path” quotes are accepted.</p>
       <form id="llama-setup-form">
         <label for="llama-executable">llama-server executable path</label>
         <input id="llama-executable" name="executable_path" type="text" required autocomplete="off" spellcheck="false" placeholder="C:\AI\llama.cpp\llama-server.exe or /usr/local/bin/llama-server">

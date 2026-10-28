@@ -44,13 +44,13 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake ninja-build libboost-dev
+          sudo apt-get install -y build-essential cmake ninja-build pkg-config libboost-dev libcurl4-openssl-dev libarchive-dev libssl-dev
 
       - name: Install macOS dependencies
         if: runner.os == 'macOS'
         run: |
           brew update
-          brew install cmake ninja boost
+          brew install cmake ninja pkg-config boost curl libarchive openssl@3
 
       - name: Configure Windows (vcpkg manifest mode)
         if: runner.os == 'Windows'
@@ -66,7 +66,14 @@ jobs:
 
       - name: Configure Unix
         if: runner.os != 'Windows'
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DLAR_BUILD_TESTS=ON
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            PREFIX_PATH="$(brew --prefix curl);$(brew --prefix libarchive);$(brew --prefix openssl@3)"
+            cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DLAR_BUILD_TESTS=ON "-DCMAKE_PREFIX_PATH=${PREFIX_PATH}"
+          else
+            cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DLAR_BUILD_TESTS=ON
+          fi
 
       - name: Build
         run: cmake --build build --config Release --parallel 2

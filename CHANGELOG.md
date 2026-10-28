@@ -4,6 +4,14 @@ This project follows a lightweight Keep a Changelog structure. GitHub Release no
 
 ## Unreleased
 
+- Add a managed component catalog in the local dashboard for verified llama.cpp CPU/CUDA release archives and a pinned Qwen2.5 1.5B Q4_K_M GGUF model, with explicit license consent, progress/cancel jobs, HTTPS-only transfer, size limits, SHA-256 verification, GGUF header validation and safe archive extraction.
+- Install engine/model files in a per-user data directory and register the first llama.cpp engine with the runtime configuration.
+- Align macOS's launcher data root with the downloader's Application Support path, and preserve an explicit XDG data-root override.
+- Rebuild catalog cards after failed/canceled downloads so a user can retry without refreshing the whole page manually.
+- Validate the Linux portable package's dynamic dependencies before uploading preview/release artifacts.
+- Bound completed download job history, reap finished worker threads, verify an existing model before reporting it as installed, and remove newly activated engine files if config registration fails.
+- Bundle Linux runtime shared-library dependencies and preserve SONAME aliases in portable release packages; the release workflow checks extracted package startup via `/health`.
+
 - Compile all MSVC test targets with `/utf-8` so Unicode-path test literals are interpreted consistently with the UTF-8 config/process contract.
 - Run hosted macOS CI on the explicit `macos-15-intel` label while the standard ARM64 pool is reporting runner-allocation capacity failures.
 

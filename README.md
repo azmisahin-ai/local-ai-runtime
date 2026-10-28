@@ -15,7 +15,7 @@ This is an early C++20 alpha. It orchestrates existing model engines; it does no
 
 Use the project site or [GitHub Releases](https://github.com/azmisahin-ai/local-ai-runtime/releases). After a version tag is published, GitHub Actions builds portable packages for Windows x64 and Linux x64 and attaches `SHA256SUMS.txt`.
 
-The package includes the runtime, the web dashboard, an example configuration, a starter script, and the project license. It does not include `llama.cpp`, CUDA, or model weights. You choose and download those components separately so engine builds and model licenses remain explicit.
+The package includes the runtime, the web dashboard, an example configuration, a starter script, and the project license. It deliberately does not bundle inference engines, CUDA runtimes, or multi-gigabyte model weights. After launching the runtime, use **Managed Components** in the dashboard to download reviewed components on demand; each engine/model remains separate so versions and licenses can be tracked independently.
 
 - **Windows 10/11 x64:** extract the ZIP, open PowerShell in the extracted folder, and run:
 
@@ -24,18 +24,21 @@ The package includes the runtime, the web dashboard, an example configuration, a
   .\scripts\Start-LocalAIRuntime.ps1
   ```
 
-  The script initializes `config/engines.json` on first start and opens the dashboard.
-- **Linux x64:** extract the TAR.GZ and run `./scripts/start-runtime.sh`. The runtime stays in the foreground; press Ctrl+C to stop.
+  The script creates the user configuration on first start and opens the dashboard. Settings, downloaded engines/models and logs are stored under `%LOCALAPPDATA%\LocalAIRuntime`, outside the extracted application folder, so they survive replacing the app package.
+- **Linux x64:** extract the TAR.GZ and run `./scripts/start-runtime.sh`. The runtime stays in the foreground; press Ctrl+C to stop. On Linux, user data is stored in `$XDG_DATA_HOME/local-ai-runtime` when set, otherwise `~/.local/share/local-ai-runtime`. On macOS developer runs, it defaults to `~/Library/Application Support/LocalAIRuntime` (or follows `XDG_DATA_HOME` when set).
 
 #### First model setup
 
-1. Download a matching `llama-server` binary from the [official llama.cpp releases](https://github.com/ggml-org/llama.cpp/releases). Extract the whole archive so its required DLLs/shared libraries remain beside the executable.
-2. Download a GGUF model from a source you trust and review that model's license and system requirements. The runtime does not download or upload model files in this alpha.
-3. In the local dashboard, enter the absolute paths to `llama-server` (on Windows, `llama-server.exe`) and the `.gguf` file. Choose CPU first for the most portable baseline, then save the setup.
-4. Press **Start**. The dashboard distinguishes a running process from a model server that has passed its local health check. When ready, chat is enabled and requests are routed through the Local AI Runtime API.
+1. Start Local AI Runtime and open its local dashboard at `http://127.0.0.1:8000`.
+2. In **Managed Components**, begin with the llama.cpp CPU package. Review the upstream MIT license, confirm it in the UI, and let the runtime download, checksum-verify, safely extract and register it.
+3. Install the starter Qwen2.5 1.5B Instruct Q4_K_M model. Review its Apache-2.0 license, confirm it, and let the runtime download the pinned GGUF, check its exact size/SHA-256/header, and register it.
+4. Wait for both jobs to complete, start the engine and send a message when the dashboard reports it ready.
 
-The optional NVIDIA GPU mode asks `llama-server` to choose GPU-layer placement automatically and requires a CUDA-enabled build. Actual compatibility and VRAM fit still depend on the model, context size, driver and binary. Start with CPU or a small quantized model if unsure.
-- **Offline use:** the local runtime does not require GitHub once installed. Release update checks are skipped if the service is unreachable. When the dashboard is opened, it requests public release metadata from GitHub; it does not upload prompts, model paths, or usage events. GitHub still receives ordinary network metadata such as the request IP address.
+The initial model download is about 1.12 GB and requires an internet connection plus additional free disk space. The lightweight runtime release does not contain the engine archive or model weights. The catalog selects reviewed upstream URLs; arbitrary URLs are not accepted by the installer API. If the latest upstream engine release lacks a published SHA-256 digest or a matching platform/backend asset, installation fails closed rather than bypassing verification.
+
+Advanced users can still use **Configure llama.cpp** to register an engine and model they already installed. NVIDIA CUDA packages are available as separate choices on supported Windows/Linux x64 hosts, but a package option is not proof that a given GPU/driver/model combination works. Start with CPU, then test CUDA on the exact machine and model.
+
+- **Offline use:** once the app, engine and model are installed, local inference does not need GitHub. Catalog downloads and update checks require network access. The dashboard does not upload prompts, model paths or usage events; the source hosts may receive ordinary network metadata such as the request IP address.
 
 The local dashboard checks for a newer **stable** release on startup and links to release notes/downloads. This alpha does **not** install or replace binaries silently. Review the package and release notes before updating.
 
@@ -51,7 +54,7 @@ The API has no authentication. It binds to `127.0.0.1` and should not be exposed
 - C++20 compiler (Visual Studio Build Tools with **Desktop development with C++** on Windows; GCC/Clang on Unix)
 - Git
 - Python 3.10+ for the HTTP end-to-end smoke test
-- vcpkg on Windows (the helper bootstraps a local copy on the first run); Boost 1.74+ headers on Unix
+- vcpkg on Windows (the helper bootstraps a local copy on the first run); Boost 1.74+, libcurl, libarchive and OpenSSL development packages on Unix
 
 ### Build from source
 
@@ -66,7 +69,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y build-essential cmake libboost-dev python3
+sudo apt-get install -y build-essential cmake pkg-config libboost-dev libcurl4-openssl-dev libarchive-dev libssl-dev python3
 ./scripts/build.sh
 ```
 
@@ -94,7 +97,7 @@ From repository root, after building:
 ./build/local-ai-runtime
 ```
 
-Open http://127.0.0.1:8000. Use the **Configure llama.cpp** form to set the local `llama-server` and `.gguf` paths; you no longer need to hand-edit `config/engines.json` for the first engine.
+Open http://127.0.0.1:8000. Use **Managed Components** for the verified llama.cpp CPU/CUDA packages and the pinned starter GGUF, or use **Configure llama.cpp** if you already have engine/model files. The managed catalog requires explicit license acknowledgement and only accepts built-in reviewed item IDs.
 
 ## CI and releases
 
@@ -115,10 +118,12 @@ GitHub Actions is the source for repeatable cross-platform build/test results. L
 - `POST /v1/setup/llama-cpp` to validate and save local `llama-server`/GGUF paths, backend mode, context size and engine port.
 - `/v1/engines` reports process state and API readiness separately; the dashboard does not enable chat until the default engine is ready.
 - `/version` and `/health` endpoints; dashboard checks the public release feed for stable update notices.
-- Fake-engine core and HTTP end-to-end tests; Windows/Linux/macOS CI definitions.
+- Built-in managed component catalog for the official llama.cpp release (CPU/CUDA variants) and a pinned Qwen2.5 1.5B GGUF starter model. Downloads are cancellable, size-bounded, HTTPS-only, SHA-256 checked, and safely extracted; model license confirmation is required.
+- `/v1/catalog`, `/v1/downloads`, per-job progress/cancel routes and dashboard installation progress.
+- Fake-engine core and HTTP end-to-end tests; Windows/Linux/macOS CI definitions. CI validates the installer API without downloading external binaries or model weights.
 - Public project page and tag-driven Windows/Linux release pipeline.
 
-Not implemented yet: real-model downloads/management, automatic hardware/backend selection, CUDA/VRAM probes, a secure unattended self-updater, installers, audio/vision/embedding adapters, streaming chat, authentication, and MCP. See [roadmap](docs/roadmap.md).
+Not implemented yet: comprehensive hardware/backend detection and recommendations, unattended self-updates, platform installers, audio/vision/embedding adapters, streaming chat, authentication and MCP. The managed catalog downloads the first llama.cpp package and one pinned GGUF model, but it does not yet automatically install every engine/model family or prove the binary works with a real model on every platform. See [roadmap](docs/roadmap.md).
 
 ## Contributing
 

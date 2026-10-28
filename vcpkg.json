@@ -5,6 +5,9 @@
   "dependencies": [
     "boost-beast",
     "boost-property-tree",
-    "boost-system"
+    "boost-system",
+    "curl",
+    "libarchive",
+    "openssl"
   ]
 }

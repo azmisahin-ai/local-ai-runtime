@@ -1,4 +1,5 @@
 #include "lar/server.hpp"
+#include "lar/downloads.hpp"
 
 #ifndef LAR_VERSION
 #define LAR_VERSION "0.1.0-dev"
@@ -53,7 +54,7 @@ std::string json_escape(std::string_view input) {
     return out.str();
 }
 
-std::string quoted(const std::string& value) { return "\"" + json_escape(value) + "\""; }
+std::string json_quoted(std::string_view value) { return "\"" + json_escape(value) + "\""; }
 
 bool is_loopback_host(const std::string& header, unsigned short port) {
     const auto expected_port = ":" + std::to_string(port);
@@ -86,22 +87,22 @@ std::string engine_status_json(const EngineStatus& engine) {
     else if (engine.state == ProcessState::failed) readiness = "failed";
     else if (engine.state == ProcessState::running) readiness = ready ? "ready" : "loading-or-unavailable";
     std::ostringstream out;
-    out << "{\"id\":" << quoted(engine.config.id)
-        << ",\"display_name\":" << quoted(engine.config.display_name)
-        << ",\"status\":" << quoted(to_string(engine.state))
+    out << "{\"id\":" << json_quoted(engine.config.id)
+        << ",\"display_name\":" << json_quoted(engine.config.display_name)
+        << ",\"status\":" << json_quoted(to_string(engine.state))
         << ",\"pid\":" << engine.pid
         << ",\"exit_code\":" << engine.exit_code
-        << ",\"last_error\":" << quoted(engine.last_error)
+        << ",\"last_error\":" << json_quoted(engine.last_error)
         << ",\"executable_configured\":" << (engine.config.executable_path.empty() ? "false" : "true")
         << ",\"model_configured\":" << (engine.config.model_path.empty() ? "false" : "true")
         << ",\"default_for_chat\":" << (engine.config.default_for_chat ? "true" : "false")
         << ",\"ready\":" << (ready ? "true" : "false")
-        << ",\"readiness\":" << quoted(readiness)
-        << ",\"upstream_base_url\":" << quoted(engine.config.upstream_base_url)
+        << ",\"readiness\":" << json_quoted(readiness)
+        << ",\"upstream_base_url\":" << json_quoted(engine.config.upstream_base_url)
         << ",\"capabilities\":[";
     for (std::size_t i = 0; i < engine.config.capabilities.size(); ++i) {
         if (i) out << ',';
-        out << quoted(engine.config.capabilities[i]);
+        out << json_quoted(engine.config.capabilities[i]);
     }
     out << "]}";
     return out.str();
@@ -122,7 +123,7 @@ http::response<http::string_body> json_response(http::status status, unsigned ve
 
 http::response<http::string_body> error_response(http::status status, unsigned version,
                                                   const std::string& message) {
-    return json_response(status, version, "{\"error\":{\"message\":" + quoted(message) + "}}");
+    return json_response(status, version, "{\"error\":{\"message\":" + json_quoted(message) + "}}");
 }
 
 std::string engine_id_from_path(const std::string& path, const std::string& action) {
@@ -312,7 +313,7 @@ ProxyResult proxy_local_request(const EngineStatus& engine, http::verb method,
         stream.socket().shutdown(tcp::socket::shutdown_both, ignored);
     } catch (const std::exception& ex) {
         result.status = http::status::bad_gateway;
-        result.body = "{\"error\":{\"message\":" + quoted(std::string("Could not reach local model server: ") + ex.what()) + "}}";
+        result.body = "{\"error\":{\"message\":" + json_quoted(std::string("Could not reach local model server: ") + ex.what()) + "}}";
     }
     return result;
 }
@@ -328,6 +329,7 @@ ProxyResult proxy_models(const EngineStatus& engine) {
 http::response<http::string_body> handle_request(const http::request<http::string_body>& request,
                                                   const RuntimeConfig& config,
                                                   EngineManager& engines,
+                                                  DownloadManager& downloads,
                                                   const std::filesystem::path& web_dir) {
     const auto version = request.version();
     const std::string host = std::string(request[http::field::host].data(), request[http::field::host].size());
@@ -370,11 +372,11 @@ http::response<http::string_body> handle_request(const http::request<http::strin
     }
     if (request.method() == http::verb::get && target == "/health") {
         return json_response(http::status::ok, version,
-            "{\"status\":\"ok\",\"version\":" + quoted(LAR_VERSION) + ",\"bind\":\"loopback\"}");
+            "{\"status\":\"ok\",\"version\":" + json_quoted(LAR_VERSION) + ",\"bind\":\"loopback\"}");
     }
     if (request.method() == http::verb::get && target == "/version") {
         return json_response(http::status::ok, version,
-            "{\"version\":" + quoted(LAR_VERSION) +
+            "{\"version\":" + json_quoted(LAR_VERSION) +
             ",\"repository\":\"https://github.com/azmisahin-ai/local-ai-runtime\"" +
             ",\"releases_api_url\":\"https://api.github.com/repos/azmisahin-ai/local-ai-runtime/releases?per_page=10\"" +
             ",\"releases_url\":\"https://github.com/azmisahin-ai/local-ai-runtime/releases\"}");
@@ -393,6 +395,45 @@ http::response<http::string_body> handle_request(const http::request<http::strin
         response.prepare_payload();
         return response;
     }
+    if (request.method() == http::verb::get && target == "/v1/catalog") {
+        return json_response(http::status::ok, version, downloads.catalog_json());
+    }
+    if (request.method() == http::verb::get && target == "/v1/downloads") {
+        return json_response(http::status::ok, version, downloads.jobs_json());
+    }
+    constexpr std::string_view download_prefix = "/v1/downloads/";
+    if (target.rfind(download_prefix, 0) == 0 && target.size() > download_prefix.size()) {
+        const auto download_id = target.substr(download_prefix.size());
+        if (download_id.find('/') == std::string::npos && request.method() == http::verb::get) {
+            const auto job = downloads.job_json(download_id);
+            if (!job) return error_response(http::status::not_found, version, "Download job was not found.");
+            return json_response(http::status::ok, version, *job);
+        }
+        if (download_id.find('/') == std::string::npos && request.method() == http::verb::delete_) {
+            std::string error;
+            if (!downloads.cancel(download_id, error)) return error_response(http::status::conflict, version, error);
+            return json_response(http::status::accepted, version, "{\"id\":" + json_quoted(download_id) + ",\"status\":\"canceling\"}");
+        }
+        if (download_id.find('/') == std::string::npos && request.method() == http::verb::post) {
+            try {
+                std::istringstream input(request.body());
+                boost::property_tree::ptree body;
+                boost::property_tree::read_json(input, body);
+                const bool accept_license = body.get<bool>("accept_license", false);
+                std::string job_id;
+                std::string error;
+                if (!downloads.start(download_id, accept_license, job_id, error)) {
+                    const auto status = error.find("already being installed") != std::string::npos || error.find("running engines") != std::string::npos
+                        ? http::status::conflict : http::status::unprocessable_entity;
+                    return error_response(status, version, error);
+                }
+                return json_response(http::status::accepted, version,
+                    "{\"job_id\":" + json_quoted(job_id) + ",\"item_id\":" + json_quoted(download_id) + ",\"status\":\"queued\"}");
+            } catch (const boost::property_tree::json_parser_error& ex) {
+                return error_response(http::status::bad_request, version, std::string("Invalid download request JSON: ") + ex.what());
+            }
+        }
+    }
     if (request.method() == http::verb::get && target == "/v1/engines") {
         const auto status_list = engines.statuses();
         std::ostringstream body;
@@ -405,6 +446,9 @@ http::response<http::string_body> handle_request(const http::request<http::strin
         return json_response(http::status::ok, version, body.str());
     }
     if (request.method() == http::verb::post && target == "/v1/setup/llama-cpp") {
+        if (downloads.has_active_jobs()) {
+            return error_response(http::status::conflict, version, "A component installation is active. Finish or cancel it before changing engine configuration.");
+        }
         if (config.source_path.empty()) {
             return error_response(http::status::internal_server_error, version, "The active configuration path is unknown; setup cannot be persisted.");
         }
@@ -437,7 +481,7 @@ http::response<http::string_body> handle_request(const http::request<http::strin
                 return error_response(http::status::conflict, version, error);
             }
             return json_response(http::status::ok, version,
-                "{\"id\":\"llama-cpp\",\"status\":\"configured\",\"backend\":" + quoted(body.get<std::string>("backend", "cpu")) +
+                "{\"id\":\"llama-cpp\",\"status\":\"configured\",\"backend\":" + json_quoted(body.get<std::string>("backend", "cpu")) +
                 ",\"ready\":false,\"config_saved\":true}");
         } catch (const boost::property_tree::json_parser_error& ex) {
             return error_response(http::status::bad_request, version, std::string("Invalid JSON setup request: ") + ex.what());
@@ -449,15 +493,18 @@ http::response<http::string_body> handle_request(const http::request<http::strin
     if (request.method() == http::verb::post) {
         const auto start_id = engine_id_from_path(target, "start");
         if (!start_id.empty()) {
+            if (downloads.has_active_jobs()) {
+                return error_response(http::status::conflict, version, "A component installation is active. Wait for it to finish before starting an engine.");
+            }
             std::string error;
             if (!engines.start(start_id, error)) return error_response(http::status::unprocessable_entity, version, error);
-            return json_response(http::status::ok, version, "{\"id\":" + quoted(start_id) + ",\"status\":\"running\"}");
+            return json_response(http::status::ok, version, "{\"id\":" + json_quoted(start_id) + ",\"status\":\"running\"}");
         }
         const auto stop_id = engine_id_from_path(target, "stop");
         if (!stop_id.empty()) {
             std::string error;
             if (!engines.stop(stop_id, error)) return error_response(http::status::unprocessable_entity, version, error);
-            return json_response(http::status::ok, version, "{\"id\":" + quoted(stop_id) + ",\"status\":\"stopped\"}");
+            return json_response(http::status::ok, version, "{\"id\":" + json_quoted(stop_id) + ",\"status\":\"stopped\"}");
         }
         if (target == "/v1/chat/completions") {
             if (request.body().empty()) return error_response(http::status::bad_request, version, "Request body must contain a chat completion JSON object.");
@@ -482,7 +529,7 @@ http::response<http::string_body> handle_request(const http::request<http::strin
 }
 
 void serve_client(tcp::socket socket, RuntimeConfig config, EngineManager& engines,
-                  std::filesystem::path web_dir) {
+                  DownloadManager& downloads, std::filesystem::path web_dir) {
     beast::tcp_stream stream(std::move(socket));
     stream.expires_after(std::chrono::seconds(130));
     beast::flat_buffer buffer;
@@ -491,7 +538,7 @@ void serve_client(tcp::socket socket, RuntimeConfig config, EngineManager& engin
         parser.body_limit(4U * 1024U * 1024U);
         http::read(stream, buffer, parser);
         auto request = parser.release();
-        auto response = handle_request(request, config, engines, web_dir);
+        auto response = handle_request(request, config, engines, downloads, web_dir);
         http::write(stream, response);
         beast::error_code ignored;
         stream.socket().shutdown(tcp::socket::shutdown_send, ignored);
@@ -519,6 +566,7 @@ void run_http_server(const RuntimeConfig& config, EngineManager& engines,
     tcp::acceptor acceptor{ioc, tcp::endpoint{address, config.port}};
     acceptor.set_option(asio::socket_base::reuse_address(true));
     acceptor.non_blocking(true);
+    DownloadManager downloads(config, engines);
     while (shutdown_requested == 0) {
         tcp::socket socket{ioc};
         boost::system::error_code ec;
@@ -529,7 +577,7 @@ void run_http_server(const RuntimeConfig& config, EngineManager& engines,
         }
         if (ec == asio::error::interrupted && shutdown_requested != 0) break;
         if (ec) throw boost::system::system_error(ec, "accept");
-        std::thread(serve_client, std::move(socket), config, std::ref(engines), web_dir).detach();
+        std::thread(serve_client, std::move(socket), config, std::ref(engines), std::ref(downloads), web_dir).detach();
     }
     beast::error_code ignored;
     acceptor.close(ignored);

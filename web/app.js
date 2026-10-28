@@ -14,6 +14,11 @@ const chatReadiness = document.querySelector('#chat-readiness');
 const chatSendButton = document.querySelector('#send');
 const llamaSetupForm = document.querySelector('#llama-setup-form');
 const setupStatus = document.querySelector('#setup-status');
+const catalogList = document.querySelector('#catalog-list');
+const downloadList = document.querySelector('#download-list');
+const catalogError = document.querySelector('#catalog-error');
+const catalogRefreshButton = document.querySelector('#catalog-refresh');
+const completedDownloadJobs = new Set();
 
 const REPOSITORY_RELEASES = 'https://github.com/azmisahin-ai/local-ai-runtime/releases';
 const FALLBACK_RELEASE_API = 'https://api.github.com/repos/azmisahin-ai/local-ai-runtime/releases?per_page=10';
@@ -107,6 +112,190 @@ async function refreshHealth() {
   } catch (error) {
     apiStatus.textContent = 'API unavailable';
     apiDot.className = 'dot bad';
+  }
+}
+
+function formatBytes(bytes) {
+  const value = Number(bytes || 0);
+  if (!Number.isFinite(value) || value <= 0) return 'Size resolved and verified during download';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let size = value;
+  let unit = 0;
+  while (size >= 1000 && unit < units.length - 1) { size /= 1000; unit += 1; }
+  return `${size.toFixed(unit >= 2 ? 2 : 0)} ${units[unit]}`;
+}
+
+function safeHttpsUrl(value) {
+  try {
+    const parsed = new URL(String(value || ''));
+    return parsed.protocol === 'https:' ? parsed.href : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function catalogItemCard(item) {
+  const card = make('article', 'catalog-card');
+  const info = make('div');
+  info.append(make('h3', '', item.name || item.id));
+  info.append(make('p', '', item.description || 'Reviewed catalog component.'));
+  const meta = make('div', 'engine-meta');
+  meta.append(make('span', 'tag', item.type || 'component'));
+  if (item.backend) meta.append(make('span', 'tag', String(item.backend).toUpperCase()));
+  if (item.version) meta.append(make('span', 'tag', item.version === 'latest-stable' ? 'latest stable' : `revision ${String(item.version).slice(0, 12)}`));
+  meta.append(make('span', 'tag', item.installed ? 'installed' : formatBytes(item.size_bytes)));
+  if (item.installed) meta.append(make('span', 'tag ready', 'verified file present'));
+  info.append(meta);
+  const licenseUrl = safeHttpsUrl(item.license_url);
+  const license = make('p', 'catalog-license');
+  license.append(document.createTextNode(`License: ${item.license || 'Not specified'} · `));
+  if (licenseUrl) {
+    const link = make('a', '', 'review license');
+    link.href = licenseUrl;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    license.append(link);
+  } else {
+    license.append(document.createTextNode('license URL unavailable'));
+  }
+  info.append(license);
+  if (item.sha256) info.append(make('p', 'hint', `Pinned SHA-256: ${item.sha256}`));
+  if (item.source_url) {
+    const sourceUrl = safeHttpsUrl(item.source_url);
+    if (sourceUrl) {
+      const source = make('a', 'catalog-source', 'Open official model source');
+      source.href = sourceUrl;
+      source.target = '_blank';
+      source.rel = 'noopener noreferrer';
+      info.append(source);
+    }
+  }
+  if (item.installed_path) info.append(make('p', 'hint', `Installed at: ${item.installed_path}`));
+
+  const actions = make('div', 'catalog-actions');
+  const acknowledgeLabel = make('label', 'license-ack');
+  const acknowledge = make('input');
+  acknowledge.type = 'checkbox';
+  acknowledge.checked = false;
+  const acknowledgeText = make('span', '', 'I reviewed the upstream license and want to download this component.');
+  acknowledgeLabel.append(acknowledge, acknowledgeText);
+  const install = make('button', 'button primary', item.installed ? 'Installed' : 'Download and install');
+  install.type = 'button';
+  install.disabled = Boolean(item.installed) || !licenseUrl;
+  install.addEventListener('click', async () => {
+    if (!acknowledge.checked) {
+      catalogError.textContent = 'Please confirm that you reviewed the license before starting this download.';
+      acknowledge.focus();
+      return;
+    }
+    if (!window.confirm(`Download and install “${item.name || item.id}”? The file may be large. Only verified files will be activated.`)) return;
+    install.disabled = true;
+    catalogError.textContent = '';
+    try {
+      const started = await api(`/v1/downloads/${encodeURIComponent(item.id)}`, {
+        method: 'POST', body: JSON.stringify({ accept_license: true }),
+      });
+      catalogError.textContent = `Queued ${item.name || item.id} as ${started.job_id}. You can follow progress below.`;
+      await refreshDownloads();
+    } catch (error) {
+      catalogError.textContent = error.message;
+      install.disabled = Boolean(item.installed);
+    }
+  });
+  actions.append(acknowledgeLabel, install);
+  if (!licenseUrl) actions.append(make('p', 'engine-error', 'Installation is disabled because no safe HTTPS license link is available.'));
+  card.append(info, actions);
+  return card;
+}
+
+async function refreshCatalog() {
+  catalogError.textContent = '';
+  catalogRefreshButton.disabled = true;
+  try {
+    const result = await api('/v1/catalog');
+    if (!Array.isArray(result.data)) throw new Error('The component catalog response is invalid.');
+    catalogList.replaceChildren();
+    if (!result.data.length) {
+      catalogList.append(make('div', 'empty', 'No compatible catalog components are available for this computer yet.'));
+      return;
+    }
+    for (const item of result.data) catalogList.append(catalogItemCard(item));
+  } catch (error) {
+    catalogList.replaceChildren(make('div', 'empty', 'Could not load the component catalog.'));
+    catalogError.textContent = error.message;
+  } finally {
+    catalogRefreshButton.disabled = false;
+  }
+}
+
+function downloadJobCard(job) {
+  const card = make('article', 'download-card');
+  const header = make('div', 'download-job-header');
+  header.append(make('h3', '', `${job.item_id} · ${job.state}`));
+  header.append(make('span', 'tag', job.kind || 'component'));
+  card.append(header);
+  card.append(make('p', '', job.phase || job.state));
+  const progress = make('progress', 'download-progress');
+  progress.max = 100;
+  progress.value = Math.max(0, Math.min(100, Number(job.progress_percent || 0)));
+  progress.setAttribute('aria-label', `Download progress ${progress.value}%`);
+  card.append(progress);
+  const total = Number(job.total_bytes || 0);
+  const downloaded = Number(job.downloaded_bytes || 0);
+  card.append(make('p', 'hint', total > 0 ? `${formatBytes(downloaded)} of ${formatBytes(total)} (${progress.value}%)` : `${formatBytes(downloaded)} downloaded`));
+  if (job.version) card.append(make('p', 'hint', `Upstream version: ${job.version}`));
+  if (job.installed_path) card.append(make('p', 'hint', `Installed at: ${job.installed_path}`));
+  if (job.error) card.append(make('p', 'engine-error', job.error));
+  const active = ['queued', 'downloading', 'verifying', 'extracting', 'configuring'].includes(job.state);
+  if (active) {
+    const cancel = make('button', 'button secondary', 'Cancel');
+    cancel.type = 'button';
+    cancel.addEventListener('click', async () => {
+      cancel.disabled = true;
+      try {
+        await api(`/v1/downloads/${encodeURIComponent(job.id)}`, { method: 'DELETE' });
+        await refreshDownloads();
+      } catch (error) {
+        catalogError.textContent = error.message;
+        cancel.disabled = false;
+      }
+    });
+    card.append(cancel);
+  }
+  return card;
+}
+
+async function refreshDownloads() {
+  try {
+    const result = await api('/v1/downloads');
+    if (!Array.isArray(result.data)) throw new Error('The download job list response is invalid.');
+    downloadList.replaceChildren();
+    if (!result.data.length) {
+      downloadList.append(make('div', 'empty', 'No downloads started.'));
+      return;
+    }
+    let hasActive = false;
+    let changedTerminalState = false;
+    let completedSuccessfully = false;
+    for (const job of result.data) {
+      downloadList.append(downloadJobCard(job));
+      if (['queued', 'downloading', 'verifying', 'extracting', 'configuring'].includes(job.state)) hasActive = true;
+      if (['succeeded', 'failed', 'canceled'].includes(job.state) && !completedDownloadJobs.has(job.id)) {
+        completedDownloadJobs.add(job.id);
+        changedTerminalState = true;
+        completedSuccessfully = completedSuccessfully || job.state === 'succeeded';
+      }
+    }
+    // Rebuild catalog cards on every terminal result so failed/canceled downloads
+    // re-enable their install button. Refresh engines only after a successful install.
+    if (changedTerminalState) {
+      await refreshCatalog();
+      if (completedSuccessfully) await refreshEngines();
+    }
+    return hasActive;
+  } catch (error) {
+    catalogError.textContent = error.message;
+    return false;
   }
 }
 
@@ -211,7 +400,7 @@ llamaSetupForm.addEventListener('submit', async (event) => {
     };
     const result = await api('/v1/setup/llama-cpp', { method: 'POST', body: JSON.stringify(body) });
     setupStatus.className = 'status-message success';
-    setupStatus.textContent = `Saved ${result.id} configuration (${result.backend.toUpperCase()} backend). Your paths are stored locally in config/engines.json. Start the engine below; no model file was uploaded.`;
+    setupStatus.textContent = `Saved ${result.id} configuration (${result.backend.toUpperCase()} backend) to this user's local settings. Start the engine below; no model file was uploaded.`;
     await refreshEngines();
   } catch (error) {
     setupStatus.className = 'status-message failure';
@@ -222,8 +411,9 @@ llamaSetupForm.addEventListener('submit', async (event) => {
 });
 
 document.querySelector('#refresh').addEventListener('click', async () => {
-  await Promise.all([refreshHealth(), refreshEngines()]);
+  await Promise.all([refreshHealth(), refreshEngines(), refreshCatalog(), refreshDownloads()]);
 });
+catalogRefreshButton.addEventListener('click', refreshCatalog);
 
 document.querySelector('#chat-form').addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -253,6 +443,9 @@ document.querySelector('#chat-form').addEventListener('submit', async (event) =>
 chatSendButton.disabled = true;
 refreshHealth();
 refreshEngines();
+refreshCatalog();
+refreshDownloads();
 checkForUpdates();
 setInterval(refreshHealth, 5000);
 setInterval(refreshEngines, 5000);
+setInterval(refreshDownloads, 2000);

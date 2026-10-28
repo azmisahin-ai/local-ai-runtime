@@ -17,7 +17,7 @@ The roadmap distinguishes implemented code from platform/model combinations that
 - [x] Confirm hosted Windows/MSVC CI on the public repository (green at commit `1f020c4`)
 - [x] Confirm hosted macOS CI on the public repository (green at commit `1f020c4`)
 - [ ] Publish the first prerelease tag after the user-facing llama.cpp setup is ready; current workflow dry-run/package rehearsal is green
-- [ ] Real `llama-server` smoke test on Windows and one CPU-only environment
+- [ ] Real `llama-server` + GGUF smoke test on Windows and one CPU-only environment; CI currently uses a fake engine and intentionally does not fetch external components
 - [x] Dashboard setup form for an existing local `llama-server` and GGUF file; persists the engine configuration without hand-editing JSON
 - [x] Runtime readiness state from the local `/health` endpoint (fallback to `/v1/models`) and chat gating in the dashboard
 - [ ] Real CUDA smoke test with GPU model, VRAM, driver, model quantization and backend recorded
@@ -47,11 +47,14 @@ The roadmap distinguishes implemented code from platform/model combinations that
 
 The proposed separation and catalog fields are documented in [engine distribution strategy](engine-distribution.md).
 
-- [ ] Model registry with source, format, model/license metadata, size, checksum and system requirements
-- [ ] Cancellable and resumable model downloads with source allowlisting, path validation and SHA-256 verification
-- [ ] Preserve user model/config directories across application updates
+- [x] Built-in catalog for official llama.cpp CPU/CUDA release assets and a pinned Qwen2.5 1.5B Q4_K_M GGUF starter model
+- [x] License acknowledgement, HTTPS-only download, expected-size caps, SHA-256 validation, GGUF magic check and safe archive extraction
+- [x] Download progress, cancellation, job status and user-data installation paths
+- [ ] Resume interrupted downloads (current behavior cancels and discards partial files)
+- [ ] Preserve user model/config directories across application updates (separate update installer not implemented)
 - [x] First manual llama.cpp setup form, without silently executing downloaded scripts
-- [ ] Automatic engine/model download, discovery and verified installation, without silently executing downloaded scripts
+- [ ] Probe newly installed engine binary and run a real local model health/chat test before marking it fully tested
+- [ ] Automated hardware/backend detection and tested engine/model recommendations
 
 ## 0.5 — audio and multimodal adapters
 

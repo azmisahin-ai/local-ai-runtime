@@ -2,15 +2,18 @@
 
 The Local AI Runtime binary, inference engines, and model weights are separate products with different release cycles and licenses. The runtime must remain small and usable without bundling multi-gigabyte weights.
 
-## Proposed user flow
+## Current implementation and planned user flow
 
-1. Detect the operating system, architecture, CPU capabilities, GPU/driver information when available, and free memory. Report what is detected separately from what has actually passed a test.
-2. Show only catalog entries that match the OS/architecture. Present CPU as a fallback and list accelerator variants such as NVIDIA CUDA 12, NVIDIA CUDA 13, and Vulkan only when their package prerequisites are understood.
-3. Clearly label the upstream project, exact engine version/commit, license, download size, backend, required driver/runtime, and test evidence. Do not silently select a new backend merely because a GPU is present.
-4. Require explicit consent before downloading external executables. Only accept URLs from reviewed catalog entries; do not provide an arbitrary URL-to-executable feature.
-5. Download to a staging directory, support cancellation/resume, verify the catalogued checksum, and verify publisher provenance/signatures when upstream provides them. A checksum hosted beside the same asset is useful for corruption detection but is not publisher authentication by itself.
-6. Unpack with path-traversal protections, run a version probe, start a minimal health-check job, and only then mark that engine version as available. Keep the previously working version until the new version passes these checks.
-7. Model selection is a separate flow. Show the model source, license, size, format, context/RAM/VRAM estimates and known limitations. Require license acknowledgement where appropriate. Preserve model paths and user configuration across runtime upgrades.
+The current preview implements a built-in, reviewed catalog through `/v1/catalog`, download jobs through `/v1/downloads`, and dashboard progress/cancel controls. It includes official llama.cpp CPU/CUDA asset discovery from the GitHub latest-stable release API and one pinned Qwen2.5 1.5B Q4_K_M GGUF model. The first download requires explicit upstream license acknowledgement; arbitrary URLs are not accepted. This implementation is a starter catalog, not yet a general-purpose registry format for every engine family.
+
+The product flow is:
+
+1. The runtime detects the current OS/architecture and exposes only platform/backend combinations the current asset selector supports. Hardware/driver detection and performance-backed recommendations are not implemented yet.
+2. The user chooses a catalog item, reviews its upstream license, and confirms the download. A download is not started when consent is missing.
+3. Downloads use HTTPS-only redirects with TLS validation, byte limits, cancellation, staging paths and SHA-256 checks. The model is also checked for exact byte size and GGUF magic. Engine archives are extracted only when entries are regular files/directories with safe relative paths; symlinks, hardlinks and special files are rejected.
+4. Verified files are placed in the per-user Local AI Runtime data directory, and the first `llama.cpp` engine is registered into the user's runtime config. If configuration registration fails, the newly activated engine directory is rolled back. Windows uses `%LOCALAPPDATA%\LocalAIRuntime`; Linux follows `$XDG_DATA_HOME/local-ai-runtime` or `~/.local/share/local-ai-runtime`; macOS follows `$XDG_DATA_HOME/local-ai-runtime` or `~/Library/Application Support/LocalAIRuntime`. Config, engine/model files and logs live outside the extracted program directory so replacing the app bundle does not overwrite user data.
+5. CI validates the catalog schema, rejection paths, API behavior and package builds without downloading real external executables or the 1.12 GB model. A real internet download and real `llama-server`/GGUF inference test remain required before declaring this integration fully verified on a user's machine.
+6. Future catalog entries must include the exact source, immutable revision where possible, license, size, SHA-256, supported platforms/backends, prerequisites, known limitations and explicit evidence status. Signature/provenance checks should be added when upstream supports them; SHA-256 from the same upstream API is an integrity control, not publisher authentication.
 
 ## First engine candidate: llama.cpp
 
