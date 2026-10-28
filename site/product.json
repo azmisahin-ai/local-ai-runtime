@@ -10,6 +10,16 @@
   "issuesPage": "https://github.com/azmisahin-ai/local-ai-runtime/issues",
   "features": [
     {
+      "name": "Guided llama.cpp setup",
+      "description": "Configure an existing local llama-server executable, GGUF model, CPU/GPU layer mode (including llama.cpp automatic layer placement), context size and localhost port from the dashboard; paths are saved on the device.",
+      "status": "preview"
+    },
+    {
+      "name": "Engine readiness checks",
+      "description": "The dashboard distinguishes a running process from a model server that answers its local health endpoint, and chat stays disabled until the default engine is ready.",
+      "status": "preview"
+    },
+    {
       "name": "Local-first runtime",
       "description": "The control API binds to loopback by default. Model inference stays in the engine you configure.",
       "status": "preview"
@@ -67,8 +77,8 @@
   ],
   "securityNotes": [
     "Only localhost/loopback is supported by default.",
-    "Model files and external engines are not bundled with the runtime downloads.",
+    "The setup form uses user-supplied local paths; engine binaries and model weights are not downloaded by the runtime yet.",
     "No usage telemetry or silent binary replacement is enabled; opening the dashboard can request public release metadata from GitHub.",
-    "Do not expose the unauthenticated runtime API to a LAN or public internet."
+    "The API has no authentication. Do not expose the runtime or setup API to a LAN or public internet."
   ]
 }

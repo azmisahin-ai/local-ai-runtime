@@ -4,6 +4,10 @@ This project follows a lightweight Keep a Changelog structure. GitHub Release no
 
 ## Unreleased
 
+- Add a dashboard form to configure an already installed `llama-server` and local `.gguf` model, persist the configuration safely, and apply it while all managed engines are stopped.
+- Add live engine readiness checks using `/health` with a `/v1/models` fallback; distinguish readiness from process-running state and keep chat disabled until ready.
+- Add setup endpoint tests for invalid model paths, configuration persistence, and refusing changes while an engine is running.
+
 - Validate extracted Windows and Linux release archives by launching the packaged runtime and checking `/health` before publishing a GitHub Release.
 - Add a manual, non-publishing release rehearsal that uploads installable packages as workflow artifacts before a version tag is created.
 

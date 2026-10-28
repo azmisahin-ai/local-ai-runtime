@@ -15,7 +15,7 @@ This is an early C++20 alpha. It orchestrates existing model engines; it does no
 
 Use the project site or [GitHub Releases](https://github.com/azmisahin-ai/local-ai-runtime/releases). After a version tag is published, GitHub Actions builds portable packages for Windows x64 and Linux x64 and attaches `SHA256SUMS.txt`.
 
-The package includes the runtime, the web dashboard, an example configuration, a starter script, and the project license. **It does not include `llama.cpp`, other inference engines, CUDA, or model weights yet.** The example engine paths are placeholders and must be updated on your machine.
+The package includes the runtime, the web dashboard, an example configuration, a starter script, and the project license. It does not include `llama.cpp`, CUDA, or model weights. You choose and download those components separately so engine builds and model licenses remain explicit.
 
 - **Windows 10/11 x64:** extract the ZIP, open PowerShell in the extracted folder, and run:
 
@@ -24,8 +24,17 @@ The package includes the runtime, the web dashboard, an example configuration, a
   .\scripts\Start-LocalAIRuntime.ps1
   ```
 
-  The script creates `config/engines.json` from the example on first start and opens the dashboard.
+  The script initializes `config/engines.json` on first start and opens the dashboard.
 - **Linux x64:** extract the TAR.GZ and run `./scripts/start-runtime.sh`. The runtime stays in the foreground; press Ctrl+C to stop.
+
+#### First model setup
+
+1. Download a matching `llama-server` binary from the [official llama.cpp releases](https://github.com/ggml-org/llama.cpp/releases). Extract the whole archive so its required DLLs/shared libraries remain beside the executable.
+2. Download a GGUF model from a source you trust and review that model's license and system requirements. The runtime does not download or upload model files in this alpha.
+3. In the local dashboard, enter the absolute paths to `llama-server` (on Windows, `llama-server.exe`) and the `.gguf` file. Choose CPU first for the most portable baseline, then save the setup.
+4. Press **Start**. The dashboard distinguishes a running process from a model server that has passed its local health check. When ready, chat is enabled and requests are routed through the Local AI Runtime API.
+
+The optional NVIDIA GPU mode asks `llama-server` to choose GPU-layer placement automatically and requires a CUDA-enabled build. Actual compatibility and VRAM fit still depend on the model, context size, driver and binary. Start with CPU or a small quantized model if unsure.
 - **Offline use:** the local runtime does not require GitHub once installed. Release update checks are skipped if the service is unreachable. When the dashboard is opened, it requests public release metadata from GitHub; it does not upload prompts, model paths, or usage events. GitHub still receives ordinary network metadata such as the request IP address.
 
 The local dashboard checks for a newer **stable** release on startup and links to release notes/downloads. This alpha does **not** install or replace binaries silently. Review the package and release notes before updating.
@@ -85,7 +94,7 @@ From repository root, after building:
 ./build/local-ai-runtime
 ```
 
-Open http://127.0.0.1:8000. To configure a real engine, copy `config/engines.example.json` to `config/engines.json` and edit the executable/model paths for your machine.
+Open http://127.0.0.1:8000. Use the **Configure llama.cpp** form to set the local `llama-server` and `.gguf` paths; you no longer need to hand-edit `config/engines.json` for the first engine.
 
 ## CI and releases
 
@@ -103,6 +112,8 @@ GitHub Actions is the source for repeatable cross-platform build/test results. L
 - Per-engine output/error logs and basic process status.
 - Loopback-only HTTP API and same-origin dashboard.
 - Non-streaming OpenAI-compatible chat proxy and `/v1/models` forwarding.
+- `POST /v1/setup/llama-cpp` to validate and save local `llama-server`/GGUF paths, backend mode, context size and engine port.
+- `/v1/engines` reports process state and API readiness separately; the dashboard does not enable chat until the default engine is ready.
 - `/version` and `/health` endpoints; dashboard checks the public release feed for stable update notices.
 - Fake-engine core and HTTP end-to-end tests; Windows/Linux/macOS CI definitions.
 - Public project page and tag-driven Windows/Linux release pipeline.

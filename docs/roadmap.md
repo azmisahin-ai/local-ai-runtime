@@ -18,8 +18,10 @@ The roadmap distinguishes implemented code from platform/model combinations that
 - [x] Confirm hosted macOS CI on the public repository (green at commit `1f020c4`)
 - [ ] Publish the first prerelease tag after the user-facing llama.cpp setup is ready; current workflow dry-run/package rehearsal is green
 - [ ] Real `llama-server` smoke test on Windows and one CPU-only environment
+- [x] Dashboard setup form for an existing local `llama-server` and GGUF file; persists the engine configuration without hand-editing JSON
+- [x] Runtime readiness state from the local `/health` endpoint (fallback to `/v1/models`) and chat gating in the dashboard
 - [ ] Real CUDA smoke test with GPU model, VRAM, driver, model quantization and backend recorded
-- [ ] Startup readiness probe separated from process-running state
+- [x] Startup readiness probe separated from process-running state (runtime health signal; real model loading still needs a real-engine smoke test)
 - [x] Add extracted Windows/Linux archive checks for version, dashboard/launcher files, and a live `/health` response in the release workflow
 - [x] Auto-build Windows/Linux preview artifacts on each `main` push; public releases remain tag-gated
 - [x] Surface preview builds from the website while no public release exists
@@ -28,7 +30,7 @@ The roadmap distinguishes implemented code from platform/model combinations that
 
 - [ ] Bounded request concurrency, graceful HTTP shutdown and cancellation-safe child cleanup
 - [ ] Windows Job Object process cleanup and graceful stop policy
-- [ ] Engine readiness probes, startup timeout and useful remediation messages
+- [x] Basic engine readiness probe and dashboard chat gating; [ ] richer startup timeout/remediation and retry policy
 - [ ] Configuration schema/version migration and stricter JSON parsing
 - [ ] Installer-quality package tests on a clean Windows VM and a clean Linux container/VM
 - [ ] Release artifact provenance/signing plan and verified update download staging
@@ -48,7 +50,8 @@ The proposed separation and catalog fields are documented in [engine distributio
 - [ ] Model registry with source, format, model/license metadata, size, checksum and system requirements
 - [ ] Cancellable and resumable model downloads with source allowlisting, path validation and SHA-256 verification
 - [ ] Preserve user model/config directories across application updates
-- [ ] User-friendly engine discovery and setup, without silently executing downloaded scripts
+- [x] First manual llama.cpp setup form, without silently executing downloaded scripts
+- [ ] Automatic engine/model download, discovery and verified installation, without silently executing downloaded scripts
 
 ## 0.5 — audio and multimodal adapters
 
