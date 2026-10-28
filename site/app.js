@@ -103,11 +103,11 @@ function downloadOption(title, detail, symbol, asset, releaseUrl) {
 }
 
 function renderNoRelease(product) {
-  latestVersion.textContent = 'First release is being prepared';
-  latestMeta.textContent = 'No published release assets have been found yet. CI status and source code are available below.';
+  latestVersion.textContent = 'No versioned release found';
+  latestMeta.textContent = 'Published release metadata is unavailable. CI previews and source code remain available below.';
   downloadGrid.replaceChildren();
-  downloadGrid.append(el('div', 'empty-state', 'No binary package is published yet. After the first version tag is pushed, GitHub Actions will build and attach Windows, Linux, macOS Intel and macOS Apple Silicon packages with SHA-256 checksums.'));
-  downloadGrid.append(externalLink(`https://github.com/${REPO}/actions/workflows/pipeline.yml`, 'Download latest preview packages ↗', 'button button-primary'));
+  downloadGrid.append(el('div', 'empty-state', 'No versioned binary release is visible right now. Check GitHub Releases or use a recent preview package after reviewing its workflow result.'));
+  downloadGrid.append(externalLink(`https://github.com/${REPO}/actions/workflows/pipeline.yml`, 'Open preview packages ↗', 'button button-primary'));
   downloadGrid.append(externalLink(product.actionsPage || `https://github.com/${REPO}/actions`, 'View build and test runs ↗', 'button button-ghost'));
 }
 
@@ -119,7 +119,9 @@ function renderRelease(release) {
   latestMeta.textContent = `${status} · Published ${published}${release.assets?.length ? ` · ${release.assets.length} downloadable assets` : ' · assets not attached'}`;
   downloadGrid.replaceChildren(
     downloadOption('Windows x64', 'Portable ZIP · external engine/model required', '⊞', findAsset(release, ['local-ai-runtime-windows-x64.zip']), url),
-    downloadOption('Linux x64', 'Portable TAR.GZ · system libraries required', '⌁', findAsset(release, ['local-ai-runtime-linux-x64.tar.gz']), url)
+    downloadOption('Linux x64', 'Portable TAR.GZ · system libraries required', '⌁', findAsset(release, ['local-ai-runtime-linux-x64.tar.gz']), url),
+    downloadOption('macOS Intel (x64)', 'Portable TAR.GZ · Intel Macs · not notarized', '⌘', findAsset(release, ['local-ai-runtime-macos-x64.tar.gz']), url),
+    downloadOption('macOS Apple Silicon (arm64)', 'Portable TAR.GZ · M-series Macs · not notarized', '⌘', findAsset(release, ['local-ai-runtime-macos-arm64.tar.gz']), url)
   );
   const checksumAsset = findAsset(release, ['SHA256SUMS.txt']);
   const checksumNote = document.querySelector('.checksum-download');

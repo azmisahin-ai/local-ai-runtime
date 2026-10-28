@@ -54,6 +54,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node --check site/app.js
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node tests/site_smoke.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m json.tool site/product.json > $null
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m json.tool config/engines.example.json > $null
@@ -304,6 +306,7 @@ jobs:
           set -euo pipefail
           node --check web/app.js
           node --check site/app.js
+          node tests/site_smoke.js
           python -m json.tool site/product.json >/dev/null
           python -m json.tool config/engines.example.json >/dev/null
 
@@ -487,6 +490,7 @@ jobs:
           set -euo pipefail
           node --check web/app.js
           node --check site/app.js
+          node tests/site_smoke.js
           python -m json.tool site/product.json >/dev/null
           python -m json.tool config/engines.example.json >/dev/null
 
