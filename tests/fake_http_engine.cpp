@@ -31,7 +31,9 @@ void respond(tcp::socket& socket, const http::request<http::string_body>& reques
     response.set(http::field::content_type, "application/json; charset=utf-8");
     response.keep_alive(false);
 
-    if (request.method() == http::verb::get && request.target() == "/v1/models") {
+    if (request.method() == http::verb::get && request.target() == "/health") {
+        response.body() = R"({"status":"ok"})";
+    } else if (request.method() == http::verb::get && request.target() == "/v1/models") {
         response.body() = R"({"object":"list","data":[{"id":"fake-model","object":"model"}]})";
     } else if (request.method() == http::verb::post && request.target() == "/v1/chat/completions") {
         response.body() = R"({"id":"chatcmpl-ci-smoke","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"LAR_HTTP_SMOKE_OK"},"finish_reason":"stop"}]})";

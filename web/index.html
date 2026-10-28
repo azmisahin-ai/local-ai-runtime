@@ -24,19 +24,55 @@
       <a id="update-link" class="button primary" href="https://github.com/azmisahin-ai/local-ai-runtime/releases" target="_blank" rel="noopener noreferrer">View releases</a>
     </section>
 
+    <section class="panel setup-panel">
+      <div class="section-heading">
+        <div><p class="eyebrow">FIRST ENGINE SETUP</p><h2>Configure llama.cpp</h2></div>
+      </div>
+      <p class="hint">Use a local llama-server executable and a GGUF model you have already downloaded. This form saves paths to config/engines.json; it does not download executable files or model weights. Windows Explorer “Copy as path” quotes are accepted.</p>
+      <form id="llama-setup-form">
+        <label for="llama-executable">llama-server executable path</label>
+        <input id="llama-executable" name="executable_path" type="text" required autocomplete="off" spellcheck="false" placeholder="C:\AI\llama.cpp\llama-server.exe or /usr/local/bin/llama-server">
+        <label for="llama-model">GGUF model file path</label>
+        <input id="llama-model" name="model_path" type="text" required autocomplete="off" spellcheck="false" placeholder="C:\AI\models\model.gguf or /home/user/models/model.gguf">
+        <div class="setup-grid">
+          <div>
+            <label for="llama-backend">Backend</label>
+            <select id="llama-backend" name="backend">
+              <option value="cpu">CPU — baseline, most compatible</option>
+              <option value="gpu">NVIDIA GPU — requires a CUDA-enabled llama-server</option>
+            </select>
+          </div>
+          <div>
+            <label for="llama-context">Context size (tokens)</label>
+            <input id="llama-context" name="context_size" type="number" min="512" max="32768" step="256" value="2048" required>
+          </div>
+          <div>
+            <label for="llama-port">Engine port</label>
+            <input id="llama-port" name="engine_port" type="number" min="1024" max="65535" step="1" value="8081" required>
+          </div>
+        </div>
+        <div class="form-footer">
+          <span class="hint">GPU mode uses llama.cpp automatic GPU-layer placement; it may need adjustment for your model and VRAM.</span>
+          <button id="save-llama-setup" class="button primary" type="submit">Save engine setup</button>
+        </div>
+      </form>
+      <p id="setup-status" class="status-message" role="status" aria-live="polite"></p>
+      <p class="hint setup-links">Downloads: <a href="https://github.com/ggml-org/llama.cpp/releases" target="_blank" rel="noopener noreferrer">official llama.cpp releases</a> · Models: <a href="https://huggingface.co/models?library=gguf" target="_blank" rel="noopener noreferrer">GGUF model catalog</a>. Review each model's license before downloading.</p>
+    </section>
+
     <section class="panel">
       <div class="section-heading">
         <div><p class="eyebrow">RUNTIME</p><h2>Engines</h2></div>
         <button id="refresh" class="button secondary" type="button">Refresh</button>
       </div>
-      <p class="hint">Only engines explicitly configured on this machine are shown. This starter does not download or install models.</p>
+      <p class="hint">Engine state and readiness are checked separately: a process may still be loading its model after it starts.</p>
       <div id="engine-list" class="engine-list"><div class="empty">Loading engines…</div></div>
       <p id="engine-error" class="error" role="status" aria-live="polite"></p>
     </section>
 
     <section class="panel chat-panel">
       <div class="section-heading"><div><p class="eyebrow">OPENAI-COMPATIBLE PROXY</p><h2>Test chat</h2></div></div>
-      <p class="hint">Start your configured llama.cpp engine before sending a message. Requests are forwarded to the local upstream URL in your configuration.</p>
+      <p id="chat-readiness" class="hint">Configure llama.cpp above, then start the engine. Chat enables once the local model server reports ready.</p>
       <form id="chat-form">
         <label for="message">Message</label>
         <textarea id="message" rows="3" required maxlength="12000" placeholder="Ask your local model something…"></textarea>

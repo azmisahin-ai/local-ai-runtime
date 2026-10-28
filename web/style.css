@@ -62,3 +62,25 @@ footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: .5
   .update-notice { align-items: stretch; flex-direction: column; }
   .update-notice a { text-align: center; }
 }
+
+input, select {
+  display: block;
+  width: 100%;
+  margin: 0 0 1rem;
+  padding: .75rem .8rem;
+  color: var(--text);
+  background: #101319;
+  border: 1px solid var(--line);
+  border-radius: .7rem;
+  font: inherit;
+}
+input:focus, select:focus { outline: 2px solid #92b7ff70; border-color: var(--accent); }
+.setup-grid { display: grid; grid-template-columns: 1.2fr 1fr 1fr; gap: .8rem; }
+.status-message { min-height: 1.2rem; margin: .5rem 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.status-message.success { color: var(--good); }
+.status-message.failure { color: var(--danger); }
+.setup-links a { color: var(--accent); }
+.tag.ready { border-color: #3e7d5b; color: var(--good); }
+.tag.loading { border-color: #806b38; color: #f0cf83; }
+@media (max-width: 640px) { .setup-grid { grid-template-columns: 1fr; gap: 0; } }
+.engine-loading { margin: .5rem 0 0; color: #f0cf83; font-size: .85rem; }

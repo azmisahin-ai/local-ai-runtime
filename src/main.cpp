@@ -24,10 +24,14 @@ int main(int argc, char** argv) {
     try {
         std::filesystem::path config_path = LAR_DEFAULT_CONFIG;
         std::filesystem::path web_dir = LAR_DEFAULT_WEB_DIR;
+        bool config_was_explicit = false;
         bool print_version = false;
         for (int i = 1; i < argc; ++i) {
             const std::string arg = argv[i];
-            if (arg == "--config" && i + 1 < argc) config_path = argv[++i];
+            if (arg == "--config" && i + 1 < argc) {
+                config_path = argv[++i];
+                config_was_explicit = true;
+            }
             else if (arg == "--web-dir" && i + 1 < argc) web_dir = argv[++i];
             else if (arg == "--version") print_version = true;
             else if (arg == "--help" || arg == "-h") {
@@ -46,9 +50,18 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (!std::filesystem::exists(config_path)) {
-            config_path = LAR_EXAMPLE_CONFIG;
-            std::cerr << "No user config found; using example config: " << config_path.string() << "\n"
-                      << "Copy it to config/engines.json and edit your local paths to configure a real engine.\n";
+            if (config_was_explicit) {
+                throw std::runtime_error("The requested config file does not exist: " + config_path.string());
+            }
+            const std::filesystem::path example_path = LAR_EXAMPLE_CONFIG;
+            if (!std::filesystem::exists(example_path)) {
+                throw std::runtime_error("Neither the user config nor the example config exists. Expected " +
+                                         config_path.string() + " and " + example_path.string());
+            }
+            if (!config_path.parent_path().empty()) std::filesystem::create_directories(config_path.parent_path());
+            std::filesystem::copy_file(example_path, config_path, std::filesystem::copy_options::overwrite_existing);
+            std::cerr << "Initialized user configuration: " << config_path.string() << "\n"
+                      << "Use the dashboard's llama.cpp setup form to configure the engine and model.\n";
         }
         const auto config = lar::load_config(config_path);
         lar::EngineManager engines(config.engines);

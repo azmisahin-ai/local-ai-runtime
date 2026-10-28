@@ -4,6 +4,8 @@ import argparse
 import json
 import socket
 import subprocess
+import shutil
+import os
 import sys
 import tempfile
 import time
@@ -13,22 +15,21 @@ from pathlib import Path
 
 
 def reserve_distinct_ports():
-    """Reserve two different ephemeral ports at the same time.
-
-    Requesting a port, closing its socket, and immediately requesting another
-    port can return the same number on some OS runners. That would make the
-    fake engine point back at the runtime itself and can hang the proxy test.
-    Keep the first reservation open while asking the OS for the second port.
-    """
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as runtime_sock:
-        runtime_sock.bind(("127.0.0.1", 0))
-        runtime_port = runtime_sock.getsockname()[1]
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as engine_sock:
-            engine_sock.bind(("127.0.0.1", 0))
-            engine_port = engine_sock.getsockname()[1]
-            if runtime_port == engine_port:
-                raise RuntimeError("OS returned the same port for runtime and fake engine")
-            return runtime_port, engine_port
+    """Reserve three different ephemeral ports for runtime, fake engine and setup config."""
+    sockets = []
+    try:
+        ports = []
+        for _ in range(3):
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.bind(("127.0.0.1", 0))
+            sockets.append(sock)
+            ports.append(sock.getsockname()[1])
+        if len(set(ports)) != 3:
+            raise RuntimeError("OS returned duplicate ports for the HTTP smoke test")
+        return tuple(ports)
+    finally:
+        for sock in sockets:
+            sock.close()
 
 
 def request(url, method="GET", body=None, timeout=2):
@@ -80,19 +81,27 @@ def main():
         if not Path(path).exists():
             raise RuntimeError(f"Required smoke-test path does not exist: {path}")
 
-    runtime_port, engine_port = reserve_distinct_ports()
+    runtime_port, engine_port, setup_engine_port = reserve_distinct_ports()
     with tempfile.TemporaryDirectory(prefix="lar-http-smoke-") as temporary:
         temp = Path(temporary)
         config_path = temp / "engines.json"
         engine_working_directory = temp / "engine-cwd"
         engine_working_directory.mkdir()
+        setup_bin_dir = temp / "setup-bin"
+        setup_bin_dir.mkdir()
+        setup_binary = setup_bin_dir / ("llama-server.exe" if os.name == "nt" else "llama-server")
+        shutil.copy2(fake_engine, setup_binary)
+        if os.name != "nt":
+            setup_binary.chmod(setup_binary.stat().st_mode | 0o111)
+        model_path = temp / "test-model.gguf"
+        model_path.write_bytes(b"GGUF" + b" CI placeholder, not a real model")
         config = {
             "server": {"host": "127.0.0.1", "port": runtime_port},
             "engines": [{
                 "id": "fake-engine",
                 "display_name": "CI fake OpenAI-compatible engine",
                 "executable_path": fake_engine,
-                "model_path": "",
+                "model_path": str(model_path),
                 "working_directory": str(engine_working_directory),
                 "args": ["--port", str(engine_port)],
                 "upstream_base_url": f"http://127.0.0.1:{engine_port}",
@@ -151,6 +160,20 @@ def main():
                 assert str(engine_working_directory) in engine_log, (
                     "Fake engine did not run in its configured working directory: " + engine_log
                 )
+                status, engine_status_raw, _ = request(base + "/v1/engines")
+                engine_status = json.loads(engine_status_raw)["data"][0]
+                assert status == 200 and engine_status["ready"] is True, (
+                    "Runtime should distinguish process-running from HTTP-ready: " + engine_status_raw
+                )
+                try:
+                    request(base + "/v1/setup/llama-cpp", method="POST", body={
+                        "executable_path": str(setup_binary),
+                        "model_path": str(model_path),
+                        "backend": "cpu", "context_size": 2048, "engine_port": setup_engine_port,
+                    })
+                    raise AssertionError("Setup must not replace configuration while an engine is running")
+                except urllib.error.HTTPError as setup_error:
+                    assert setup_error.code == 409, f"Expected 409 while engine is running, got {setup_error.code}"
             except Exception:
                 # Include the process state alongside stderr/stdout so a spawn
                 # failure, a crashed engine, and a reachable-but-unready engine
@@ -181,7 +204,101 @@ def main():
             status, engines_raw, _ = request(base + "/v1/engines")
             engines = json.loads(engines_raw)["data"]
             assert status == 200 and engines[0]["status"] == "stopped"
-            print("HTTP smoke test passed: dashboard, health/version metadata, Host/Origin guards, engine lifecycle, models proxy, chat proxy.")
+
+            # The setup wizard accepts only an explicitly selected llama-server binary
+            # and a non-empty GGUF file, persists configuration, and updates live state.
+            try:
+                request(base + "/v1/setup/llama-cpp", method="POST", body={
+                    "executable_path": str(setup_binary),
+                    "model_path": str(temp / "missing.gguf"),
+                    "backend": "cpu", "context_size": 2048, "engine_port": setup_engine_port,
+                })
+                raise AssertionError("Setup should reject a model path that does not exist")
+            except urllib.error.HTTPError as exc:
+                assert exc.code == 422, f"Expected 422 for invalid model path, got {exc.code}"
+
+            # Reject a regular executable with the wrong basename, even if it exists.
+            wrong_binary = setup_bin_dir / ("other-program.exe" if os.name == "nt" else "other-program")
+            shutil.copy2(fake_engine, wrong_binary)
+            if os.name != "nt":
+                wrong_binary.chmod(wrong_binary.stat().st_mode | 0o111)
+            try:
+                request(base + "/v1/setup/llama-cpp", method="POST", body={
+                    "executable_path": str(wrong_binary),
+                    "model_path": str(model_path),
+                    "backend": "cpu", "context_size": 2048, "engine_port": setup_engine_port,
+                })
+                raise AssertionError("Setup should reject a binary that is not named llama-server")
+            except urllib.error.HTTPError as exc:
+                assert exc.code == 422, f"Expected 422 for invalid executable name, got {exc.code}"
+
+            invalid_signature_model = temp / "bad-signature.gguf"
+            invalid_signature_model.write_bytes(b"NOPE" + b" placeholder bytes")
+            try:
+                request(base + "/v1/setup/llama-cpp", method="POST", body={
+                    "executable_path": str(setup_binary),
+                    "model_path": str(invalid_signature_model),
+                    "backend": "cpu", "context_size": 2048, "engine_port": setup_engine_port,
+                })
+                raise AssertionError("Setup should reject a .gguf file with an invalid signature")
+            except urllib.error.HTTPError as exc:
+                assert exc.code == 422, f"Expected 422 for invalid GGUF signature, got {exc.code}"
+
+            binary_model = temp / "not-a-gguf.bin"
+            binary_model.write_bytes(b"GGUF" + b" not a GGUF model by extension")
+            try:
+                request(base + "/v1/setup/llama-cpp", method="POST", body={
+                    "executable_path": str(setup_binary),
+                    "model_path": str(binary_model),
+                    "backend": "cpu", "context_size": 2048, "engine_port": setup_engine_port,
+                })
+                raise AssertionError("Setup should reject a model file that does not use .gguf")
+            except urllib.error.HTTPError as exc:
+                assert exc.code == 422, f"Expected 422 for wrong model extension, got {exc.code}"
+
+            try:
+                request(base + "/v1/setup/llama-cpp", method="POST", body={
+                    "executable_path": str(setup_binary),
+                    "model_path": str(model_path),
+                    "backend": "cpu", "context_size": 2048, "engine_port": runtime_port,
+                })
+                raise AssertionError("Setup should reject an engine port that conflicts with runtime")
+            except urllib.error.HTTPError as exc:
+                assert exc.code == 422, f"Expected 422 for conflicting port, got {exc.code}"
+
+            status, setup_raw, content_type = request(base + "/v1/setup/llama-cpp", method="POST", body={
+                "executable_path": f'"{setup_binary}"',
+                "model_path": f'"{model_path}"',
+                "backend": "cpu", "context_size": 2048, "engine_port": setup_engine_port,
+            })
+            setup_result = json.loads(setup_raw)
+            assert status == 200 and "application/json" in content_type
+            assert setup_result["id"] == "llama-cpp" and setup_result["config_saved"] is True
+            persisted = json.loads(config_path.read_text(encoding="utf-8"))
+            configured_llama = next(item for item in persisted["engines"] if item["id"] == "llama-cpp")
+            assert configured_llama["executable_path"] == str(setup_binary)
+            assert configured_llama["model_path"] == str(model_path)
+            assert configured_llama["default_for_chat"] is True
+            assert "--n-gpu-layers" in configured_llama["args"] and "0" in configured_llama["args"]
+            status, engines_raw, _ = request(base + "/v1/engines")
+            engines = json.loads(engines_raw)["data"]
+            llama_status = next(item for item in engines if item["id"] == "llama-cpp")
+            assert status == 200 and llama_status["model_configured"] is True and llama_status["default_for_chat"] is True
+            assert llama_status["status"] == "stopped" and llama_status["ready"] is False
+
+            # GPU mode must use llama.cpp's automatic placement rather than
+            # blindly forcing every layer onto a potentially small GPU.
+            status, gpu_raw, _ = request(base + "/v1/setup/llama-cpp", method="POST", body={
+                "executable_path": str(setup_binary),
+                "model_path": str(model_path),
+                "backend": "gpu", "context_size": 2048, "engine_port": setup_engine_port,
+            })
+            assert status == 200 and json.loads(gpu_raw)["backend"] == "gpu"
+            persisted = json.loads(config_path.read_text(encoding="utf-8"))
+            configured_llama = next(item for item in persisted["engines"] if item["id"] == "llama-cpp")
+            assert "--n-gpu-layers" in configured_llama["args"]
+            assert "auto" in configured_llama["args"], "GPU setup should use automatic layer placement"
+            print("HTTP smoke test passed: dashboard, health/version, security guards, readiness probe, engine lifecycle, chat/models proxy, GGUF validation, quoted paths, CPU/GPU setup persistence.")
         except Exception:
             runtime_log.flush()
             print(

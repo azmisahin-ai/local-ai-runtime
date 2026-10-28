@@ -3,9 +3,9 @@
 
 #include <filesystem>
 #include <iostream>
+#include <chrono>
 #include <stdexcept>
 #include <thread>
-#include <chrono>
 
 namespace {
 void require(bool condition, const char* message) {
@@ -34,6 +34,27 @@ int main() {
             if (arg == "models/test model.gguf") saw_model = true;
         }
         require(saw_model, "model path should be one argument (spaces preserved)");
+
+        // Configuration persistence must preserve path arguments and valid JSON.
+        auto roundtrip = config;
+        roundtrip.engines.front().executable_path = std::filesystem::current_path() / "tools" / "llama-server";
+        roundtrip.engines.front().model_path = std::filesystem::current_path() / "models" / std::filesystem::path(u8"kullanıcı modeli üğşöçı.gguf");
+        const auto suffix = std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+        const auto roundtrip_path = std::filesystem::temp_directory_path() / ("lar-config-roundtrip-" + suffix + ".json");
+        lar::save_config(roundtrip_path, roundtrip);
+        const auto loaded_roundtrip = lar::load_config(roundtrip_path);
+        require(loaded_roundtrip.engines.size() == roundtrip.engines.size(), "saved config engine count changed");
+        require(loaded_roundtrip.engines.front().executable_path == roundtrip.engines.front().executable_path,
+                "saved executable path did not round-trip");
+        require(loaded_roundtrip.engines.front().model_path == roundtrip.engines.front().model_path,
+                "saved Unicode model path did not round-trip");
+        const auto roundtrip_args = lar::expand_arguments(loaded_roundtrip.engines.front());
+        bool unicode_model_argument = false;
+        for (const auto& argument : roundtrip_args) {
+            if (argument.find("kullanıcı modeli üğşöçı.gguf") != std::string::npos) unicode_model_argument = true;
+        }
+        require(unicode_model_argument, "model argument did not preserve UTF-8 path encoding");
+        std::filesystem::remove(roundtrip_path);
 
         {
             std::vector<lar::EngineConfig> invalid_configs;

@@ -6,6 +6,8 @@
 
 #include <boost/asio.hpp>
 #include <boost/beast.hpp>
+#include <boost/property_tree/json_parser.hpp>
+#include <boost/property_tree/ptree.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -14,6 +16,8 @@
 #include <iostream>
 #include <iterator>
 #include <regex>
+#include <set>
+#include <cctype>
 #include <sstream>
 #include <string_view>
 #include <thread>
@@ -70,7 +74,17 @@ std::string read_text_file(const std::filesystem::path& path) {
     return std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
 }
 
+bool upstream_is_ready(const EngineStatus& engine);
+
 std::string engine_status_json(const EngineStatus& engine) {
+    const bool chat_capable = std::find(engine.config.capabilities.begin(), engine.config.capabilities.end(), "chat") != engine.config.capabilities.end();
+    const bool model_missing = chat_capable && engine.config.model_path.empty();
+    const bool ready = !model_missing && upstream_is_ready(engine);
+    std::string readiness = "stopped";
+    if (engine.config.executable_path.empty()) readiness = "not-configured";
+    else if (model_missing) readiness = "model-not-configured";
+    else if (engine.state == ProcessState::failed) readiness = "failed";
+    else if (engine.state == ProcessState::running) readiness = ready ? "ready" : "loading-or-unavailable";
     std::ostringstream out;
     out << "{\"id\":" << quoted(engine.config.id)
         << ",\"display_name\":" << quoted(engine.config.display_name)
@@ -80,6 +94,9 @@ std::string engine_status_json(const EngineStatus& engine) {
         << ",\"last_error\":" << quoted(engine.last_error)
         << ",\"executable_configured\":" << (engine.config.executable_path.empty() ? "false" : "true")
         << ",\"model_configured\":" << (engine.config.model_path.empty() ? "false" : "true")
+        << ",\"default_for_chat\":" << (engine.config.default_for_chat ? "true" : "false")
+        << ",\"ready\":" << (ready ? "true" : "false")
+        << ",\"readiness\":" << quoted(readiness)
         << ",\"upstream_base_url\":" << quoted(engine.config.upstream_base_url)
         << ",\"capabilities\":[";
     for (std::size_t i = 0; i < engine.config.capabilities.size(); ++i) {
@@ -121,6 +138,130 @@ std::string upstream_port(const std::string& base_url) {
     const auto colon = base_url.find_last_of(':');
     if (colon == std::string::npos || colon + 1 >= base_url.size()) return {};
     return base_url.substr(colon + 1);
+}
+
+bool probe_status(const std::string& port_text, const std::string& target, unsigned int& status_code) {
+    try {
+        std::size_t consumed = 0;
+        const auto port_value = std::stoul(port_text, &consumed);
+        if (consumed != port_text.size() || port_value == 0 || port_value > 65535) return false;
+        asio::io_context ioc;
+        beast::tcp_stream stream(ioc);
+        stream.expires_after(std::chrono::milliseconds(450));
+        stream.connect(tcp::endpoint(asio::ip::make_address("127.0.0.1"), static_cast<unsigned short>(port_value)));
+        http::request<http::empty_body> request{http::verb::get, target, 11};
+        request.set(http::field::host, "127.0.0.1:" + port_text);
+        request.set(http::field::user_agent, "local-ai-runtime-readiness/" LAR_VERSION);
+        request.keep_alive(false);
+        http::write(stream, request);
+        beast::flat_buffer buffer;
+        http::response_parser<http::string_body> parser;
+        parser.body_limit(4096);
+        http::read(stream, buffer, parser);
+        status_code = parser.get().result_int();
+        beast::error_code ignored;
+        stream.socket().shutdown(tcp::socket::shutdown_both, ignored);
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool upstream_is_ready(const EngineStatus& engine) {
+    if (engine.state != ProcessState::running || engine.config.upstream_base_url.empty()) return false;
+    const auto port_text = upstream_port(engine.config.upstream_base_url);
+    if (port_text.empty()) return false;
+    unsigned int status_code = 0;
+    if (!probe_status(port_text, "/health", status_code)) return false;
+    if (status_code == 200) return true;
+    // Some older OpenAI-compatible engines do not implement /health.
+    if (status_code == 404 && probe_status(port_text, "/v1/models", status_code)) return status_code == 200;
+    return false;
+}
+
+std::filesystem::path path_from_utf8(const std::string& value) {
+    std::u8string encoded;
+    encoded.reserve(value.size());
+    for (const unsigned char ch : value) encoded.push_back(static_cast<char8_t>(ch));
+    return std::filesystem::path(encoded);
+}
+
+std::string lower_ascii(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return value;
+}
+
+std::filesystem::path require_absolute_regular_file(const std::string& raw, const std::string& field) {
+    const auto text_first = raw.find_first_not_of(" \t\r\n");
+    const auto text_last = raw.find_last_not_of(" \t\r\n");
+    if (text_first == std::string::npos) throw std::runtime_error(field + " is required.");
+    auto normalized = raw.substr(text_first, text_last - text_first + 1);
+    // Windows Explorer's "Copy as path" includes surrounding quotes. Accept
+    // that common format while still passing the path as a single argument.
+    if (normalized.size() >= 2 && normalized.front() == '"' && normalized.back() == '"') {
+        normalized = normalized.substr(1, normalized.size() - 2);
+    }
+    const auto path = path_from_utf8(normalized);
+    if (!path.is_absolute()) throw std::runtime_error(field + " must be an absolute path.");
+    std::error_code error;
+    if (!std::filesystem::is_regular_file(path, error) || error) {
+        throw std::runtime_error(field + " does not point to an existing regular file.");
+    }
+    return path;
+}
+
+EngineConfig build_llama_config(const boost::property_tree::ptree& body, const RuntimeConfig& runtime) {
+    const auto executable = require_absolute_regular_file(body.get<std::string>("executable_path", ""), "llama-server executable path");
+    const auto model = require_absolute_regular_file(body.get<std::string>("model_path", ""), "GGUF model path");
+    const auto executable_name = lower_ascii(executable.filename().string());
+#ifdef _WIN32
+    if (executable_name != "llama-server.exe" && executable_name != "llama-server") {
+        throw std::runtime_error("Choose the official llama-server.exe executable, not a different program.");
+    }
+#else
+    if (executable_name != "llama-server") {
+        throw std::runtime_error("Choose the official llama-server executable, not a different program.");
+    }
+#endif
+    if (lower_ascii(model.extension().string()) != ".gguf") {
+        throw std::runtime_error("Model path must point to a .gguf file.");
+    }
+    std::error_code size_error;
+    const auto model_size = std::filesystem::file_size(model, size_error);
+    if (size_error || model_size < 4) throw std::runtime_error("GGUF model file is empty or too small to contain a header.");
+    {
+        std::ifstream model_input(model, std::ios::binary);
+        char magic[4]{};
+        model_input.read(magic, sizeof(magic));
+        if (model_input.gcount() != static_cast<std::streamsize>(sizeof(magic)) ||
+            std::string_view(magic, sizeof(magic)) != "GGUF") {
+            throw std::runtime_error("Selected model does not start with the GGUF file signature.");
+        }
+    }
+
+    const auto port = body.get<unsigned int>("engine_port", 8081U);
+    if (port < 1024U || port > 65535U) throw std::runtime_error("Engine port must be between 1024 and 65535.");
+    if (port == runtime.port) throw std::runtime_error("Engine port must differ from the Local AI Runtime port.");
+    const auto context = body.get<unsigned int>("context_size", 2048U);
+    if (context < 512U || context > 32768U) throw std::runtime_error("Context size must be between 512 and 32768 tokens.");
+    const auto backend = body.get<std::string>("backend", "cpu");
+    if (backend != "cpu" && backend != "gpu") throw std::runtime_error("Backend must be 'cpu' or 'gpu'.");
+
+    EngineConfig engine;
+    engine.id = "llama-cpp";
+    engine.display_name = "llama.cpp server";
+    engine.executable_path = executable;
+    engine.model_path = model;
+    engine.working_directory = executable.parent_path();
+    engine.args = {"--host", "127.0.0.1", "--port", std::to_string(port),
+                   "--ctx-size", std::to_string(context), "--n-gpu-layers",
+                   backend == "gpu" ? "auto" : "0", "-m", "{model_path}"};
+    engine.upstream_base_url = "http://127.0.0.1:" + std::to_string(port);
+    engine.capabilities = {"chat"};
+    engine.default_for_chat = true;
+    return engine;
 }
 
 struct ProxyResult {
@@ -263,6 +404,48 @@ http::response<http::string_body> handle_request(const http::request<http::strin
         body << "]}";
         return json_response(http::status::ok, version, body.str());
     }
+    if (request.method() == http::verb::post && target == "/v1/setup/llama-cpp") {
+        if (config.source_path.empty()) {
+            return error_response(http::status::internal_server_error, version, "The active configuration path is unknown; setup cannot be persisted.");
+        }
+        try {
+            std::istringstream input(request.body());
+            boost::property_tree::ptree body;
+            boost::property_tree::read_json(input, body);
+            const auto engine = build_llama_config(body, config);
+            auto candidate_engines = engines.configurations();
+            for (auto& configured : candidate_engines) configured.default_for_chat = false;
+            const auto found = std::find_if(candidate_engines.begin(), candidate_engines.end(), [](const EngineConfig& value) {
+                return value.id == "llama-cpp";
+            });
+            if (found == candidate_engines.end()) candidate_engines.push_back(engine);
+            else *found = engine;
+
+            RuntimeConfig next_config = config;
+            next_config.engines = candidate_engines;
+            std::string error;
+            const auto persist = [&](std::string& persist_error) {
+                try {
+                    save_config(config.source_path, next_config);
+                    return true;
+                } catch (const std::exception& ex) {
+                    persist_error = std::string("Could not save engine configuration: ") + ex.what();
+                    return false;
+                }
+            };
+            if (!engines.replace_configs(std::move(candidate_engines), persist, error)) {
+                return error_response(http::status::conflict, version, error);
+            }
+            return json_response(http::status::ok, version,
+                "{\"id\":\"llama-cpp\",\"status\":\"configured\",\"backend\":" + quoted(body.get<std::string>("backend", "cpu")) +
+                ",\"ready\":false,\"config_saved\":true}");
+        } catch (const boost::property_tree::json_parser_error& ex) {
+            return error_response(http::status::bad_request, version, std::string("Invalid JSON setup request: ") + ex.what());
+        } catch (const std::exception& ex) {
+            return error_response(http::status::unprocessable_entity, version, ex.what());
+        }
+    }
+
     if (request.method() == http::verb::post) {
         const auto start_id = engine_id_from_path(target, "start");
         if (!start_id.empty()) {

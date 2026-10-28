@@ -10,6 +10,10 @@ const updateTitle = document.querySelector('#update-title');
 const updateCopy = document.querySelector('#update-copy');
 const updateLink = document.querySelector('#update-link');
 const runtimeVersion = document.querySelector('#runtime-version');
+const chatReadiness = document.querySelector('#chat-readiness');
+const chatSendButton = document.querySelector('#send');
+const llamaSetupForm = document.querySelector('#llama-setup-form');
+const setupStatus = document.querySelector('#setup-status');
 
 const REPOSITORY_RELEASES = 'https://github.com/azmisahin-ai/local-ai-runtime/releases';
 const FALLBACK_RELEASE_API = 'https://api.github.com/repos/azmisahin-ai/local-ai-runtime/releases?per_page=10';
@@ -111,13 +115,16 @@ function engineCard(engine) {
   const info = make('div');
   info.append(make('p', 'engine-name', engine.display_name || engine.id));
   const meta = make('div', 'engine-meta');
-  meta.append(make('span', `tag ${engine.status === 'running' ? 'running' : ''}`, engine.status));
+  const readinessClass = engine.ready ? 'ready' : (engine.status === 'running' ? 'loading' : '');
+  const readinessLabel = engine.ready ? 'ready' : (engine.status === 'running' ? 'loading model' : engine.status);
+  meta.append(make('span', `tag ${readinessClass}`, readinessLabel));
   if (engine.pid) meta.append(make('span', 'tag', `PID ${engine.pid}`));
   for (const capability of (engine.capabilities || [])) meta.append(make('span', 'tag', capability));
   info.append(meta);
   if (engine.last_error) info.append(make('p', 'engine-error', engine.last_error));
-  else if (!engine.executable_configured) info.append(make('p', 'engine-error', 'Choose an inference engine, then set executable_path in config/engines.json.'));
-  else if ((engine.capabilities || []).includes('chat') && !engine.model_configured) info.append(make('p', 'engine-error', 'Set model_path to a real model file in config/engines.json before starting.'));
+  else if (!engine.executable_configured) info.append(make('p', 'engine-error', 'Configure llama.cpp above or set the engine executable path.'));
+  else if ((engine.capabilities || []).includes('chat') && !engine.model_configured) info.append(make('p', 'engine-error', 'Choose a GGUF model file in the setup form before starting.'));
+  else if (engine.status === 'running' && !engine.ready) info.append(make('p', 'engine-loading', 'The process is running; waiting for the model server to report ready. Large models may take a while to load.'));
   const actions = make('div', 'engine-actions');
   const start = make('button', 'button primary', 'Start');
   start.type = 'button';
@@ -138,14 +145,39 @@ async function refreshEngines() {
     const result = await api('/v1/engines');
     engineList.replaceChildren();
     if (!result.data?.length) {
-      engineList.append(make('div', 'empty', 'No engines configured yet. Create config/engines.json from the example file.'));
+      engineList.append(make('div', 'empty', 'No engines configured. Use the setup form above to configure llama.cpp.'));
+      chatSendButton.disabled = true;
+      chatReadiness.textContent = 'Configure llama.cpp above, then start the engine.';
       return;
     }
     for (const engine of result.data) engineList.append(engineCard(engine));
+    const defaultChat = result.data.find((engine) => engine.default_for_chat);
+    chatSendButton.disabled = !defaultChat?.ready;
+    if (!defaultChat) chatReadiness.textContent = 'Configure llama.cpp above, then start the engine.';
+    else if (defaultChat.ready) chatReadiness.textContent = 'Model server ready. Chat requests stay on this machine.';
+    else if (defaultChat.status === 'running') chatReadiness.textContent = 'The model is loading or the server is not ready yet. Chat will enable when its health check succeeds.';
+    else if (!defaultChat.executable_configured || !defaultChat.model_configured) chatReadiness.textContent = 'Complete the llama.cpp setup above, then start the engine.';
+    else chatReadiness.textContent = 'Start the configured engine to enable chat.';
   } catch (error) {
     engineError.textContent = error.message;
     engineList.replaceChildren(make('div', 'empty', 'Could not load engine status.'));
   }
+}
+
+async function waitForEngineReady(id, timeoutMs = 180000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const result = await api('/v1/engines');
+    const engine = result.data?.find((entry) => entry.id === id);
+    if (!engine) throw new Error(`Engine '${id}' is not present in the runtime configuration.`);
+    if (engine.ready) return;
+    if (engine.status === 'failed') throw new Error(engine.last_error || 'Engine exited before becoming ready. Check the engine log under logs/.');
+    engineError.textContent = engine.status === 'running'
+      ? 'Engine started. Waiting for the local model server to become ready…'
+      : 'Waiting for engine startup…';
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  throw new Error('Timed out waiting for the model server. Check logs/llama-cpp.log, the executable build, and model path.');
 }
 
 async function controlEngine(id, action, button) {
@@ -153,6 +185,7 @@ async function controlEngine(id, action, button) {
   engineError.textContent = '';
   try {
     await api(`/v1/engines/${encodeURIComponent(id)}/${action}`, { method: 'POST', body: '{}' });
+    if (action === 'start') await waitForEngineReady(id);
     await refreshEngines();
   } catch (error) {
     engineError.textContent = error.message;
@@ -161,6 +194,32 @@ async function controlEngine(id, action, button) {
     button.disabled = false;
   }
 }
+
+llamaSetupForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  setupStatus.className = 'status-message';
+  setupStatus.textContent = 'Validating paths and saving configuration…';
+  const saveButton = document.querySelector('#save-llama-setup');
+  saveButton.disabled = true;
+  try {
+    const body = {
+      executable_path: document.querySelector('#llama-executable').value.trim(),
+      model_path: document.querySelector('#llama-model').value.trim(),
+      backend: document.querySelector('#llama-backend').value,
+      context_size: Number(document.querySelector('#llama-context').value),
+      engine_port: Number(document.querySelector('#llama-port').value),
+    };
+    const result = await api('/v1/setup/llama-cpp', { method: 'POST', body: JSON.stringify(body) });
+    setupStatus.className = 'status-message success';
+    setupStatus.textContent = `Saved ${result.id} configuration (${result.backend.toUpperCase()} backend). Your paths are stored locally in config/engines.json. Start the engine below; no model file was uploaded.`;
+    await refreshEngines();
+  } catch (error) {
+    setupStatus.className = 'status-message failure';
+    setupStatus.textContent = error.message;
+  } finally {
+    saveButton.disabled = false;
+  }
+});
 
 document.querySelector('#refresh').addEventListener('click', async () => {
   await Promise.all([refreshHealth(), refreshEngines()]);
@@ -191,6 +250,7 @@ document.querySelector('#chat-form').addEventListener('submit', async (event) =>
   }
 });
 
+chatSendButton.disabled = true;
 refreshHealth();
 refreshEngines();
 checkForUpdates();

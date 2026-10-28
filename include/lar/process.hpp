@@ -3,6 +3,7 @@
 #include "lar/config.hpp"
 
 #include <cstdint>
+#include <functional>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -73,6 +74,12 @@ public:
     bool start(const std::string& id, std::string& error);
     bool stop(const std::string& id, std::string& error);
     std::vector<EngineStatus> statuses();
+    std::vector<EngineConfig> configurations();
+    // Replaces the complete config only while all managed engines are stopped.
+    // The persistence callback executes under the manager lock before in-memory state changes.
+    bool replace_configs(std::vector<EngineConfig> configs,
+                         const std::function<bool(std::string&)>& persist,
+                         std::string& error);
     std::optional<EngineStatus> default_chat_engine();
 
 private:

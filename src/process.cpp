@@ -1,5 +1,6 @@
 #include "lar/process.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <thread>
@@ -468,6 +469,59 @@ std::vector<EngineStatus> EngineManager::statuses() {
                                       engine.process.exit_code(), engine.last_error});
     }
     return result;
+}
+
+std::vector<EngineConfig> EngineManager::configurations() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<EngineConfig> result;
+    result.reserve(engines_.size());
+    for (const auto& engine : engines_) result.push_back(engine.config);
+    return result;
+}
+
+bool EngineManager::replace_configs(std::vector<EngineConfig> configs,
+                                    const std::function<bool(std::string&)>& persist,
+                                    std::string& error) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (auto& engine : engines_) {
+        if (engine.process.state() == ProcessState::running) {
+            error = "Stop all running engines before changing engine configuration.";
+            return false;
+        }
+    }
+
+    std::vector<std::string> ids;
+    ids.reserve(configs.size());
+    unsigned int default_count = 0;
+    for (const auto& config : configs) {
+        if (!is_valid_engine_id(config.id)) {
+            error = "Invalid engine id in new configuration: " + config.id;
+            return false;
+        }
+        if (std::find(ids.begin(), ids.end(), config.id) != ids.end()) {
+            error = "Duplicate engine id in new configuration: " + config.id;
+            return false;
+        }
+        ids.push_back(config.id);
+        if (config.default_for_chat) ++default_count;
+    }
+    if (default_count > 1) {
+        error = "Only one engine may be the default chat engine.";
+        return false;
+    }
+
+    if (persist && !persist(error)) return false;
+
+    std::vector<ManagedEngine> replacement;
+    replacement.reserve(configs.size());
+    for (auto& config : configs) {
+        ManagedEngine engine;
+        engine.config = std::move(config);
+        replacement.push_back(std::move(engine));
+    }
+    engines_ = std::move(replacement);
+    error.clear();
+    return true;
 }
 
 std::optional<EngineStatus> EngineManager::default_chat_engine() {

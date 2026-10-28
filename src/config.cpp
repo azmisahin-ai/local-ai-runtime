@@ -5,8 +5,11 @@
 
 #include <algorithm>
 #include <cctype>
+#include <fstream>
 #include <set>
+#include <sstream>
 #include <stdexcept>
+#include <system_error>
 
 namespace lar {
 namespace {
@@ -27,6 +30,40 @@ std::vector<std::string> read_string_array(const boost::property_tree::ptree& pa
     return values;
 }
 
+std::string json_quote(const std::string& value) {
+    std::ostringstream out;
+    out << '"';
+    constexpr char hex[] = "0123456789abcdef";
+    for (const unsigned char ch : value) {
+        switch (ch) {
+            case '"': out << "\\\""; break;
+            case '\\': out << "\\\\"; break;
+            case '\b': out << "\\b"; break;
+            case '\f': out << "\\f"; break;
+            case '\n': out << "\\n"; break;
+            case '\r': out << "\\r"; break;
+            case '\t': out << "\\t"; break;
+            default:
+                if (ch < 0x20U) out << "\\u00" << hex[(ch >> 4U) & 0x0fU] << hex[ch & 0x0fU];
+                else out << static_cast<char>(ch);
+        }
+    }
+    out << '"';
+    return out.str();
+}
+
+std::string path_to_utf8(const std::filesystem::path& path) {
+    const auto encoded = path.u8string();
+    return std::string(encoded.begin(), encoded.end());
+}
+
+std::filesystem::path path_from_utf8(const std::string& value) {
+    std::u8string encoded;
+    encoded.reserve(value.size());
+    for (const unsigned char ch : value) encoded.push_back(static_cast<char8_t>(ch));
+    return std::filesystem::path(encoded);
+}
+
 } // namespace
 
 bool is_valid_engine_id(const std::string& id) {
@@ -39,9 +76,14 @@ bool is_valid_engine_id(const std::string& id) {
 
 RuntimeConfig load_config(const std::filesystem::path& path) {
     boost::property_tree::ptree root;
-    boost::property_tree::read_json(path.string(), root);
+    std::ifstream config_input(path, std::ios::binary);
+    if (!config_input) throw std::runtime_error("Cannot open configuration file: " + path.string());
+    boost::property_tree::read_json(config_input, root);
 
     RuntimeConfig config;
+    std::error_code absolute_error;
+    config.source_path = std::filesystem::absolute(path, absolute_error);
+    if (absolute_error) config.source_path = path;
     config.host = trim(root.get<std::string>("server.host", "127.0.0.1"));
     if (config.host != "127.0.0.1" && config.host != "localhost") {
         throw std::runtime_error("Only loopback bind addresses are allowed in v0.1 (127.0.0.1 or localhost).");
@@ -59,9 +101,9 @@ RuntimeConfig load_config(const std::filesystem::path& path) {
         EngineConfig engine;
         engine.id = trim(node.get<std::string>("id", ""));
         engine.display_name = trim(node.get<std::string>("display_name", engine.id));
-        engine.executable_path = node.get<std::string>("executable_path", "");
-        engine.model_path = node.get<std::string>("model_path", "");
-        engine.working_directory = node.get<std::string>("working_directory", "");
+        engine.executable_path = path_from_utf8(node.get<std::string>("executable_path", ""));
+        engine.model_path = path_from_utf8(node.get<std::string>("model_path", ""));
+        engine.working_directory = path_from_utf8(node.get<std::string>("working_directory", ""));
         engine.args = read_string_array(node, "args");
         engine.upstream_base_url = trim(node.get<std::string>("upstream_base_url", ""));
         engine.capabilities = read_string_array(node, "capabilities");
@@ -104,7 +146,9 @@ RuntimeConfig load_config(const std::filesystem::path& path) {
 std::vector<std::string> expand_arguments(const EngineConfig& engine) {
     std::vector<std::string> result;
     result.reserve(engine.args.size());
-    const auto model = engine.model_path.string();
+    // Serialize model paths as UTF-8 so Windows wide-character process launch
+    // receives the same path after utf8_to_wide(), including non-ASCII usernames.
+    const auto model = path_to_utf8(engine.model_path);
     for (auto arg : engine.args) {
         const std::string token = "{model_path}";
         std::size_t at = 0;
@@ -115,6 +159,87 @@ std::vector<std::string> expand_arguments(const EngineConfig& engine) {
         result.push_back(std::move(arg));
     }
     return result;
+}
+
+void save_config(const std::filesystem::path& path, const RuntimeConfig& config) {
+    if (path.empty()) throw std::runtime_error("Configuration path is empty.");
+    if (config.host != "127.0.0.1" && config.host != "localhost") {
+        throw std::runtime_error("Only loopback bind addresses are allowed in v0.1.");
+    }
+    if (config.port == 0) throw std::runtime_error("Configuration port must be non-zero.");
+
+    std::set<std::string> ids;
+    unsigned int default_count = 0;
+    for (const auto& engine : config.engines) {
+        if (!is_valid_engine_id(engine.id)) throw std::runtime_error("Cannot save invalid engine id: " + engine.id);
+        if (!ids.insert(engine.id).second) throw std::runtime_error("Cannot save duplicate engine id: " + engine.id);
+        if (engine.default_for_chat) ++default_count;
+    }
+    if (default_count > 1) throw std::runtime_error("Cannot save configuration with more than one default chat engine.");
+
+    std::ostringstream json;
+    json << "{\n  \"server\": {\n    \"host\": " << json_quote(config.host)
+         << ",\n    \"port\": " << config.port << "\n  },\n  \"engines\": [";
+    for (std::size_t i = 0; i < config.engines.size(); ++i) {
+        const auto& engine = config.engines[i];
+        json << (i == 0 ? "\n" : ",\n") << "    {\n"
+             << "      \"id\": " << json_quote(engine.id) << ",\n"
+             << "      \"display_name\": " << json_quote(engine.display_name) << ",\n"
+             << "      \"executable_path\": " << json_quote(path_to_utf8(engine.executable_path)) << ",\n"
+             << "      \"model_path\": " << json_quote(path_to_utf8(engine.model_path)) << ",\n"
+             << "      \"working_directory\": " << json_quote(path_to_utf8(engine.working_directory)) << ",\n"
+             << "      \"args\": [";
+        for (std::size_t a = 0; a < engine.args.size(); ++a) {
+            if (a) json << ", ";
+            json << json_quote(engine.args[a]);
+        }
+        json << "],\n      \"upstream_base_url\": " << json_quote(engine.upstream_base_url) << ",\n"
+             << "      \"capabilities\": [";
+        for (std::size_t c = 0; c < engine.capabilities.size(); ++c) {
+            if (c) json << ", ";
+            json << json_quote(engine.capabilities[c]);
+        }
+        json << "],\n      \"default_for_chat\": " << (engine.default_for_chat ? "true" : "false") << "\n    }";
+    }
+    if (!config.engines.empty()) json << '\n';
+    json << "  ]\n}\n";
+
+    auto parent = path.parent_path();
+    if (!parent.empty()) std::filesystem::create_directories(parent);
+    auto temporary = path;
+    temporary += ".tmp";
+    auto backup = path;
+    backup += ".bak";
+    {
+        std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+        if (!output) throw std::runtime_error("Cannot write temporary configuration file: " + path_to_utf8(temporary));
+        const auto content = json.str();
+        output.write(content.data(), static_cast<std::streamsize>(content.size()));
+        output.flush();
+        if (!output) throw std::runtime_error("Failed while writing configuration file: " + path_to_utf8(temporary));
+    }
+
+    std::error_code ec;
+    const bool had_previous = std::filesystem::exists(path, ec) && !ec;
+    if (had_previous) {
+        std::filesystem::remove(backup, ec);
+        ec.clear();
+        std::filesystem::rename(path, backup, ec);
+        if (ec) {
+            std::filesystem::remove(temporary);
+            throw std::runtime_error("Cannot back up existing configuration: " + ec.message());
+        }
+    }
+    std::filesystem::rename(temporary, path, ec);
+    if (ec) {
+        if (had_previous) {
+            std::error_code rollback_error;
+            std::filesystem::rename(backup, path, rollback_error);
+        }
+        std::filesystem::remove(temporary);
+        throw std::runtime_error("Cannot replace configuration file: " + ec.message());
+    }
+    if (had_previous) std::filesystem::remove(backup, ec);
 }
 
 } // namespace lar

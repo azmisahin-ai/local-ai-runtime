@@ -22,9 +22,12 @@ struct RuntimeConfig {
     std::string host{"127.0.0.1"};
     unsigned short port{8000};
     std::vector<EngineConfig> engines;
+    // Absolute path to the user-owned configuration file (not serialized).
+    std::filesystem::path source_path;
 };
 
 RuntimeConfig load_config(const std::filesystem::path& path);
+void save_config(const std::filesystem::path& path, const RuntimeConfig& config);
 std::vector<std::string> expand_arguments(const EngineConfig& engine);
 bool is_valid_engine_id(const std::string& id);
 
