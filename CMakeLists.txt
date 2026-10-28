@@ -67,6 +67,14 @@ if(LAR_BUILD_TESTS)
     endif()
     add_executable(lar_core_tests tests/core_tests.cpp)
     target_link_libraries(lar_core_tests PRIVATE lar_core)
+    # MSVC must decode UTF-8 source literals as UTF-8 in test targets too.
+    # The core tests assert UTF-8 model-path preservation using non-ASCII text;
+    # without /utf-8 the literal may be decoded using the runner's active code page.
+    if(MSVC)
+        foreach(target lar_fake_engine lar_fake_http_engine lar_core_tests)
+            target_compile_options(${target} PRIVATE /utf-8)
+        endforeach()
+    endif()
     target_compile_definitions(lar_core_tests PRIVATE
         LAR_TEST_CONFIG="${CMAKE_CURRENT_SOURCE_DIR}/config/engines.example.json"
         LAR_FAKE_ENGINE="$<TARGET_FILE:lar_fake_engine>"
