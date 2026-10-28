@@ -21,15 +21,29 @@ try {
         throw "Runtime executable not found. Run .\scripts\build.ps1 first, or extract a release package. Checked: $($candidateExecutables -join '; ')"
     }
 
-    $configDir = Join-Path $root 'config'
+    # Keep config, model/engine downloads and logs outside the program directory
+    # so upgrades work even when the runtime folder is read-only (e.g. Program Files).
+    if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
+        $dataRoot = Join-Path $env:LOCALAPPDATA 'LocalAIRuntime'
+    } else {
+        $dataRoot = Join-Path $env:TEMP 'LocalAIRuntime'
+    }
+    $configDir = Join-Path $dataRoot 'config'
     $configPath = Join-Path $configDir 'engines.json'
-    $examplePath = Join-Path $configDir 'engines.example.json'
+    $examplePath = Join-Path $root 'config/engines.example.json'
+    $legacyConfigPath = Join-Path $root 'config/engines.json'
+    New-Item -ItemType Directory -Force -Path $configDir, $dataRoot | Out-Null
     if (-not (Test-Path -LiteralPath $configPath)) {
-        if (-not (Test-Path -LiteralPath $examplePath)) {
-            throw "Example engine configuration not found: $examplePath"
+        if (Test-Path -LiteralPath $legacyConfigPath) {
+            Copy-Item $legacyConfigPath $configPath
+            Write-Host "Migrated existing settings to $configPath" -ForegroundColor Yellow
+        } else {
+            if (-not (Test-Path -LiteralPath $examplePath)) {
+                throw "Example engine configuration not found: $examplePath"
+            }
+            Copy-Item $examplePath $configPath
+            Write-Host "Created user config: $configPath" -ForegroundColor Yellow
         }
-        Copy-Item $examplePath $configPath
-        Write-Host "Created $configPath. Edit its engine executable/model paths to enable inference." -ForegroundColor Yellow
     }
 
     $existing = Get-NetTCPConnection -LocalAddress 127.0.0.1 -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue
@@ -43,10 +57,14 @@ try {
                 return
             }
         } catch { }
-        throw 'Port 8000 is already in use by another service. Stop that service or change server.port in config/engines.json.'
+        throw "Port 8000 is already in use by another service. Stop that service or change server.port in $configPath."
     }
 
-    $process = Start-Process -FilePath $exe -WorkingDirectory $root -PassThru
+    # Start-Process flattens ArgumentList to one command line; quote paths so
+    # user names or package directories containing spaces remain valid.
+    $webDir = Join-Path $root 'web'
+    $arguments = '--config "{0}" --web-dir "{1}"' -f $configPath, $webDir
+    $process = Start-Process -FilePath $exe -ArgumentList $arguments -WorkingDirectory $dataRoot -PassThru
     $ready = $false
     for ($i = 0; $i -lt 40; $i++) {
         if ($process.HasExited) {
@@ -60,7 +78,8 @@ try {
     }
     if (-not $ready) { throw 'Runtime did not become ready on http://127.0.0.1:8000 within 10 seconds.' }
     if (-not $NoBrowser) { Start-Process 'http://127.0.0.1:8000' }
-    Write-Host "Local AI Runtime is running from '$exe'. Close its process window or stop the process to shut it down." -ForegroundColor Green
+    Write-Host "Local AI Runtime is running from '$exe'." -ForegroundColor Green
+    Write-Host "User settings, engine/model files and logs: '$dataRoot'"
     if ($PassThru) { return $process }
 } finally {
     Pop-Location

@@ -98,13 +98,11 @@ jobs:
           if (-not (Test-Path (Join-Path $verify 'scripts/Start-LocalAIRuntime.ps1'))) { throw 'Packaged Windows launcher is missing.' }
 
           # Validate that the extracted, relocatable package can actually serve HTTP.
-          $stdout = Join-Path $verify 'runtime-smoke.stdout.log'
-          $stderr = Join-Path $verify 'runtime-smoke.stderr.log'
-          $runtime = Start-Process -FilePath (Join-Path $verify 'local-ai-runtime.exe') `
-            -ArgumentList @('--config', (Join-Path $verify 'config/engines.example.json'), '--web-dir', (Join-Path $verify 'web')) `
-            -WorkingDirectory $verify -PassThru -WindowStyle Hidden `
-            -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          $runtime = $null
           try {
+            $launcher = Join-Path $verify 'scripts/Start-LocalAIRuntime.ps1'
+            $runtime = & $launcher -NoBrowser -PassThru
+            if (-not $runtime -or -not $runtime.Id) { throw 'Packaged Windows launcher did not return the runtime process.' }
             $ready = $false
             for ($i = 0; $i -lt 40; $i++) {
               if ($runtime.HasExited) { throw "Packaged runtime exited before health check (code $($runtime.ExitCode))." }
@@ -114,11 +112,7 @@ jobs:
               } catch { }
               Start-Sleep -Milliseconds 250
             }
-            if (-not $ready) {
-              if (Test-Path $stdout) { Get-Content $stdout }
-              if (Test-Path $stderr) { Get-Content $stderr }
-              throw 'Extracted Windows release package did not pass /health within 10 seconds.'
-            }
+            if (-not $ready) { throw 'Extracted Windows release launcher did not pass /health within 10 seconds.' }
           } finally {
             if ($runtime -and -not $runtime.HasExited) {
               Stop-Process -Id $runtime.Id -Force -ErrorAction SilentlyContinue
@@ -150,7 +144,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake ninja-build libboost-dev
+          sudo apt-get install -y build-essential cmake ninja-build pkg-config patchelf pax-utils libboost-dev libcurl4-openssl-dev libarchive-dev libssl-dev
 
       - name: Configure
         run: |
@@ -183,14 +177,46 @@ jobs:
           cp config/engines.example.json "$STAGE/config/"
           cp LICENSE "$STAGE/"
           install -m 0755 scripts/start-runtime.sh "$STAGE/scripts/start-runtime.sh"
+
+          # Bundle non-glibc shared dependencies so a user does not have to
+          # install curl/archive/OpenSSL development packages just to launch.
+          # glibc and the dynamic loader remain system requirements for ABI safety.
+          mkdir -p "$STAGE/lib"
+          while IFS= read -r library; do
+            [[ "$library" = /* && -f "$library" ]] || continue
+            base="$(basename "$library")"
+            case "$base" in
+              linux-vdso.so*|ld-linux*|libc.so*|libm.so*|libpthread.so*|libdl.so*|librt.so*|libresolv.so*|libutil.so*|libnss_*.so*|libanl.so*) continue ;;
+            esac
+            [[ -e "$STAGE/lib/$base" ]] || cp -L "$library" "$STAGE/lib/$base"
+            # lddtree may report a real versioned file while ELF DT_NEEDED uses
+            # its SONAME (for example libfoo.so.1). Preserve that lookup name.
+            soname="$(patchelf --print-soname "$library" 2>/dev/null || true)"
+            if [[ -n "$soname" && ! -e "$STAGE/lib/$soname" ]]; then
+              ln -s "$base" "$STAGE/lib/$soname"
+            fi
+          done < <(lddtree -l "$STAGE/local-ai-runtime")
+          for library in "$STAGE"/lib/*.so*; do
+            [[ -f "$library" ]] || continue
+            patchelf --force-rpath --set-rpath '$ORIGIN' "$library"
+          done
+          patchelf --force-rpath --set-rpath '$ORIGIN/lib' "$STAGE/local-ai-runtime"
+          missing_deps="$(ldd "$STAGE/local-ai-runtime" | grep 'not found' || true)"
+          if [[ -n "$missing_deps" ]]; then
+            echo "Linux package has unresolved shared libraries:" >&2
+            echo "$missing_deps" >&2
+            exit 1
+          fi
+
           cat > "$STAGE/README-INSTALL.txt" <<EOF
           Local AI Runtime ${VERSION} — Linux x86_64
 
           Run: ./scripts/start-runtime.sh
 
-          This package includes the runtime, not AI model weights or external
-          inference engines. A recent Linux distribution with the C++ runtime
-          libraries is required. See the source repository README for details.
+          This package bundles the non-glibc shared libraries used by the
+          runtime. The host system must provide a compatible glibc. It does
+          not include AI model weights or external inference engines.
+          See the source repository README for model setup and security notes.
           EOF
           PACKAGE="$GITHUB_WORKSPACE/dist/local-ai-runtime-linux-x64.tar.gz"
           tar -C "$STAGE" -czf "$PACKAGE" .
@@ -202,9 +228,16 @@ jobs:
           test "$("$VERIFY/local-ai-runtime" --version)" = "$VERSION"
           test -f "$VERIFY/web/index.html"
           test -x "$VERIFY/scripts/start-runtime.sh"
+          missing_deps="$(ldd "$VERIFY/local-ai-runtime" | grep 'not found' || true)"
+          if [[ -n "$missing_deps" ]]; then
+            echo "Extracted Linux package has unresolved shared libraries:" >&2
+            echo "$missing_deps" >&2
+            exit 1
+          fi
 
-          # Validate that the extracted package actually serves HTTP, not just --version.
-          "$VERIFY/local-ai-runtime" --config "$VERIFY/config/engines.example.json" --web-dir "$VERIFY/web" >"$VERIFY/runtime-smoke.log" 2>&1 &
+          # Validate the actual user-facing launcher and per-user config path,
+          # not just the extracted executable's --version output.
+          XDG_DATA_HOME="$VERIFY/user-data" "$VERIFY/scripts/start-runtime.sh" >"$VERIFY/runtime-smoke.log" 2>&1 &
           runtime_pid=$!
           cleanup_runtime() {
             kill -TERM "$runtime_pid" 2>/dev/null || true
