@@ -38,7 +38,7 @@ per-user-data/logs/<engine-id>.log
 - `GET /version` returns the embedded version and the public repository/release-feed URLs.
 - The dashboard checks releases only when the UI starts. Development/prerelease builds can see prereleases; stable builds are offered stable releases only.
 - The dashboard does not download or execute update binaries. An unattended updater is blocked on signed provenance, a per-platform staging/restart mechanism, rollback, and tests for partial updates.
-- The Pages site reads the version-controlled `site/product.json` feature manifest and the public GitHub Releases API. The final `publish-pages` job in `pipeline.yml` deploys `site/` only after the Windows and Linux package jobs pass on `main`.
+- The Pages site reads the version-controlled `site/product.json` feature manifest and the public GitHub Releases API. The final `publish-pages` job in `pipeline.yml` deploys `site/` only after Windows x64, Linux x64, macOS x64 and macOS arm64 package jobs pass on `main`.
 
 ## Known design debt
 

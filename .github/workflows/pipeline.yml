@@ -1,14 +1,19 @@
 name: Build, test, package & publish
 
 on:
-  # One canonical workflow: PRs validate; main builds/packages and deploys Pages
-  # only after both platform packages pass; v* tags publish Releases.
+  # One canonical workflow: PRs validate; main builds/packages for Windows, Linux,
+  # macOS Intel and Apple Silicon, then deploys Pages only after all targets pass.
+  # Version tags publish the same four platform/architecture packages as Releases.
   push:
     branches:
       - main
     tags:
       - 'v*'
   pull_request:
+  schedule:
+    # Keep the weekly macOS maintenance check inside the canonical workflow;
+    # Windows/Linux and publish jobs are skipped for scheduled runs.
+    - cron: '0 7 * * 1'
   workflow_dispatch:
     inputs:
       version:
@@ -30,6 +35,7 @@ concurrency:
 
 jobs:
   windows:
+    if: ${{ github.event_name != 'schedule' }}
     name: Windows x64 build / test / package
     runs-on: windows-2022
     steps:
@@ -109,7 +115,7 @@ jobs:
 
       - name: Restore vcpkg dependency caches
         id: vcpkg-cache
-        uses: actions/cache@v6
+        uses: actions/cache/restore@v6
         with:
           path: |
             ${{ runner.temp }}\lar-vcpkg-binary-cache
@@ -128,6 +134,7 @@ jobs:
           }
 
       - name: Configure
+        id: configure
         shell: pwsh
         run: |
           $version = $env:LAR_RELEASE_VERSION -replace '^v', ''
@@ -142,6 +149,15 @@ jobs:
             exit $configureExitCode
           }
 
+      - name: Save vcpkg dependency caches
+        if: ${{ always() && steps.configure.outcome == 'success' && steps.vcpkg-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ${{ runner.temp }}\lar-vcpkg-binary-cache
+            ${{ runner.temp }}\lar-vcpkg-downloads
+          key: windows-vcpkg-${{ runner.arch }}-${{ steps.vcpkg-cache-identity.outputs.identity }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+
       - name: Build
         run: cmake --build build --config Release --parallel 2
 
@@ -153,6 +169,7 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or $actual.Trim() -ne $expected) { throw "Version check failed: expected $expected; got $actual" }
 
       - name: Test
+        id: test
         run: ctest --test-dir build -C Release --output-on-failure
 
       - name: Smoke-test Windows developer launcher (PR validation)
@@ -242,11 +259,20 @@ jobs:
           Get-FileHash $package -Algorithm SHA256 | Format-List
 
       - name: Upload Windows configure diagnostics on failure
-        if: ${{ failure() && hashFiles('configure-vcpkg.log') != '' }}
+        if: ${{ always() && steps.configure.outcome == 'failure' && hashFiles('configure-vcpkg.log') != '' }}
         uses: actions/upload-artifact@v7
         with:
           name: windows-configure-diagnostics-${{ github.sha }}
           path: configure-vcpkg.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload Windows test diagnostics on failure
+        if: ${{ failure() && steps.test.outcome == 'failure' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-test-diagnostics-${{ github.sha }}
+          path: build/Testing/Temporary/LastTest.log
           if-no-files-found: ignore
           retention-days: 7
 
@@ -260,6 +286,7 @@ jobs:
           retention-days: 14
 
   linux:
+    if: ${{ github.event_name != 'schedule' }}
     name: Linux x64 build / test / package
     runs-on: ubuntu-24.04
     steps:
@@ -302,6 +329,7 @@ jobs:
           test "$actual" = "$expected"
 
       - name: Test
+        id: test
         run: ctest --test-dir build --output-on-failure
 
       - name: Smoke-test Linux developer launcher (PR validation)
@@ -423,10 +451,183 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Upload Linux test diagnostics on failure
+        if: ${{ failure() && steps.test.outcome == 'failure' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-test-diagnostics-${{ github.sha }}
+          path: build/Testing/Temporary/LastTest.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+  macos:
+    name: macOS ${{ matrix.arch }} build / test / package
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            arch: x64
+          - runner: macos-15
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Validate web assets and manifests
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check web/app.js
+          node --check site/app.js
+          python -m json.tool site/product.json >/dev/null
+          python -m json.tool config/engines.example.json >/dev/null
+
+      - name: Install only missing native dependencies (no brew update)
+        shell: bash
+        run: |
+          set -euo pipefail
+          export HOMEBREW_NO_AUTO_UPDATE=1
+          for formula in boost curl libarchive openssl@3; do
+            if ! brew list --versions "$formula" >/dev/null 2>&1; then
+              echo "Installing prebuilt Homebrew bottle: $formula"
+              if ! brew install --force-bottle "$formula"; then
+                echo "::error title=macOS dependency bottle unavailable::$formula has no usable bottle on this runner; source builds are disabled to keep CI bounded."
+                exit 1
+              fi
+            fi
+          done
+          for tool in cmake ninja pkg-config; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              if [[ "$tool" == "pkg-config" ]]; then brew install --force-bottle pkg-config; else brew install --force-bottle "$tool"; fi
+            fi
+            command -v "$tool"
+          done
+
+      - name: Configure
+        shell: bash
+        run: |
+          set -euo pipefail
+          PREFIX_PATH="$(brew --prefix curl);$(brew --prefix libarchive);$(brew --prefix openssl@3)"
+          VERSION="${LAR_RELEASE_VERSION#v}"
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "Invalid release version: $VERSION" >&2; exit 1; }
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release "-DCMAKE_PREFIX_PATH=${PREFIX_PATH}" "-DLAR_VERSION=${VERSION}" -DLAR_BUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build --parallel 2
+
+      - name: Verify executable version
+        shell: bash
+        run: |
+          expected="${LAR_RELEASE_VERSION#v}"
+          actual="$(./build/local-ai-runtime --version)"
+          test "$actual" = "$expected"
+
+      - name: Test
+        id: test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Repeat HTTP smoke test
+        run: ctest --test-dir build -C Release --repeat until-fail:3 -R '^lar_http_smoke$' --output-on-failure
+
+      - name: Smoke-test macOS developer launcher
+        if: ${{ github.event_name == 'pull_request' || github.event_name == 'schedule' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          XDG_DATA_HOME="$RUNNER_TEMP/lar-developer-data" ./scripts/start-runtime.sh >launcher-smoke.log 2>&1 &
+          runtime_pid=$!
+          cleanup() { kill -TERM "$runtime_pid" 2>/dev/null || true; wait "$runtime_pid" 2>/dev/null || true; }
+          trap cleanup EXIT
+          ready=0
+          for attempt in $(seq 1 40); do
+            if curl --fail --silent http://127.0.0.1:8000/health >"$RUNNER_TEMP/lar-health.json"; then ready=1; break; fi
+            if ! kill -0 "$runtime_pid" 2>/dev/null; then cat launcher-smoke.log; exit 1; fi
+            sleep 0.25
+          done
+          if [[ "$ready" != 1 ]]; then cat launcher-smoke.log; echo 'macOS developer launcher did not become ready.' >&2; exit 1; fi
+          grep -q '"status":"ok"' "$RUNNER_TEMP/lar-health.json"
+
+      - name: Package and smoke-test portable macOS runtime
+        if: ${{ github.event_name != 'pull_request' && github.event_name != 'schedule' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          export HOMEBREW_NO_AUTO_UPDATE=1
+          VERSION="${LAR_RELEASE_VERSION#v}"
+          PACKAGE="$GITHUB_WORKSPACE/dist/local-ai-runtime-macos-${{ matrix.arch }}.tar.gz"
+          STAGE="$GITHUB_WORKSPACE/dist/stage-macos-${{ matrix.arch }}"
+          python scripts/package-macos.py \
+            --binary build/local-ai-runtime \
+            --web-dir web \
+            --config config/engines.example.json \
+            --license LICENSE \
+            --launcher scripts/start-runtime.sh \
+            --stage "$STAGE" \
+            --package "$PACKAGE" \
+            --version "$VERSION" \
+            --arch "${{ matrix.arch }}"
+
+          VERIFY="$GITHUB_WORKSPACE/dist/verify-macos-${{ matrix.arch }}"
+          rm -rf "$VERIFY"
+          mkdir -p "$VERIFY"
+          tar -xzf "$PACKAGE" -C "$VERIFY"
+          test "$("$VERIFY/local-ai-runtime" --version)" = "$VERSION"
+          test -f "$VERIFY/web/index.html"
+          test -x "$VERIFY/scripts/start-runtime.sh"
+          if otool -L "$VERIFY/local-ai-runtime" | grep -E '/opt/homebrew/|/usr/local/Cellar/|/usr/local/opt/'; then
+            echo 'Extracted macOS package still references Homebrew absolute paths.' >&2
+            exit 1
+          fi
+
+          XDG_DATA_HOME="$VERIFY/user-data" "$VERIFY/scripts/start-runtime.sh" >"$VERIFY/runtime-smoke.log" 2>&1 &
+          runtime_pid=$!
+          cleanup_runtime() { kill -TERM "$runtime_pid" 2>/dev/null || true; wait "$runtime_pid" 2>/dev/null || true; }
+          trap cleanup_runtime EXIT
+          ready=0
+          for attempt in $(seq 1 40); do
+            if curl --fail --silent http://127.0.0.1:8000/health >"$VERIFY/health.json"; then ready=1; break; fi
+            if ! kill -0 "$runtime_pid" 2>/dev/null; then cat "$VERIFY/runtime-smoke.log"; exit 1; fi
+            sleep 0.25
+          done
+          if [[ "$ready" != 1 ]]; then cat "$VERIFY/runtime-smoke.log"; echo 'Extracted macOS package did not pass /health within 10 seconds.' >&2; exit 1; fi
+          grep -q '"status":"ok"' "$VERIFY/health.json"
+          cleanup_runtime
+          trap - EXIT
+          shasum -a 256 "$PACKAGE"
+
+      - name: Upload macOS package
+        if: ${{ github.event_name != 'pull_request' && github.event_name != 'schedule' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && format('release-macos-{0}', matrix.arch) || format('preview-macos-{0}-{1}', matrix.arch, github.sha) }}
+          path: dist/local-ai-runtime-macos-${{ matrix.arch }}.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload macOS diagnostics on failure
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-diagnostics-${{ matrix.arch }}-${{ github.sha }}
+          path: |
+            launcher-smoke.log
+            dist/verify-macos-${{ matrix.arch }}/runtime-smoke.log
+            build/Testing/Temporary/LastTest.log
+          if-no-files-found: ignore
+          retention-days: 7
+
   publish:
     name: Publish GitHub Release
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: [windows, linux]
+    needs: [windows, linux, macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -447,8 +648,10 @@ jobs:
           set -euo pipefail
           test -s release-assets/local-ai-runtime-windows-x64.zip
           test -s release-assets/local-ai-runtime-linux-x64.tar.gz
+          test -s release-assets/local-ai-runtime-macos-x64.tar.gz
+          test -s release-assets/local-ai-runtime-macos-arm64.tar.gz
           cd release-assets
-          sha256sum local-ai-runtime-windows-x64.zip local-ai-runtime-linux-x64.tar.gz > SHA256SUMS.txt
+          sha256sum local-ai-runtime-windows-x64.zip local-ai-runtime-linux-x64.tar.gz local-ai-runtime-macos-x64.tar.gz local-ai-runtime-macos-arm64.tar.gz > SHA256SUMS.txt
           cd ..
           if [[ "$TAG_NAME" == *-* ]]; then
             gh release create "$TAG_NAME" release-assets/* --verify-tag --title "$TAG_NAME" --generate-notes --prerelease --repo "$GITHUB_REPOSITORY"
@@ -460,7 +663,7 @@ jobs:
   publish-pages:
     name: Publish website (after packages pass)
     if: ${{ success() && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) }}
-    needs: [windows, linux]
+    needs: [windows, linux, macos]
     runs-on: ubuntu-latest
     permissions:
       contents: read

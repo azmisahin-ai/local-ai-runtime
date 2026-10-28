@@ -45,23 +45,23 @@
       "status": "preview"
     },
     {
-      "name": "Windows and Linux CI",
-      "description": "One canonical pipeline validates pull requests and, on each main push, builds/tests/packages Windows and Linux once. The website deploys as the final job only after both extracted packages pass smoke tests.",
+      "name": "Cross-platform CI",
+      "description": "One canonical workflow validates pull requests and builds/tests Windows x64, Linux x64, macOS Intel x64 and macOS Apple Silicon arm64. Main pushes publish preview artifacts and deploy the website only after all four target jobs pass their extracted-package health checks.",
       "status": "preview"
     },
     {
-      "name": "Experimental macOS compatibility",
-      "description": "macOS Intel build and smoke checks run in a separate weekly/manual workflow to avoid long Homebrew dependency builds on every push. A packaged macOS download is not available yet.",
-      "status": "planned"
+      "name": "macOS runtime packages",
+      "description": "The canonical pipeline builds and smoke-tests separate macOS Intel and Apple Silicon command-line packages. Homebrew dylib dependencies are bundled, while macOS system libraries remain required; preview packages are not Developer ID signed or notarized.",
+      "status": "preview"
     },
     {
       "name": "Release downloads and checksums",
-      "description": "The canonical pipeline publishes Windows x64 and Linux x64 packages with SHA-256 manifests only after a v* tag passes both platform build/test/package checks. The first public version has not yet been tagged.",
+      "description": "A v* tag publishes Windows x64, Linux x64, macOS x64 and macOS arm64 packages with one SHA-256 manifest only after all platform build/test/package jobs pass. The first public version has not yet been tagged.",
       "status": "preview"
     },
     {
       "name": "Automatic preview packages",
-      "description": "Every main push uses one pipeline run: Windows/Linux build, test, package and extracted-archive health checks run in parallel; the GitHub Pages deployment runs last and only when both package jobs succeed. Preview archives are retained for 14 days; version tags publish Releases after package checks.",
+      "description": "Every main push uses one pipeline run: Windows, Linux, macOS x64 and macOS arm64 build/test/package jobs run in parallel; the GitHub Pages deployment runs last and only when all four pass. Preview archives are retained for 14 days; version tags publish Releases after all package checks.",
       "status": "preview"
     },
     {

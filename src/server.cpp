@@ -652,8 +652,20 @@ void run_http_server(const RuntimeConfig& config, EngineManager& engines,
     shutdown_requested = 0;
     asio::io_context ioc{1};
     const auto address = asio::ip::make_address(config.host == "localhost" ? "127.0.0.1" : config.host);
-    tcp::acceptor acceptor{ioc, tcp::endpoint{address, config.port}};
+    const tcp::endpoint endpoint{address, config.port};
+    tcp::acceptor acceptor{ioc};
+    acceptor.open(endpoint.protocol());
+#ifdef _WIN32
+    // Windows SO_REUSEADDR semantics permit overlapping binds and can let a
+    // duplicate runtime appear to start successfully, then hang the singleton
+    // smoke test. Keep the port exclusive on Windows. Unix retains reuse so a
+    // clean restart is not blocked by recently closed loopback connections.
+    acceptor.set_option(asio::socket_base::reuse_address(false));
+#else
     acceptor.set_option(asio::socket_base::reuse_address(true));
+#endif
+    acceptor.bind(endpoint);
+    acceptor.listen(asio::socket_base::max_listen_connections);
     acceptor.non_blocking(true);
     DownloadManager downloads(config, engines);
     std::cout << "Local AI Runtime " << LAR_VERSION << " listening on http://127.0.0.1:"

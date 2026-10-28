@@ -11,19 +11,19 @@ The roadmap distinguishes implemented code from platform/model combinations that
 - [x] Windows/Linux build helper and fake-engine core/HTTP tests
 - [x] Fix WinSock 1/2 header ordering for MSVC
 - [x] `/version` endpoint and stable-release update notification in dashboard
-- [x] one canonical pipeline validates pull requests, builds/tests/packages Windows and Linux on `main`, then deploys Pages as its final job only after both package jobs pass; separate weekly/manual experimental macOS compatibility workflow
+- [x] one canonical pipeline validates pull requests, builds/tests/packages Windows x64, Linux x64, macOS Intel and macOS Apple Silicon on `main`, then deploys Pages as its final job only after all four target jobs pass; the weekly scheduled run executes only the macOS compatibility matrix
 - [x] Project Pages site and feature manifest
-- [x] Tag-based Windows/Linux release workflow with SHA-256 manifest
+- [x] Tag-based Windows/Linux/macOS-x64/macOS-arm64 release workflow with a SHA-256 manifest
 - [x] Confirm hosted Windows/MSVC CI on the public repository (green at commit `1f020c4`)
-- [x] Confirmed macOS CI passed once at commit `1f020c4`; current macOS checks are scheduled/manual and do not block each push
+- [x] Confirmed macOS CI passed on the native Intel runner; the canonical workflow now checks Intel and Apple Silicon in parallel and requires both before Pages/Release
 - [ ] Publish the first prerelease tag after the user-facing llama.cpp setup is ready; current workflow dry-run/package rehearsal is green
 - [ ] Real `llama-server` + GGUF smoke test on Windows and one CPU-only environment; CI currently uses a fake engine and intentionally does not fetch external components
 - [x] Dashboard setup form for an existing local `llama-server` and GGUF file; persists the engine configuration without hand-editing JSON
 - [x] Runtime readiness state from the local `/health` endpoint (fallback to `/v1/models`) and chat gating in the dashboard
 - [ ] Real CUDA smoke test with GPU model, VRAM, driver, model quantization and backend recorded
 - [x] Startup readiness probe separated from process-running state (runtime health signal; real model loading still needs a real-engine smoke test)
-- [x] Add extracted Windows/Linux archive checks for version, dashboard/launcher files, and a live `/health` response in the release workflow
-- [x] Auto-build Windows/Linux preview artifacts on each `main` push; public releases remain tag-gated
+- [x] Add extracted Windows/Linux/macOS archive checks for version, dashboard/launcher files, and a live `/health` response in the release workflow
+- [x] Auto-build Windows/Linux/macOS x64 and arm64 preview artifacts on each `main` push; public releases remain tag-gated
 - [x] Surface preview builds from the website while no public release exists
 
 ## 0.2-alpha — product reliability
@@ -72,4 +72,4 @@ The proposed separation and catalog fields are documented in [engine distributio
 
 ### Platform CI policy
 
-Windows x64 and Linux x64 are the current per-push build/package targets. One `pipeline.yml` orchestrates PR validation, Windows/Linux build/package work, tag-driven Releases and the final Pages deployment. On `main`, the two platform jobs run once in parallel and Pages deploys only after both succeed. Pull requests build/test without packaging. macOS compatibility remains a separate weekly/manual workflow so Homebrew toolchain setup does not delay each push. macOS support is not cancelled, but remains experimental and is checked by the separate weekly/manual `macos-compat.yml` workflow so Homebrew toolchain setup does not delay every developer push. A macOS release package will only be added after repeatable build, launch, and packaging checks are available.
+Windows x64, Linux x64, macOS Intel x64 and macOS Apple Silicon arm64 are coordinated by one `pipeline.yml`. Pull requests build and test each target without packaging. On `main`, the four platform/architecture targets build, test and package in parallel; the Pages deployment is the final job and runs only after all four extracted package smoke tests pass. A `v*` tag publishes all four assets with a SHA-256 manifest after the same gates pass. The weekly scheduled run executes only the macOS compatibility matrix, avoiding repeated Windows dependency compilation when no source push occurred.

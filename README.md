@@ -1,7 +1,6 @@
 # Local AI Runtime
 
 [![Pipeline](https://github.com/azmisahin-ai/local-ai-runtime/actions/workflows/pipeline.yml/badge.svg)](https://github.com/azmisahin-ai/local-ai-runtime/actions/workflows/pipeline.yml)
-[![macOS compatibility](https://github.com/azmisahin-ai/local-ai-runtime/actions/workflows/macos-compat.yml/badge.svg)](https://github.com/azmisahin-ai/local-ai-runtime/actions/workflows/macos-compat.yml)
 
 **A local-first, hardware-aware control plane for existing AI engines and models.**
 
@@ -13,7 +12,7 @@ This is an early C++20 alpha. It orchestrates existing model engines; it does no
 
 ### Downloads
 
-Use the project site or [GitHub Releases](https://github.com/azmisahin-ai/local-ai-runtime/releases). After a version tag is published, GitHub Actions builds portable packages for Windows x64 and Linux x64 and attaches `SHA256SUMS.txt`.
+Use the project site or [GitHub Releases](https://github.com/azmisahin-ai/local-ai-runtime/releases). After a version tag is published, GitHub Actions builds packages for Windows x64, Linux x64, macOS Intel (x64) and macOS Apple Silicon (arm64), then attaches `SHA256SUMS.txt`.
 
 The package includes the runtime, the web dashboard, an example configuration, a starter script, and the project license. It deliberately does not bundle inference engines, CUDA runtimes, or multi-gigabyte model weights. After launching the runtime, use **Managed Components** in the dashboard to download reviewed components on demand; each engine/model remains separate so versions and licenses can be tracked independently.
 
@@ -25,7 +24,8 @@ The package includes the runtime, the web dashboard, an example configuration, a
   ```
 
   The script creates the user configuration on first start and opens the dashboard. Settings, downloaded engines/models and logs are stored under `%LOCALAPPDATA%\LocalAIRuntime`, outside the extracted application folder, so they survive replacing the app package. Closing the browser tab does not stop the runtime; run the launcher again to reopen a healthy existing instance. If an unresponsive `local-ai-runtime.exe` still owns the configured port, the launcher identifies its PID and asks before stopping that runtime process. It will not stop unrelated programs. For troubleshooting, use **Export diagnostics** in the dashboard; if the dashboard cannot load, inspect `%LOCALAPPDATA%\LocalAIRuntime\logs\runtime.log`. See [the report guide](docs/diagnostics.md) for what is recorded and how to share it safely.
-- **Linux x64:** extract the TAR.GZ and run `./scripts/start-runtime.sh`. The runtime stays in the foreground; press Ctrl+C to stop. On Linux, user data is stored in `$XDG_DATA_HOME/local-ai-runtime` when set, otherwise `~/.local/share/local-ai-runtime`. On macOS developer runs, it defaults to `~/Library/Application Support/LocalAIRuntime` (or follows `XDG_DATA_HOME` when set).
+- **Linux x64:** extract the TAR.GZ and run `./scripts/start-runtime.sh`. The runtime stays in the foreground; press Ctrl+C to stop. On Linux, user data is stored in `$XDG_DATA_HOME/local-ai-runtime` when set, otherwise `~/.local/share/local-ai-runtime`.
+- **macOS Intel / Apple Silicon:** choose the matching `local-ai-runtime-macos-x64.tar.gz` or `local-ai-runtime-macos-arm64.tar.gz`, extract it, then run `./scripts/start-runtime.sh` in Terminal. The package bundles its Homebrew dynamic-library dependencies; macOS system libraries are still required. This early CLI preview is ad-hoc signed and is not Developer ID signed or notarized, so Gatekeeper/security prompts may occur. User data remains under `~/Library/Application Support/LocalAIRuntime` unless `XDG_DATA_HOME` is set.
 
 #### First model setup
 
@@ -101,8 +101,7 @@ Open http://127.0.0.1:8000. Use **Managed Components** for the verified llama.cp
 
 ## CI and releases
 
-- [Canonical pipeline](https://github.com/azmisahin-ai/local-ai-runtime/actions/workflows/pipeline.yml): one workflow orchestrates Windows/MSVC and Ubuntu/GCC. Pull requests build and test without packaging; each `main` push builds/tests/packages both platforms once, smoke-tests the extracted packages, and **only after both succeed** publishes the website as the final job. Commit-specific preview archives are retained for 14 days. Pushing a `v*` tag runs the same platform jobs and publishes a GitHub Release with SHA-256 checksums after both packages pass. A manual run performs a versioned rehearsal without creating a Release. Enable **Settings → Pages → Source → GitHub Actions** once.
-- [Experimental macOS compatibility](https://github.com/azmisahin-ai/local-ai-runtime/actions/workflows/macos-compat.yml): scheduled weekly or manually; it does not delay every push and does not produce a macOS release package yet. CTest uses a fake engine and does not download models or require a GPU.
+- [Canonical pipeline](https://github.com/azmisahin-ai/local-ai-runtime/actions/workflows/pipeline.yml): one workflow orchestrates Windows/MSVC, Ubuntu/GCC and macOS Apple Clang on Intel and Apple Silicon. Pull requests build and test without packaging; each `main` push builds/tests/packages the four release targets in parallel, smoke-tests the extracted packages, and **only after all platform jobs pass** publishes the website as the final job. Commit-specific preview archives are retained for 14 days. Pushing a `v*` tag runs the same platform jobs and publishes a GitHub Release with Windows, Linux and both macOS architectures plus SHA-256 checksums only after every package passes. A weekly scheduled run performs only the macOS compatibility gate; a manual run performs a versioned rehearsal without creating a Release. Enable **Settings → Pages → Source → GitHub Actions** once.
 - See [release and update process](docs/release-and-update.md) before publishing a tag.
 
 GitHub Actions is the source for repeatable cross-platform build/test results. Local hardware/model checks are separate, and no NVIDIA/CUDA combination is claimed supported until that exact configuration is tested and recorded.
@@ -121,8 +120,8 @@ GitHub Actions is the source for repeatable cross-platform build/test results. L
 - Built-in managed component catalog for the official llama.cpp release (CPU/CUDA variants) and a pinned Qwen2.5 1.5B GGUF starter model. Downloads are cancellable, size-bounded, HTTPS-only, SHA-256 checked, and safely extracted; model license confirmation is required.
 - `/v1/catalog`, `/v1/downloads`, per-job progress/cancel routes and dashboard installation progress.
 - Local-only rotating runtime event log, user-initiated diagnostic export (download jobs and engine status), and optional user-consented engine log excerpts.
-- Fake-engine core and HTTP end-to-end tests; required Windows/Linux CI plus scheduled/manual experimental macOS compatibility checks. CI validates the installer API without downloading external binaries or model weights.
-- Public project page and tag-driven Windows/Linux release pipeline.
+- Fake-engine core and HTTP end-to-end tests; one required Windows/Linux/macOS x64/arm64 CI workflow. CI validates the installer API without downloading external binaries or model weights.
+- Public project page and tag-driven Windows/Linux/macOS release pipeline.
 
 Not implemented yet: comprehensive hardware/backend detection and recommendations, unattended self-updates, platform installers, audio/vision/embedding adapters, streaming chat, authentication and MCP. The managed catalog downloads the first llama.cpp package and one pinned GGUF model, but it does not yet automatically install every engine/model family or prove the binary works with a real model on every platform. See [roadmap](docs/roadmap.md) and [diagnostics guide](docs/diagnostics.md).
 

@@ -4,21 +4,21 @@
 
 - `CMakeLists.txt` embeds the runtime version (`LAR_VERSION`); developer builds default to `<project-version>-dev`.
 - Git tags use Semantic Versioning and begin with `v`, for example `v0.1.0-alpha` or `v0.1.0`.
-- `.github/workflows/pipeline.yml` is the single canonical workflow for pull-request validation, `main` preview packages, website publication and tag-driven Releases. On `main`, Windows and Linux build/test/package jobs run in parallel; the Pages job starts only after both packages pass. Preview artifacts are retained for 14 days. It publishes public Releases only after a `v*` tag is pushed.
+- `.github/workflows/pipeline.yml` is the single canonical workflow for pull-request validation, `main` preview packages, website publication and tag-driven Releases. On `main`, Windows x64, Linux x64, macOS x64 and macOS arm64 build/test/package jobs run in parallel; the Pages job starts only after all four package smoke tests pass. Preview artifacts are retained for 14 days. It publishes public Releases only after a `v*` tag is pushed.
 - Release packages include the runtime, dashboard assets, an example engine manifest, a launcher, and the project license. They do **not** include inference engines, CUDA, or model weights.
 - `SHA256SUMS.txt` is attached to each release so users can detect accidental corruption and verify file integrity against the published checksum.
 - `site/product.json` is the feature/status manifest used by the website. Keep it updated in the same change that adds/removes a user-visible feature. `site/app.js` fetches release assets and notes from the public GitHub Releases API.
 
 ## Preview builds and release rehearsal
 
-The single `pipeline.yml` run orchestrates the whole lifecycle. Pull requests build and test on Windows/Linux without producing distribution packages. Each push to `main` runs exactly one Windows and one Linux build/test/package job in parallel; each extracted archive must pass `/health`. Only after both package jobs succeed does the final website job publish `site/` to GitHub Pages. Preview artifacts are retained for 14 days. These are development previews, not public Releases and not recommended as stable updates.
+The single `pipeline.yml` run orchestrates the whole lifecycle. Pull requests build and test on Windows, Linux, macOS Intel and macOS Apple Silicon without producing distribution packages. Each push to `main` runs one Windows, one Linux and two macOS architecture targets in parallel; every extracted package must pass `/health`. Only after all four target jobs succeed does the final website job publish `site/` to GitHub Pages. Preview artifacts are retained for 14 days. These are development previews, not public Releases and not recommended as stable updates. The weekly scheduled run invokes only the macOS compatibility matrix.
 
 For a version-specific rehearsal before publishing:
 
 1. Merge tested changes to `main` and update `CHANGELOG.md` and `site/product.json`.
-2. Make sure the canonical pipeline is green. For changes submitted via pull request, require its Windows/Linux validation jobs to be green before merging.
-3. Open **Actions → Build, test, package & publish → Run workflow**, select `main`, and use a version such as `0.1.0-alpha`. The manual run is a **dry run**: it builds/tests both packages, launches each extracted archive and checks `/health`, and uploads Windows/Linux packages as workflow artifacts. It does not publish a GitHub Release or create a tag.
-4. Download and inspect both artifacts from the completed workflow. Confirm the embedded version, launcher, dashboard and config example are present and the package starts cleanly.
+2. Make sure the canonical pipeline is green. For changes submitted via pull request, require Windows, Linux, macOS x64 and macOS arm64 validation jobs to be green before merging.
+3. Open **Actions → Build, test, package & publish → Run workflow**, select `main`, and use a version such as `0.1.0-alpha`. The manual run is a **dry run**: it builds/tests all four targets, launches each extracted archive and checks `/health`, and uploads the four platform/architecture packages as workflow artifacts. It does not publish a GitHub Release or create a tag.
+4. Download and inspect the four platform/architecture artifacts from the completed workflow. Confirm the embedded version, launcher, dashboard and config example are present and each package starts cleanly.
 5. Only after the dry run succeeds, create and push an annotated tag:
 
    ```bash
@@ -33,7 +33,7 @@ Do not reuse or move an already published release tag. Cut a new version for eve
 
 ## Website deployment
 
-Enable **Settings → Pages → Build and deployment → Source: GitHub Actions** once. The `publish-pages` job in `.github/workflows/pipeline.yml` deploys `site/` at the end of a successful `main` pipeline, after both Windows/Linux package smoke tests pass (or on a successful manual run from `main`). This produces one workflow run with visible platform jobs and a final website deployment job. The release panel reads current GitHub Releases at page load, so downloadable assets do not need to be hardcoded into HTML.
+Enable **Settings → Pages → Build and deployment → Source: GitHub Actions** once. The `publish-pages` job in `.github/workflows/pipeline.yml` deploys `site/` at the end of a successful `main` pipeline, after all four package smoke tests pass (or on a successful manual run from `main`). This produces one workflow run with visible platform jobs and a final website deployment job. The release panel reads current GitHub Releases at page load, so downloadable assets do not need to be hardcoded into HTML.
 
 The expected URL is `https://azmisahin-ai.github.io/local-ai-runtime/` after Pages has been enabled and the first deployment succeeds.
 

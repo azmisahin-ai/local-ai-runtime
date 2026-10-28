@@ -4,9 +4,11 @@ This project follows a lightweight Keep a Changelog structure. GitHub Release no
 
 ## Unreleased
 
-- Cache Windows vcpkg binary packages and verified source downloads using keys tied to the vcpkg revision, MSVC compiler version, and dependency manifest. Runtime source is still rebuilt and tested on every run; vcpkg ABI validation prevents incompatible dependency binaries from being reused.
+- Consolidate Windows, Linux, macOS Intel and macOS Apple Silicon build/test/package jobs into the canonical workflow. Main pushes create four preview artifacts; Pages deploys only when all four pass; `v*` releases publish all four packages and a single SHA-256 manifest. The weekly schedule runs only the macOS matrix.
+- Bundle Homebrew dylib dependencies in relocatable macOS preview/release packages and smoke-test the extracted archives on their native architectures. Packages remain ad-hoc signed and are not notarized.
+- Cache Windows vcpkg binary packages and verified source downloads using keys tied to the vcpkg revision, MSVC compiler version, and dependency manifest. Save the dependency cache immediately after successful configure so a later compile/test failure does not throw away a 16-minute cache seed. Runtime source is still rebuilt and tested on every run; vcpkg ABI validation prevents incompatible dependency binaries from being reused.
 - Capture the Windows CMake/vcpkg configure log as a short-lived artifact on failure, making the specific failing package/error available for diagnosis.
-- Re-enable experimental macOS compatibility checks on main pushes and pull requests. Require Homebrew bottles instead of allowing unexpected source builds, with a 20-minute limit and an actionable failure if a compatible bottle is unavailable.
+- Fix Windows duplicate-runtime detection by opening the listening socket with address reuse disabled before binding; a second process now fails promptly instead of appearing to hang during the HTTP smoke test.
 
 - Fix Windows restart recovery: use the configured runtime port, reuse a healthy existing instance, and identify the PID/path of a listener that does not answer `/health`; prompt before stopping only an unresponsive Local AI Runtime process.
 - Log startup attempts and startup failures before opening the listening socket, so port conflicts can be diagnosed even when the dashboard cannot load. Print the “listening” message only after the bind succeeds.

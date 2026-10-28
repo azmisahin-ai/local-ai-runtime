@@ -133,10 +133,16 @@ def main():
 
             # A duplicate instance must exit cleanly and leave a startup-failure
             # event in the local diagnostics log instead of looking like a hang.
-            duplicate = subprocess.run(
-                [runtime, "--config", str(config_path), "--web-dir", web_dir],
-                cwd=str(temp), env=test_env, capture_output=True, text=True, timeout=10,
-            )
+            try:
+                duplicate = subprocess.run(
+                    [runtime, "--config", str(config_path), "--web-dir", web_dir],
+                    cwd=str(temp), env=test_env, capture_output=True, text=True, timeout=5,
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise AssertionError(
+                    "A duplicate runtime hung instead of rejecting the occupied port promptly; "
+                    "check platform socket address-reuse behavior."
+                ) from exc
             assert duplicate.returncode != 0, "A second runtime should not bind the same port"
             persisted_runtime_log = data_root / "logs" / "runtime.log"
             startup_events = persisted_runtime_log.read_text(encoding="utf-8", errors="replace")
