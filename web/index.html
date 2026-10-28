@@ -19,6 +19,11 @@
       <div class="status-pill"><span id="api-dot" class="dot"></span><span id="api-status">Checking API…</span></div>
     </header>
 
+    <section id="update-notice" class="update-notice" role="status" aria-live="polite" hidden>
+      <div><p class="eyebrow">SOFTWARE UPDATE</p><h2 id="update-title">Checking for updates…</h2><p id="update-copy" class="hint"></p></div>
+      <a id="update-link" class="button primary" href="https://github.com/azmisahin-ai/local-ai-runtime/releases" target="_blank" rel="noopener noreferrer">View releases</a>
+    </section>
+
     <section class="panel">
       <div class="section-heading">
         <div><p class="eyebrow">RUNTIME</p><h2>Engines</h2></div>
@@ -41,7 +46,7 @@
       <div id="answer-wrap" class="answer-wrap" hidden><h3>Model response</h3><pre id="answer"></pre></div>
     </section>
 
-    <footer><span>Local AI Runtime · 0.1.0-alpha</span><span>Loopback only · No telemetry</span></footer>
+    <footer><span>Local AI Runtime · <span id="runtime-version">checking version…</span></span><span>Loopback only · No telemetry</span></footer>
   </main>
 </body>
 </html>

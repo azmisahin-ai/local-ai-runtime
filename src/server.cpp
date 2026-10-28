@@ -1,5 +1,9 @@
 #include "lar/server.hpp"
 
+#ifndef LAR_VERSION
+#define LAR_VERSION "0.1.0-dev"
+#endif
+
 #include <boost/asio.hpp>
 #include <boost/beast.hpp>
 
@@ -89,7 +93,7 @@ std::string engine_status_json(const EngineStatus& engine) {
 http::response<http::string_body> json_response(http::status status, unsigned version,
                                                 const std::string& body) {
     http::response<http::string_body> response{status, version};
-    response.set(http::field::server, "local-ai-runtime/0.1.0");
+    response.set(http::field::server, "local-ai-runtime/" LAR_VERSION);
     response.set(http::field::content_type, "application/json; charset=utf-8");
     response.set("X-Content-Type-Options", "nosniff");
     response.set("Cache-Control", "no-store");
@@ -147,7 +151,7 @@ ProxyResult proxy_local_request(const EngineStatus& engine, http::verb method,
         stream.connect(endpoints);
         http::request<http::string_body> request{method, target, 11};
         request.set(http::field::host, "127.0.0.1:" + port_text);
-        request.set(http::field::user_agent, "local-ai-runtime/0.1.0");
+        request.set(http::field::user_agent, "local-ai-runtime/" LAR_VERSION);
         request.keep_alive(false);
         if (method == http::verb::post) request.set(http::field::content_type, "application/json");
         request.body() = body;
@@ -201,7 +205,7 @@ http::response<http::string_body> handle_request(const http::request<http::strin
         if (body.empty()) return error_response(http::status::not_found, version, "Dashboard file not found. Start from the repository root or pass --web-dir.");
         http::response<http::string_body> response{http::status::ok, version};
         response.set(http::field::content_type, "text/html; charset=utf-8");
-        response.set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
+        response.set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self' https://api.github.com; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
         response.set("X-Content-Type-Options", "nosniff");
         response.set("Referrer-Policy", "no-referrer");
         response.set("Cache-Control", "no-store");
@@ -224,14 +228,22 @@ http::response<http::string_body> handle_request(const http::request<http::strin
         return response;
     }
     if (request.method() == http::verb::get && target == "/health") {
-        return json_response(http::status::ok, version, "{\"status\":\"ok\",\"version\":\"0.1.0\",\"bind\":\"loopback\"}");
+        return json_response(http::status::ok, version,
+            "{\"status\":\"ok\",\"version\":" + quoted(LAR_VERSION) + ",\"bind\":\"loopback\"}");
+    }
+    if (request.method() == http::verb::get && target == "/version") {
+        return json_response(http::status::ok, version,
+            "{\"version\":" + quoted(LAR_VERSION) +
+            ",\"repository\":\"https://github.com/azmisahin-ai/local-ai-runtime\"" +
+            ",\"releases_api_url\":\"https://api.github.com/repos/azmisahin-ai/local-ai-runtime/releases?per_page=10\"" +
+            ",\"releases_url\":\"https://github.com/azmisahin-ai/local-ai-runtime/releases\"}");
     }
     if (request.method() == http::verb::get && target == "/v1/models") {
         const auto engine = engines.default_chat_engine();
         if (!engine) return error_response(http::status::service_unavailable, version, "No chat engine is configured. Set upstream_base_url in config/engines.json.");
         const auto proxied = proxy_models(*engine);
         http::response<http::string_body> response{proxied.status, version};
-        response.set(http::field::server, "local-ai-runtime/0.1.0");
+        response.set(http::field::server, "local-ai-runtime/" LAR_VERSION);
         response.set(http::field::content_type, proxied.content_type);
         response.set("X-Content-Type-Options", "nosniff");
         response.set("Cache-Control", "no-store");
@@ -270,7 +282,7 @@ http::response<http::string_body> handle_request(const http::request<http::strin
             if (!engine) return error_response(http::status::service_unavailable, version, "No chat engine is configured. Set upstream_base_url in config/engines.json.");
             const auto proxied = proxy_chat(*engine, request.body());
             http::response<http::string_body> response{proxied.status, version};
-            response.set(http::field::server, "local-ai-runtime/0.1.0");
+            response.set(http::field::server, "local-ai-runtime/" LAR_VERSION);
             response.set(http::field::content_type, proxied.content_type);
             response.set("X-Content-Type-Options", "nosniff");
             response.set("Cache-Control", "no-store");

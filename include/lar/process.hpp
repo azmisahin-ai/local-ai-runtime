@@ -9,9 +9,16 @@
 #include <vector>
 
 #ifdef _WIN32
+// Keep the Winsock 2 headers ahead of windows.h. Including windows.h first
+// can pull in legacy WinSock.h and break Boost.Asio/Beast compilation with
+// C1189: "WinSock.h has already been included" on MSVC.
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
+#include <winsock2.h>
 #include <windows.h>
 #endif
 

@@ -44,6 +44,16 @@ def wait_until(check, timeout_s, description):
     raise RuntimeError(f"Timed out waiting for {description}: {last_error}")
 
 
+def expect_forbidden(url, headers, description):
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=2) as response:
+            raise AssertionError(f"{description} should be blocked, got HTTP {response.status}")
+    except urllib.error.HTTPError as exc:
+        if exc.code != 403:
+            raise AssertionError(f"{description} should return 403, got HTTP {exc.code}") from exc
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--runtime", required=True)
@@ -85,8 +95,24 @@ def main():
         )
         try:
             wait_until(lambda: request(base + "/health")[0] == 200, 15, "runtime health endpoint")
+            expect_forbidden(
+                base + "/health",
+                {"Host": f"attacker.invalid:{runtime_port}"},
+                "untrusted Host header",
+            )
+            expect_forbidden(
+                base + "/health",
+                {"Origin": "https://attacker.invalid"},
+                "cross-origin browser request",
+            )
             status, page, content_type = request(base + "/")
             assert status == 200 and "text/html" in content_type and "Local AI Runtime" in page
+
+            status, version_raw, content_type = request(base + "/version")
+            version_info = json.loads(version_raw)
+            assert status == 200 and "application/json" in content_type
+            assert version_info["version"] and version_info["repository"].endswith("/local-ai-runtime")
+            assert "releases_api_url" in version_info and "api.github.com" in version_info["releases_api_url"]
 
             status, engines_raw, _ = request(base + "/v1/engines")
             engines = json.loads(engines_raw)["data"]
@@ -113,7 +139,7 @@ def main():
             status, engines_raw, _ = request(base + "/v1/engines")
             engines = json.loads(engines_raw)["data"]
             assert status == 200 and engines[0]["status"] == "stopped"
-            print("HTTP smoke test passed: dashboard, health, engine lifecycle, models proxy, chat proxy.")
+            print("HTTP smoke test passed: dashboard, health/version metadata, Host/Origin guards, engine lifecycle, models proxy, chat proxy.")
         finally:
             if process.poll() is None:
                 process.terminate()

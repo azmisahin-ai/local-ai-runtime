@@ -8,7 +8,7 @@
 #include <string>
 
 #ifndef LAR_VERSION
-#define LAR_VERSION "0.1.0"
+#define LAR_VERSION "0.1.0-dev"
 #endif
 #ifndef LAR_DEFAULT_CONFIG
 #define LAR_DEFAULT_CONFIG "config/engines.json"

@@ -7,8 +7,8 @@
     {
       "id": "llama-cpp",
       "display_name": "llama.cpp server",
-      "executable_path": "C:/AI/llama.cpp/llama-server.exe",
-      "model_path": "C:/AI/models/your-model.gguf",
+      "executable_path": "",
+      "model_path": "",
       "working_directory": "",
       "args": [
         "--host", "127.0.0.1",

@@ -1,11 +1,12 @@
 cmake_minimum_required(VERSION 3.24)
-project(local_ai_runtime VERSION 0.1.0 LANGUAGES CXX)
+project(local_ai_runtime LANGUAGES CXX)
 
 if(POLICY CMP0167)
     cmake_policy(SET CMP0167 NEW)
 endif()
 
 option(LAR_BUILD_TESTS "Build Local AI Runtime tests" ON)
+set(LAR_VERSION "0.1.0-dev" CACHE STRING "Version string embedded in the runtime (release workflow overrides from the tag)")
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -34,7 +35,7 @@ add_executable(local-ai-runtime src/main.cpp src/server.cpp)
 target_include_directories(local-ai-runtime PRIVATE include ${Boost_INCLUDE_DIRS})
 target_link_libraries(local-ai-runtime PRIVATE lar_core)
 target_compile_definitions(local-ai-runtime PRIVATE
-    LAR_VERSION="${PROJECT_VERSION}"
+    LAR_VERSION="${LAR_VERSION}"
     LAR_DEFAULT_CONFIG="config/engines.json"
     LAR_EXAMPLE_CONFIG="config/engines.example.json"
     LAR_DEFAULT_WEB_DIR="web"
