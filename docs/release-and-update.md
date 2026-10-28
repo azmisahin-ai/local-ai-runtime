@@ -9,19 +9,21 @@
 - `SHA256SUMS.txt` is attached to each release so users can detect accidental corruption and verify file integrity against the published checksum.
 - `site/product.json` is the feature/status manifest used by the website. Keep it updated in the same change that adds/removes a user-visible feature. `site/app.js` fetches release assets and notes from the public GitHub Releases API.
 
-## Publish a release
+## Rehearse a release before publishing
 
 1. Merge tested changes to `main` and update `CHANGELOG.md` and `site/product.json`.
 2. Make sure the default-branch CI and website deployment are green.
-3. Create and push an annotated tag, for example:
+3. Open **Actions → Build and publish release → Run workflow**, select `main`, and use a version such as `0.1.0-alpha`. The manual run is a **dry run**: it builds/tests both packages, launches each extracted archive and checks `/health`, and uploads Windows/Linux packages as workflow artifacts. It does not publish a GitHub Release or create a tag.
+4. Download and inspect both artifacts from the completed workflow. Confirm the embedded version, launcher, dashboard and config example are present and the package starts cleanly.
+5. Only after the dry run succeeds, create and push an annotated tag:
 
    ```bash
    git tag -a v0.1.0-alpha -m "Local AI Runtime v0.1.0-alpha"
    git push origin v0.1.0-alpha
    ```
 
-4. The release workflow builds both platform packages and runs CTest before publishing. A tag containing a hyphen is published as a prerelease; a tag without a hyphen is a stable release.
-5. Review the resulting GitHub Release, attached `SHA256SUMS.txt`, and CI run before announcing it.
+6. The tag-triggered run repeats the build and package smoke tests, then publishes the GitHub Release with `SHA256SUMS.txt`. A tag containing a hyphen is published as a prerelease; a tag without a hyphen is a stable release.
+7. Review the resulting GitHub Release and CI run before announcing it.
 
 Do not reuse or move an already published release tag. Cut a new version for every fix.
 

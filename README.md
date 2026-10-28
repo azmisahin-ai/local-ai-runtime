@@ -91,7 +91,7 @@ Open http://127.0.0.1:8000. To configure a real engine, copy `config/engines.exa
 
 - [CI runs](https://github.com/azmisahin-ai/local-ai-runtime/actions/workflows/ci.yml): Windows/MSVC, Ubuntu/GCC, macOS/Clang. CTest uses a fake engine and does not download models or require a GPU.
 - [Website deployment](https://github.com/azmisahin-ai/local-ai-runtime/actions/workflows/pages.yml): each push to `main` deploys `site/` using GitHub Pages. Enable **Settings → Pages → Source → GitHub Actions** once.
-- [Release workflow](https://github.com/azmisahin-ai/local-ai-runtime/actions/workflows/release.yml): pushing a `v*` tag runs Windows and Linux tests, packages portable downloads, generates SHA-256 checksums, and publishes a GitHub Release.
+- [Release workflow](https://github.com/azmisahin-ai/local-ai-runtime/actions/workflows/release.yml): run it manually on `main` to build/test downloadable packages as workflow artifacts without publishing; pushing a `v*` tag repeats the tests, generates SHA-256 checksums, and publishes a GitHub Release.
 - See [release and update process](docs/release-and-update.md) before publishing a tag.
 
 GitHub Actions is the source for repeatable cross-platform build/test results. Local hardware/model checks are separate, and no NVIDIA/CUDA combination is claimed supported until that exact configuration is tested and recorded.
