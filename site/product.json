@@ -30,6 +30,11 @@
       "status": "preview"
     },
     {
+      "name": "Local diagnostic reports",
+      "description": "Keeps runtime/download lifecycle events locally and lets the user export a sanitized report with current jobs and engine readiness. Engine process logs are opt-in; no diagnostics are uploaded automatically.",
+      "status": "preview"
+    },
+    {
       "name": "Engine lifecycle",
       "description": "Start and stop explicitly configured engine processes, inspect process state, and keep per-engine logs. A real inference engine and model must be installed separately in this alpha.",
       "status": "preview"

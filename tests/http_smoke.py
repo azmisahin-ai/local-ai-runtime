@@ -114,9 +114,19 @@ def main():
         engine_base = f"http://127.0.0.1:{engine_port}"
         runtime_log_path = temp / "runtime.log"
         runtime_log = runtime_log_path.open("w", encoding="utf-8")
+        if os.name == "nt":
+            data_root = temp / "local-app-data" / "LocalAIRuntime"
+        else:
+            data_root = temp / "xdg-data" / "local-ai-runtime"
+        engine_log_for_diagnostics = data_root / "logs" / "fake-engine.log"
+        engine_log_for_diagnostics.parent.mkdir(parents=True, exist_ok=True)
+        engine_log_for_diagnostics.write_text("engine-log-diagnostics-smoke-marker\n", encoding="utf-8")
+        test_env = os.environ.copy()
+        test_env["LOCALAPPDATA"] = str(temp / "local-app-data")
+        test_env["XDG_DATA_HOME"] = str(temp / "xdg-data")
         process = subprocess.Popen(
             [runtime, "--config", str(config_path), "--web-dir", web_dir],
-            cwd=str(temp), stdout=runtime_log, stderr=subprocess.STDOUT,
+            cwd=str(temp), stdout=runtime_log, stderr=subprocess.STDOUT, env=test_env,
         )
         try:
             wait_until(lambda: request(base + "/health")[0] == 200, 15, "runtime health endpoint")
@@ -132,6 +142,21 @@ def main():
             )
             status, page, content_type = request(base + "/")
             assert status == 200 and "text/html" in content_type and "Local AI Runtime" in page
+            assert 'id="diagnostics-export"' in page and 'id="downloads-refresh"' in page
+            assert 'id="include-engine-logs"' in page
+
+            status, diagnostics_raw, diagnostics_type = request(base + "/v1/diagnostics/export")
+            assert status == 200 and "text/plain" in diagnostics_type
+            assert "Remote telemetry: disabled" in diagnostics_raw and "runtime.started" in diagnostics_raw
+            assert "Engine process logs: not included" in diagnostics_raw
+            status, diagnostics_with_engine_logs, _ = request(base + "/v1/diagnostics/export?include_engine_logs=1")
+            assert status == 200 and "engine-log-diagnostics-smoke-marker" in diagnostics_with_engine_logs, diagnostics_with_engine_logs
+            status, event_raw, event_type = request(base + "/v1/diagnostics/events", method="POST", body={
+                "event": "ui.smoke_test", "detail": "diagnostic endpoint smoke marker",
+            })
+            assert status == 202 and "application/json" in event_type
+            status, diagnostics_raw, _ = request(base + "/v1/diagnostics/export")
+            assert "ui.smoke_test" in diagnostics_raw and "diagnostic endpoint smoke marker" in diagnostics_raw
 
             status, version_raw, content_type = request(base + "/version")
             version_info = json.loads(version_raw)
@@ -182,7 +207,7 @@ def main():
                     10,
                     "fake engine readiness",
                 )
-                engine_log_path = temp / "logs" / "fake-engine.log"
+                engine_log_path = engine_log_for_diagnostics
                 engine_log = engine_log_path.read_text(encoding="utf-8", errors="replace")
                 assert "FAKE_ENGINE_READY" in engine_log, f"Fake engine startup marker missing from {engine_log_path}: {engine_log}"
                 assert str(engine_working_directory) in engine_log, (
@@ -341,7 +366,7 @@ def main():
                     print(runtime_output, file=sys.stderr)
             except OSError:
                 pass
-            engine_log_path = temp / "logs" / "fake-engine.log"
+            engine_log_path = engine_log_for_diagnostics
             if engine_log_path.exists():
                 print("--- fake engine log ---", file=sys.stderr)
                 print(engine_log_path.read_text(encoding="utf-8", errors="replace"), file=sys.stderr)

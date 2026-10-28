@@ -1,4 +1,5 @@
 #include "lar/process.hpp"
+#include "lar/diagnostics.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -34,6 +35,21 @@ std::string replace_model_token(std::string value, const std::string& model_path
         pos += model_path.size();
     }
     return value;
+}
+
+void rotate_engine_log_if_needed(const std::filesystem::path& log_path) {
+    constexpr std::uintmax_t max_engine_log_bytes = 5U * 1024U * 1024U;
+    std::error_code ec;
+    const auto size = std::filesystem::file_size(log_path, ec);
+    if (ec || size <= max_engine_log_bytes) return;
+    auto backup = log_path;
+    backup += ".1";
+    ec.clear();
+    std::filesystem::remove(backup, ec);
+    ec.clear();
+    std::filesystem::rename(log_path, backup, ec);
+    // If an engine or scanner still holds the file, prefer continuing with the
+    // existing log rather than preventing the engine from starting.
 }
 
 #ifdef _WIN32
@@ -147,7 +163,7 @@ bool ManagedProcess::start(const EngineConfig& config, std::string& error) {
         return false;
     }
 
-    const std::filesystem::path log_dir = std::filesystem::current_path() / "logs";
+    const std::filesystem::path log_dir = runtime_logs_directory();
     std::filesystem::create_directories(log_dir, fs_error);
     if (fs_error) {
         error = "Cannot create log directory: " + log_dir.string();
@@ -155,6 +171,7 @@ bool ManagedProcess::start(const EngineConfig& config, std::string& error) {
         return false;
     }
     const auto log_path = log_dir / (config.id + ".log");
+    rotate_engine_log_if_needed(log_path);
 
 #ifdef _WIN32
     try {

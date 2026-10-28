@@ -21,6 +21,10 @@ const catalogFilterButtons = [...document.querySelectorAll('[data-catalog-filter
 const downloadList = document.querySelector('#download-list');
 const catalogError = document.querySelector('#catalog-error');
 const catalogRefreshButton = document.querySelector('#catalog-refresh');
+const downloadsRefreshButton = document.querySelector('#downloads-refresh');
+const diagnosticsExportButton = document.querySelector('#diagnostics-export');
+const diagnosticsStatus = document.querySelector('#diagnostics-status');
+const includeEngineLogsCheckbox = document.querySelector('#include-engine-logs');
 const completedDownloadJobs = new Set();
 let catalogItems = [];
 let activeCatalogFilter = 'all';
@@ -44,11 +48,35 @@ async function api(path, options = {}) {
   const data = contentType.includes('application/json') ? await response.json() : await response.text();
   if (!response.ok) {
     const message = typeof data === 'object' ? data?.error?.message || JSON.stringify(data) : data;
+    if (!path.startsWith('/v1/chat/')) reportDiagnosticEvent('ui.request.failed', `${options.method || 'GET'} ${path} returned ${response.status}: ${String(message || '').slice(0, 900)}`);
     throw new Error(message || `Request failed (${response.status})`);
   }
   return data;
 }
 
+function reportDiagnosticEvent(event, detail) {
+  try {
+    void fetch('/v1/diagnostics/events', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ event, detail: String(detail || '').slice(0, 1100) }),
+      keepalive: true,
+    }).catch(() => {});
+  } catch (_) {
+    // Diagnostics are best-effort and must not interrupt the dashboard.
+  }
+}
+
+window.addEventListener('error', (event) => {
+  const where = event.filename ? `${event.filename.split('/').pop()}:${event.lineno || 0}:${event.colno || 0}` : 'unknown source';
+  reportDiagnosticEvent('ui.error', `${String(event.message || 'Uncaught browser error').slice(0, 700)} at ${where}`);
+});
+window.addEventListener('unhandledrejection', (event) => {
+  const reason = event.reason;
+  const name = reason && typeof reason === 'object' && reason.name ? String(reason.name) : 'UnhandledRejection';
+  const message = reason && typeof reason === 'object' && reason.message ? String(reason.message) : String(reason || 'unknown reason');
+  reportDiagnosticEvent('ui.unhandledrejection', `${name}: ${message.slice(0, 700)}`);
+});
 
 function parseVersion(value) {
   const match = String(value || '').trim().replace(/^v/i, '').match(/^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/);
@@ -288,7 +316,12 @@ function downloadJobCard(job) {
   card.append(make('p', 'hint', total > 0 ? `${formatBytes(downloaded)} of ${formatBytes(total)} (${progress.value}%)` : `${formatBytes(downloaded)} downloaded`));
   if (job.version) card.append(make('p', 'hint', `Upstream version: ${job.version}`));
   if (job.installed_path) card.append(make('p', 'hint', `Installed at: ${job.installed_path}`));
-  if (job.error) card.append(make('p', 'engine-error', job.error));
+  if (job.error) {
+    card.append(make('p', 'engine-error', job.error));
+    if (String(job.error).includes('verified staging file was kept')) {
+      card.append(make('p', 'recovery-hint', 'The model is already downloaded and verified. Close any app that may be using the model file, confirm the license again, then click Download & install to retry the finalization step without downloading 1.12 GB again.'));
+    }
+  }
   const active = ['queued', 'downloading', 'verifying', 'extracting', 'configuring'].includes(job.state);
   if (active) {
     const cancel = make('button', 'button secondary', 'Cancel');
@@ -403,13 +436,13 @@ async function waitForEngineReady(id, timeoutMs = 180000) {
     const engine = result.data?.find((entry) => entry.id === id);
     if (!engine) throw new Error(`Engine '${id}' is not present in the runtime configuration.`);
     if (engine.ready) return;
-    if (engine.status === 'failed') throw new Error(engine.last_error || 'Engine exited before becoming ready. Check the engine log under logs/.');
+    if (engine.status === 'failed') throw new Error(engine.last_error || 'Engine exited before becoming ready. Export diagnostics or inspect the per-user runtime logs.');
     engineError.textContent = engine.status === 'running'
       ? 'Engine started. Waiting for the local model server to become ready…'
       : 'Waiting for engine startup…';
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
-  throw new Error('Timed out waiting for the model server. Check logs/llama-cpp.log, the executable build, and model path.');
+  throw new Error('Timed out waiting for the model server. Export diagnostics and check the engine executable/model path.');
 }
 
 async function controlEngine(id, action, button) {
@@ -462,6 +495,43 @@ catalogFilterButtons.forEach((button) => button.addEventListener('click', () => 
   activeCatalogFilter = button.dataset.catalogFilter || 'all';
   renderCatalog();
 }));
+downloadsRefreshButton.addEventListener('click', async () => {
+  downloadsRefreshButton.disabled = true;
+  try {
+    await refreshDownloads();
+    await refreshCatalog();
+  } finally {
+    downloadsRefreshButton.disabled = false;
+  }
+});
+
+diagnosticsExportButton.addEventListener('click', async () => {
+  diagnosticsExportButton.disabled = true;
+  diagnosticsStatus.className = 'status-message';
+  diagnosticsStatus.textContent = 'Preparing a local diagnostic report…';
+  try {
+    const diagnosticsUrl = includeEngineLogsCheckbox.checked ? '/v1/diagnostics/export?include_engine_logs=1' : '/v1/diagnostics/export';
+    const response = await fetch(diagnosticsUrl, { cache: 'no-store' });
+    if (!response.ok) throw new Error(`Could not create diagnostic report (HTTP ${response.status}).`);
+    const blob = await response.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = objectUrl;
+    link.download = 'local-ai-runtime-diagnostics.txt';
+    document.body.append(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(objectUrl);
+    diagnosticsStatus.className = 'status-message success';
+    diagnosticsStatus.textContent = 'Diagnostic report created on this device. Review it before sharing; it was not uploaded anywhere.';
+  } catch (error) {
+    diagnosticsStatus.className = 'status-message failure';
+    diagnosticsStatus.textContent = error.message;
+    reportDiagnosticEvent('ui.diagnostics.export_failed', error.message);
+  } finally {
+    diagnosticsExportButton.disabled = false;
+  }
+});
 
 document.querySelector('#chat-form').addEventListener('submit', async (event) => {
   event.preventDefault();

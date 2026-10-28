@@ -197,3 +197,11 @@ input:focus, select:focus { outline: 2px solid #92b7ff70; border-color: var(--ac
   .catalog-actions { min-width: 0; }
   .catalog-toolbar { padding: .8rem; }
 }
+.jobs-heading { margin-top: 1.4rem; align-items: center; }
+.jobs-heading h3 { margin: 0; }
+.jobs-actions { display: flex; flex-wrap: wrap; gap: .5rem; justify-content: flex-end; }
+.recovery-hint { padding: .7rem .8rem; border: 1px solid #806b38; border-radius: .65rem; color: #f0cf83; background: #806b3810; }
+@media (max-width: 680px) { .jobs-heading { align-items: stretch; flex-direction: column; } .jobs-actions { justify-content: flex-start; } }
+
+.diagnostics-option { display: flex; align-items: flex-start; gap: .6rem; margin: .7rem 0; color: var(--muted); font-size: .85rem; font-weight: 500; }
+.diagnostics-option input { width: auto; margin: .25rem 0 0; flex: 0 0 auto; }

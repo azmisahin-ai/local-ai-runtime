@@ -1,5 +1,6 @@
 #include "lar/server.hpp"
 #include "lar/downloads.hpp"
+#include "lar/diagnostics.hpp"
 
 #ifndef LAR_VERSION
 #define LAR_VERSION "0.1.0-dev"
@@ -73,6 +74,40 @@ std::string read_text_file(const std::filesystem::path& path) {
     std::ifstream input(path, std::ios::binary);
     if (!input) return {};
     return std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+}
+
+std::string read_engine_log_tails(const RuntimeConfig& config) {
+    constexpr std::uintmax_t max_bytes_per_log = 256U * 1024U;
+    constexpr std::size_t max_lines_per_log = 120;
+    const auto log_directory = runtime_logs_directory();
+    std::ostringstream report;
+    bool included_any = false;
+    for (const auto& engine : config.engines) {
+        if (!is_valid_engine_id(engine.id)) continue;
+        const auto path = log_directory / (engine.id + ".log");
+        std::error_code ec;
+        if (!std::filesystem::is_regular_file(path, ec) || ec) continue;
+        const auto size = std::filesystem::file_size(path, ec);
+        if (ec) continue;
+        std::ifstream input(path, std::ios::binary);
+        if (!input) continue;
+        if (size > max_bytes_per_log) {
+            input.seekg(static_cast<std::streamoff>(size - max_bytes_per_log), std::ios::beg);
+            std::string discarded;
+            std::getline(input, discarded); // the first line may start mid-record
+        }
+        std::vector<std::string> lines;
+        std::string line;
+        while (std::getline(input, line)) {
+            lines.push_back(std::move(line));
+            if (lines.size() > max_lines_per_log) lines.erase(lines.begin());
+        }
+        if (lines.empty()) continue;
+        included_any = true;
+        report << "-- engine " << engine.id << " --\n";
+        for (const auto& item : lines) report << sanitize_diagnostic_text(item) << '\n';
+    }
+    return included_any ? report.str() : std::string("No engine process log files were available.\n");
 }
 
 bool upstream_is_ready(const EngineStatus& engine);
@@ -341,6 +376,8 @@ http::response<http::string_body> handle_request(const http::request<http::strin
 
     std::string target = std::string(request.target().data(), request.target().size());
     const auto query = target.find('?');
+    const bool include_engine_logs = query != std::string::npos &&
+        target.substr(query + 1).find("include_engine_logs=1") != std::string::npos;
     if (query != std::string::npos) target.resize(query);
 
     if (request.method() == http::verb::get && (target == "/" || target == "/index.html")) {
@@ -380,6 +417,45 @@ http::response<http::string_body> handle_request(const http::request<http::strin
             ",\"repository\":\"https://github.com/azmisahin-ai/local-ai-runtime\"" +
             ",\"releases_api_url\":\"https://api.github.com/repos/azmisahin-ai/local-ai-runtime/releases?per_page=10\"" +
             ",\"releases_url\":\"https://github.com/azmisahin-ai/local-ai-runtime/releases\"}");
+    }
+    if (request.method() == http::verb::get && target == "/v1/diagnostics/export") {
+        log_diagnostic("INFO", "diagnostics.export_requested", std::string("source=dashboard engine_logs=") + (include_engine_logs ? "included" : "omitted"));
+        const auto statuses = engines.statuses();
+        std::ostringstream engine_json;
+        engine_json << "{\"data\":[";
+        for (std::size_t i = 0; i < statuses.size(); ++i) {
+            if (i) engine_json << ',';
+            engine_json << engine_status_json(statuses[i]);
+        }
+        engine_json << "]}";
+        const auto engine_logs = include_engine_logs ? read_engine_log_tails(config) : std::string{};
+        const auto report = build_diagnostic_report(LAR_VERSION, downloads.jobs_json(), engine_json.str(), engine_logs);
+        http::response<http::string_body> response{http::status::ok, version};
+        response.set(http::field::server, "local-ai-runtime/" LAR_VERSION);
+        response.set(http::field::content_type, "text/plain; charset=utf-8");
+        response.set(http::field::content_disposition, "attachment; filename=\"local-ai-runtime-diagnostics.txt\"");
+        response.set("X-Content-Type-Options", "nosniff");
+        response.set("Cache-Control", "no-store");
+        response.body() = report;
+        response.keep_alive(false);
+        response.prepare_payload();
+        return response;
+    }
+    if (request.method() == http::verb::post && target == "/v1/diagnostics/events") {
+        try {
+            std::istringstream input(request.body());
+            boost::property_tree::ptree body;
+            boost::property_tree::read_json(input, body);
+            auto event = body.get<std::string>("event", "ui.unknown");
+            auto detail = body.get<std::string>("detail", "");
+            if (event.size() > 64 || detail.size() > 1200 || event.rfind("ui.", 0) != 0) {
+                return error_response(http::status::unprocessable_entity, version, "Diagnostic event is outside the allowed format.");
+            }
+            log_diagnostic("WARN", event, detail);
+            return json_response(http::status::accepted, version, "{\"status\":\"recorded-locally\"}");
+        } catch (const boost::property_tree::json_parser_error& ex) {
+            return error_response(http::status::bad_request, version, std::string("Invalid diagnostic event JSON: ") + ex.what());
+        }
     }
     if (request.method() == http::verb::get && target == "/v1/models") {
         const auto engine = engines.default_chat_engine();
@@ -550,6 +626,7 @@ void serve_client(tcp::socket socket, RuntimeConfig config, EngineManager& engin
         }
         // Malformed or disconnected clients are closed without reflecting untrusted bytes.
     } catch (const std::exception& ex) {
+        log_diagnostic("ERROR", "http.request_failed", ex.what());
         std::cerr << "Request handling error: " << ex.what() << '\n';
     }
 }
@@ -561,12 +638,14 @@ void run_http_server(const RuntimeConfig& config, EngineManager& engines,
     std::signal(SIGINT, request_shutdown);
     std::signal(SIGTERM, request_shutdown);
     shutdown_requested = 0;
+    initialize_diagnostic_log(DownloadManager::user_data_directory(), LAR_VERSION);
     asio::io_context ioc{1};
     const auto address = asio::ip::make_address(config.host == "localhost" ? "127.0.0.1" : config.host);
     tcp::acceptor acceptor{ioc, tcp::endpoint{address, config.port}};
     acceptor.set_option(asio::socket_base::reuse_address(true));
     acceptor.non_blocking(true);
     DownloadManager downloads(config, engines);
+    log_diagnostic("INFO", "runtime.started", "bind=loopback port=" + std::to_string(config.port));
     while (shutdown_requested == 0) {
         tcp::socket socket{ioc};
         boost::system::error_code ec;
@@ -581,6 +660,7 @@ void run_http_server(const RuntimeConfig& config, EngineManager& engines,
     }
     beast::error_code ignored;
     acceptor.close(ignored);
+    log_diagnostic("INFO", "runtime.stopped", "shutdown=normal");
 }
 
 } // namespace lar

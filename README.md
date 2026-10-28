@@ -24,7 +24,7 @@ The package includes the runtime, the web dashboard, an example configuration, a
   .\scripts\Start-LocalAIRuntime.ps1
   ```
 
-  The script creates the user configuration on first start and opens the dashboard. Settings, downloaded engines/models and logs are stored under `%LOCALAPPDATA%\LocalAIRuntime`, outside the extracted application folder, so they survive replacing the app package.
+  The script creates the user configuration on first start and opens the dashboard. Settings, downloaded engines/models and logs are stored under `%LOCALAPPDATA%\LocalAIRuntime`, outside the extracted application folder, so they survive replacing the app package. For troubleshooting, use **Export diagnostics** in the dashboard; [the report guide](docs/diagnostics.md) explains what it contains and how to share it safely.
 - **Linux x64:** extract the TAR.GZ and run `./scripts/start-runtime.sh`. The runtime stays in the foreground; press Ctrl+C to stop. On Linux, user data is stored in `$XDG_DATA_HOME/local-ai-runtime` when set, otherwise `~/.local/share/local-ai-runtime`. On macOS developer runs, it defaults to `~/Library/Application Support/LocalAIRuntime` (or follows `XDG_DATA_HOME` when set).
 
 #### First model setup
@@ -119,11 +119,12 @@ GitHub Actions is the source for repeatable cross-platform build/test results. L
 - `/version` and `/health` endpoints; dashboard checks the public release feed for stable update notices.
 - Built-in managed component catalog for the official llama.cpp release (CPU/CUDA variants) and a pinned Qwen2.5 1.5B GGUF starter model. Downloads are cancellable, size-bounded, HTTPS-only, SHA-256 checked, and safely extracted; model license confirmation is required.
 - `/v1/catalog`, `/v1/downloads`, per-job progress/cancel routes and dashboard installation progress.
+- Local-only rotating runtime event log, user-initiated diagnostic export (download jobs and engine status), and optional user-consented engine log excerpts.
 - Fake-engine core and HTTP end-to-end tests; required Windows/Linux CI plus scheduled/manual experimental macOS compatibility checks. CI validates the installer API without downloading external binaries or model weights.
 - Public project page and tag-driven Windows/Linux release pipeline.
 
-Not implemented yet: comprehensive hardware/backend detection and recommendations, unattended self-updates, platform installers, audio/vision/embedding adapters, streaming chat, authentication and MCP. The managed catalog downloads the first llama.cpp package and one pinned GGUF model, but it does not yet automatically install every engine/model family or prove the binary works with a real model on every platform. See [roadmap](docs/roadmap.md).
+Not implemented yet: comprehensive hardware/backend detection and recommendations, unattended self-updates, platform installers, audio/vision/embedding adapters, streaming chat, authentication and MCP. The managed catalog downloads the first llama.cpp package and one pinned GGUF model, but it does not yet automatically install every engine/model family or prove the binary works with a real model on every platform. See [roadmap](docs/roadmap.md) and [diagnostics guide](docs/diagnostics.md).
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md), [architecture](docs/architecture.md), [engine/model distribution strategy](docs/engine-distribution.md), [release/update process](docs/release-and-update.md), [MCP plan](docs/mcp-integration.md), and [security policy](SECURITY.md). Update `site/product.json` when user-visible features or their status change. Add regression tests for behavior changes.
+See [CONTRIBUTING.md](CONTRIBUTING.md), [diagnostics and troubleshooting](docs/diagnostics.md), [architecture](docs/architecture.md), [engine/model distribution strategy](docs/engine-distribution.md), [release/update process](docs/release-and-update.md), [MCP plan](docs/mcp-integration.md), and [security policy](SECURITY.md). Update `site/product.json` when user-visible features or their status change. Add regression tests for behavior changes.

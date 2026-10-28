@@ -48,9 +48,18 @@
         <p id="catalog-summary" class="hint catalog-summary" aria-live="polite">Loading components…</p>
       </div>
       <div id="catalog-list" class="catalog-list"><div class="empty">Loading the built-in component catalog…</div></div>
-      <h3>Downloads and installation jobs</h3>
+      <div class="section-heading jobs-heading">
+        <h3>Downloads and installation jobs</h3>
+        <div class="jobs-actions">
+          <button id="downloads-refresh" class="button secondary" type="button">Refresh job status</button>
+          <button id="diagnostics-export" class="button secondary" type="button">Export diagnostics</button>
+        </div>
+      </div>
+      <p class="hint">Job status refreshes automatically. “Refresh catalog” only reloads the component list. Export diagnostics creates a local file you can review and share when reporting a problem; nothing is sent automatically.</p>
+      <label class="diagnostics-option"><input id="include-engine-logs" type="checkbox"> Include engine process logs (optional; upstream logs may contain prompts or local paths).</label>
       <div id="download-list" class="download-list"><div class="empty">No downloads started.</div></div>
       <p id="catalog-error" class="error" role="status" aria-live="polite"></p>
+      <p id="diagnostics-status" class="status-message" role="status" aria-live="polite"></p>
     </section>
 
     <section class="panel setup-panel">

@@ -13,7 +13,7 @@ EngineManager              Chat proxy
 ManagedProcess ----------> local llama-server HTTP API
         |
         v
-logs/<engine-id>.log
+per-user-data/logs/<engine-id>.log
 ```
 
 ## Boundaries

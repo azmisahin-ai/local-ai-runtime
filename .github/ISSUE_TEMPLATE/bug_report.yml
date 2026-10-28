@@ -5,7 +5,7 @@ labels: [bug]
 body:
   - type: markdown
     attributes:
-      value: Please remove personal paths, access tokens, and private model data from logs before posting.
+      value: You can attach the dashboard-generated diagnostic report after reviewing it for private data. Optional engine logs can contain prompts or local paths. Remove access tokens, credentials, and private model data before posting.
   - type: input
     id: version
     attributes:
@@ -44,9 +44,17 @@ body:
     validations:
       required: true
   - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostic report summary or relevant excerpt
+      description: Attach the exported local-ai-runtime-diagnostics.txt file if useful, or paste only the relevant sanitized lines. Review it for private details first.
+      render: text
+    validations:
+      required: false
+  - type: textarea
     id: logs
     attributes:
-      label: Relevant sanitized log excerpt
+      label: Additional sanitized log excerpt
       render: text
     validations:
       required: false

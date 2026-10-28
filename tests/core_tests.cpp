@@ -1,4 +1,5 @@
 #include "lar/config.hpp"
+#include "lar/diagnostics.hpp"
 #include "lar/downloads.hpp"
 #include "lar/process.hpp"
 
@@ -110,6 +111,24 @@ int main() {
         statuses = manager.statuses();
         require(statuses.size() == 1 && statuses[0].state == lar::ProcessState::stopped,
                 "stopped child should be reported as stopped");
+
+        stage("local diagnostics and path redaction");
+        const auto diagnostic_root = std::filesystem::temp_directory_path() / ("lar-diagnostics-" + suffix);
+        lar::initialize_diagnostic_log(diagnostic_root, "test-version");
+        lar::log_diagnostic("ERROR", "test.redaction", "path=" + diagnostic_root.string() + "/private-model.gguf");
+        auto json_path = diagnostic_root.string();
+#ifdef _WIN32
+        std::string escaped_json_path;
+        for (const char ch : json_path) { if (ch == '\\') escaped_json_path.push_back('\\'); escaped_json_path.push_back(ch); }
+        json_path = std::move(escaped_json_path);
+#endif
+        const auto diagnostic_jobs = "{\"data\":[{\"installed_path\":\"" + json_path + "\\private-model.gguf\"}]}";
+        const auto diagnostic_report = lar::build_diagnostic_report("test-version", diagnostic_jobs, "{\"data\":[]}");
+        require(diagnostic_report.find("test.redaction") != std::string::npos, "diagnostic report should include recent local events");
+        require(diagnostic_report.find("<LOCAL_DATA>/private-model.gguf") != std::string::npos, "diagnostics should redact the local data directory path");
+        require(diagnostic_report.find(diagnostic_root.string()) == std::string::npos, "diagnostic report must not expose the raw user-data path");
+        require(diagnostic_report.find("Remote telemetry: disabled") != std::string::npos, "diagnostics must state that data is not sent automatically");
+        std::filesystem::remove_all(diagnostic_root);
 
         std::cout << "All core and process integration tests passed.\n";
         return 0;
