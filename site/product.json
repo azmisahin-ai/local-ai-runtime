@@ -55,7 +55,7 @@
     },
     {
       "name": "Release downloads and checksums",
-      "description": "Versioned releases publish Windows x64, Linux x64, macOS Intel x64 and macOS Apple Silicon arm64 packages with a SHA-256 manifest only after all platform build/test/package jobs pass.",
+      "description": "Versioned releases publish a Windows x64 desktop setup installer and portable ZIP, Linux x64, macOS Intel x64 and macOS Apple Silicon arm64 packages, plus a SHA-256 manifest after every platform build/package gate passes.",
       "status": "preview"
     },
     {
@@ -65,8 +65,8 @@
     },
     {
       "name": "Windows desktop installer",
-      "description": "Planned per-user installer with Start menu launch, a dedicated desktop window hosting the existing HTML dashboard, console-free runtime lifecycle, clear close/exit controls, safe updates and an uninstall path that preserves model data by default.",
-      "status": "planned"
+      "description": "Preview per-user Windows setup (.exe) with a dedicated desktop window hosting the existing HTML dashboard, Start menu and optional desktop shortcuts, a tray menu, console-free runtime startup, and uninstall that preserves user data. The alpha installer is not code-signed; installed-app updates currently use the complete setup installer rather than applying the portable ZIP.",
+      "status": "preview"
     },
     {
       "name": "Hardware-aware model setup",
@@ -90,7 +90,7 @@
     },
     {
       "name": "Verified runtime updates",
-      "description": "The current dashboard checks official GitHub Releases and verifies matching packages before staging. Tagged portable Windows releases support user-confirmed apply/restart, backup validation, health checks, rollback and interrupted-update recovery. Windows installed-app integration and equivalent Linux/macOS apply/recovery remain planned; no silent executable replacement is enabled.",
+      "description": "The dashboard checks official GitHub Releases and verifies matching packages before staging. Tagged portable Windows ZIP installs support confirmed apply/restart and rollback. Installed desktop Windows builds direct users to the full setup installer so the shell and runtime remain version-matched. Linux/macOS stage only; no silent executable replacement is enabled.",
       "status": "preview"
     }
   ],

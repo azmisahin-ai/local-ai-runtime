@@ -98,12 +98,23 @@ std::filesystem::path current_executable_path() {
     return std::filesystem::path(buffer);
 }
 
+bool windows_desktop_shell_installed(const std::filesystem::path& web_dir) {
+    try {
+        return std::filesystem::is_regular_file(web_dir / L"desktop-shell.json");
+    } catch (...) {
+        return false;
+    }
+}
+
 bool windows_update_apply_supported(const std::filesystem::path& web_dir,
                                    std::filesystem::path* install_root_out = nullptr) {
     // Preview/development builds may come from a newer source commit than the
     // latest public tag. Never offer an in-place update that could replace a
     // preview with an older release package merely because its semver sorts higher.
     if (std::string_view(LAR_VERSION).find("-dev") != std::string_view::npos) return false;
+    // Desktop installations need the full setup installer: the portable ZIP
+    // must not update only the C++ runtime and leave the desktop shell stale.
+    if (windows_desktop_shell_installed(web_dir)) return false;
     try {
         const auto executable = current_executable_path();
         if (executable.empty()) return false;
@@ -688,9 +699,11 @@ http::response<http::string_body> handle_request(const http::request<http::strin
             ",\"releases_url\":\"https://github.com/azmisahin-ai/local-ai-runtime/releases\"" +
             ",\"update_asset_name\":" + json_quoted(DownloadManager::runtime_update_asset_name()) +
 #ifdef _WIN32
+            ",\"desktop_shell_installed\":" + std::string(windows_desktop_shell_installed(web_dir) ? "true" : "false") +
+            ",\"desktop_installer_asset_name\":\"local-ai-runtime-windows-x64-setup.exe\"" +
             ",\"update_apply_supported\":" + std::string(windows_update_apply_supported(web_dir) ? "true" : "false") + "}");
 #else
-            ",\"update_apply_supported\":false}");
+            ",\"desktop_shell_installed\":false,\"desktop_installer_asset_name\":\"\",\"update_apply_supported\":false}");
 #endif
     }
     if (request.method() == http::verb::post && target == "/v1/updates/stage") {

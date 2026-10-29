@@ -1,9 +1,15 @@
 # Changelog
 
+
 This project follows a lightweight Keep a Changelog structure. GitHub Release notes are generated from merged commits when a version tag is published; update this file with user-visible changes during each development cycle.
 
 ## Unreleased
 
+- Add a per-user Windows setup installer with a self-contained WinForms/WebView2 desktop host, Start menu entry, optional desktop shortcut, and notification-area controls for reopening, checking updates, and gracefully stopping the runtime.
+- Keep the installer separate from the portable ZIP; installed desktop builds use the full setup package for updates until atomic shell/runtime updates and rollback are implemented.
+- Gate the installer asset on the same four-platform CI pipeline and verify the signed Microsoft WebView2 bootstrapper, silent installation, installed payload, version check, and uninstall behavior before release.
+- Update the public download cards to prefer the Windows setup installer only when that asset exists; the live Releases page is authoritative for current downloadable assets.
+- Keep user settings, downloaded engines, models, WebView2 profile, and logs outside the application directory and preserve them by default on uninstall.
 - Fix the Windows PowerShell 5.1 publisher regression smoke test so the expected non-zero exit from its fake Git command does not leak into the GitHub Actions step result after every assertion passes.
 - Reorder the product roadmap around an actual installed desktop app: Windows installer/app shell and predictable process lifecycle first, then local hardware detection and evidence-backed engine/model recommendations, then expansion of engine families and cross-platform installer parity.
 - Make the website and README explicit that `v0.1.0-alpha` is a portable archive/browser-dashboard preview, not yet a conventional installed desktop application.

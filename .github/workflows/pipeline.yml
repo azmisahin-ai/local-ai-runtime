@@ -52,6 +52,10 @@ jobs:
         uses: actions/setup-python@v7
         with:
           python-version: '3.12'
+      - name: Set up .NET SDK for the Windows desktop shell
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
 
       - name: Validate web assets and manifests
         shell: pwsh
@@ -283,6 +287,14 @@ jobs:
             }
           }
 
+      - name: Build the self-contained Windows desktop shell
+        shell: pwsh
+        run: |
+          $version = $env:LAR_RELEASE_VERSION -replace '^v', ''
+          dotnet publish desktop/LocalAIRuntime.Desktop.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true "-p:Version=$version" --output dist/desktop-publish
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path 'dist/desktop-publish/LocalAIRuntime.Desktop.exe')) { throw 'Self-contained desktop shell executable was not produced.' }
+
       - name: Package portable Windows runtime
         if: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') }}
         id: package
@@ -357,7 +369,72 @@ jobs:
             }
           }
           & (Join-Path $env:GITHUB_WORKSPACE 'tests/update_apply_smoke.ps1') -PackagePath $package -Version $version
-          Get-FileHash $package -Algorithm SHA256 | Format-List
+
+          # The installed desktop app includes the existing dashboard in WebView2,
+          # the C++ runtime, safe launcher/update helpers and a per-user installer.
+          $installerStage = Join-Path $env:GITHUB_WORKSPACE 'dist/stage-installer'
+          if (Test-Path $installerStage) { Remove-Item -Recurse -Force $installerStage }
+          New-Item -ItemType Directory -Force -Path $installerStage | Out-Null
+          Copy-Item -Path (Join-Path $stage '*') -Destination $installerStage -Recurse -Force
+          Copy-Item -Path (Join-Path $env:GITHUB_WORKSPACE 'dist/desktop-publish/*') -Destination $installerStage -Recurse -Force
+          Copy-Item 'installer/local-ai-runtime.ico' $installerStage -Force
+          $desktopMarker = @{ kind = 'installed-desktop'; update_mode = 'full-setup-installer'; installer_asset_name = 'local-ai-runtime-windows-x64-setup.exe' } | ConvertTo-Json
+          $desktopMarker | Set-Content -Encoding utf8 (Join-Path $installerStage 'web/desktop-shell.json')
+          @"
+          Local AI Runtime $version — Windows desktop app
+
+          Open Local AI Runtime from the Start menu. The dashboard opens in its own desktop window;
+          no command prompt or PowerShell window is required. Closing the window minimizes the app
+          to the notification area. Choose “Exit and stop local engines” there to stop it completely.
+
+          Settings, engines, models and logs are stored in %LOCALAPPDATA%\LocalAIRuntime and are
+          preserved when updating or uninstalling the program. This alpha installer is unsigned.
+          "@ | Set-Content -Encoding utf8 (Join-Path $installerStage 'README-INSTALL.txt')
+
+          $bootstrapper = Join-Path $env:GITHUB_WORKSPACE 'dist/MicrosoftEdgeWebView2Setup.exe'
+          Invoke-WebRequest -UseBasicParsing -Uri 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' -OutFile $bootstrapper
+          $signature = Get-AuthenticodeSignature -LiteralPath $bootstrapper
+          if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch '(?i)Microsoft Corporation') {
+            throw "The downloaded WebView2 bootstrapper did not have a valid Microsoft signature (status=$($signature.Status))."
+          }
+
+          $isccCandidates = @(
+            (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6/ISCC.exe'),
+            (Join-Path $env:ProgramFiles 'Inno Setup 6/ISCC.exe')
+          )
+          $iscc = $isccCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+          if (-not $iscc) {
+            if (-not (Get-Command choco -ErrorAction SilentlyContinue)) { throw 'Inno Setup is missing and Chocolatey is not available on this Windows runner.' }
+            & choco install innosetup --yes --no-progress
+            if ($LASTEXITCODE -ne 0) { throw "Inno Setup installation failed with exit code $LASTEXITCODE." }
+            $iscc = $isccCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+          }
+          if (-not $iscc) { throw 'ISCC.exe was not found after installing Inno Setup.' }
+          $outputDir = Join-Path $env:GITHUB_WORKSPACE 'dist'
+          & $iscc "/DAppVersion=$version" "/DSourceDir=$installerStage" "/DOutputDir=$outputDir" "/DWebViewBootstrapper=$bootstrapper" 'installer/LocalAIRuntime.iss'
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE." }
+          $setup = Join-Path $outputDir 'local-ai-runtime-windows-x64-setup.exe'
+          if (-not (Test-Path -LiteralPath $setup)) { throw 'The Windows setup installer was not produced.' }
+
+          # Install and uninstall silently in a clean, isolated path. This checks
+          # the actual installer payload without opening a console or launching the UI.
+          $installRoot = Join-Path $env:GITHUB_WORKSPACE 'dist/verify-installer-app'
+          if (Test-Path $installRoot) { Remove-Item -Recurse -Force $installRoot }
+          & $setup '/VERYSILENT' '/SUPPRESSMSGBOXES' '/NORESTART' '/SP-' "/DIR=$installRoot"
+          if ($LASTEXITCODE -ne 0) { throw "Silent setup install failed with exit code $LASTEXITCODE." }
+          $installedHost = Join-Path $installRoot 'LocalAIRuntime.Desktop.exe'
+          if (-not (Test-Path $installedHost)) { throw 'Installed desktop shell executable is missing.' }
+          & $installedHost '--verify-install'
+          if ($LASTEXITCODE -ne 0) { throw 'Installed desktop shell package verification failed.' }
+          foreach ($relativePath in @('local-ai-runtime.exe', 'web/index.html', 'web/desktop-shell.json', 'scripts/Start-LocalAIRuntime.ps1', 'scripts/Apply-LocalAIRuntimeUpdate.ps1', 'local-ai-runtime.ico')) {
+            if (-not (Test-Path (Join-Path $installRoot $relativePath))) { throw "Installed payload is missing $relativePath." }
+          }
+          $uninstaller = Join-Path $installRoot 'unins000.exe'
+          if (-not (Test-Path $uninstaller)) { throw 'Inno Setup uninstaller was not registered.' }
+          & $uninstaller '/VERYSILENT' '/SUPPRESSMSGBOXES' '/NORESTART'
+          if ($LASTEXITCODE -ne 0) { throw "Silent uninstall failed with exit code $LASTEXITCODE." }
+          if (Test-Path $installedHost) { throw 'Desktop application files remain after uninstallation.' }
+          Get-FileHash $package, $setup -Algorithm SHA256 | Format-List
           } finally {
             $packageTimer.Stop()
             "seconds=$([math]::Round($packageTimer.Elapsed.TotalSeconds, 2))" >> $env:GITHUB_OUTPUT
@@ -396,6 +473,15 @@ jobs:
         with:
           name: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && 'release-windows' || format('preview-windows-{0}', github.sha) }}
           path: dist/local-ai-runtime-windows-x64.zip
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload Windows desktop installer
+        if: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && 'release-windows-installer' || format('preview-windows-installer-{0}', github.sha) }}
+          path: dist/local-ai-runtime-windows-x64-setup.exe
           if-no-files-found: error
           retention-days: 14
 
@@ -938,11 +1024,12 @@ jobs:
         run: |
           set -euo pipefail
           test -s release-assets/local-ai-runtime-windows-x64.zip
+          test -s release-assets/local-ai-runtime-windows-x64-setup.exe
           test -s release-assets/local-ai-runtime-linux-x64.tar.gz
           test -s release-assets/local-ai-runtime-macos-x64.tar.gz
           test -s release-assets/local-ai-runtime-macos-arm64.tar.gz
           cd release-assets
-          sha256sum local-ai-runtime-windows-x64.zip local-ai-runtime-linux-x64.tar.gz local-ai-runtime-macos-x64.tar.gz local-ai-runtime-macos-arm64.tar.gz > SHA256SUMS.txt
+          sha256sum local-ai-runtime-windows-x64-setup.exe local-ai-runtime-windows-x64.zip local-ai-runtime-linux-x64.tar.gz local-ai-runtime-macos-x64.tar.gz local-ai-runtime-macos-arm64.tar.gz > SHA256SUMS.txt
           cd ..
           if [[ "$TAG_NAME" == *-* ]]; then
             gh release create "$TAG_NAME" release-assets/* --verify-tag --title "$TAG_NAME" --generate-notes --prerelease --repo "$GITHUB_REPOSITORY"

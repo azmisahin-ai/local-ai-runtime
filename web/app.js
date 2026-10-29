@@ -133,7 +133,8 @@ async function checkForUpdates(manual = false) {
     const local = await api('/version');
     const current = local.version || '0.0.0';
     runtimeVersion.textContent = current;
-    updateApplySupported = Boolean(local.update_apply_supported);
+    const desktopShellInstalled = Boolean(local.desktop_shell_installed);
+    updateApplySupported = Boolean(local.update_apply_supported) && !desktopShellInstalled;
     updateApplyButton.hidden = true;
     updateApplyButton.disabled = true;
     const releaseApi = local.releases_api_url || FALLBACK_RELEASE_API;
@@ -171,6 +172,22 @@ async function checkForUpdates(manual = false) {
     availableRuntimeUpdate = null;
     updateDownloadButton.hidden = true;
     updateDownloadButton.disabled = true;
+    updateApplyButton.hidden = true;
+
+    if (desktopShellInstalled) {
+      const installerName = String(local.desktop_installer_asset_name || 'local-ai-runtime-windows-x64-setup.exe');
+      const installer = Array.isArray(latest.assets)
+        ? latest.assets.find((candidate) => candidate.name === installerName)
+        : null;
+      updateLink.href = safeHttpsUrl(latest.html_url) || REPOSITORY_RELEASES;
+      updateLink.textContent = installer ? 'Open Windows installer release' : 'Open official releases';
+      updateCopy.textContent = installer
+        ? `A complete desktop-app update (${latest.tag_name}) is available. This installed app must be updated with the full Windows setup installer so the desktop shell and runtime stay in sync. Open the official release, download ${installerName}, and verify it with SHA256SUMS.txt. Before running setup, choose “Exit and stop local engines” from the Local AI Runtime tray menu. Your settings, engine downloads and models remain in your user-data folder. The installer is currently unsigned; Windows may show a publisher warning.`
+        : `A newer release (${latest.tag_name}) is available, but its Windows desktop installer is not attached yet. Open the official release page to review the publication status. This installed app will not apply the portable ZIP because doing so could leave the desktop shell and runtime on different versions.`;
+      updateNotice.hidden = false;
+      updateCheckStatus.textContent = `Desktop app update available · ${latest.tag_name}`;
+      return;
+    }
 
     const asset = Array.isArray(latest.assets)
       ? latest.assets.find((candidate) => candidate.name === local.update_asset_name)

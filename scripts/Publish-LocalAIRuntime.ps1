@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
     [ValidatePattern('^[0-9a-fA-F]{40}$')]
@@ -106,7 +106,10 @@ function Wait-ForPipelineRun {
                 }
                 throw "Release CI for $ExpectedRef finished with conclusion '$($run.conclusion)'. The tag remains on GitHub, but a successful Release was not confirmed. Do not move or reuse the tag. Review: $($run.html_url)"
             }
-            Write-Host ("  Status: {0}; elapsed: {1}" -f $run.status, ([DateTime]::UtcNow - [DateTime]$run.created_at).ToString('hh\:mm\:ss'))
+            $createdAt = [DateTimeOffset]::Parse([string]$run.created_at).ToUniversalTime()
+            $elapsed = [DateTimeOffset]::UtcNow - $createdAt
+            $elapsedText = '{0:00}:{1:00}:{2:00}' -f [math]::Floor($elapsed.TotalHours), $elapsed.Minutes, $elapsed.Seconds
+            Write-Host ("  Status: {0}; elapsed: {1}" -f $run.status, $elapsedText)
         } else {
             Write-Host '  Waiting for GitHub to register the workflow run...'
         }

@@ -8,32 +8,32 @@ Local AI Runtime should feel like an installed desktop application, not a develo
 
 The runtime, engines, and models remain separate versioned components. The catalogue must be honest about licenses, supported hardware, memory requirements, and evidence. “Detected” does not mean “supported”; “starts” does not mean “inference tested.”
 
-## Current reality — `v0.1.0-alpha`
+## Distribution status
 
-- The published packages are **portable archives**, not conventional OS installers.
-- The dashboard is served locally and opens in the default browser. Windows launch currently uses a `.cmd`/PowerShell launcher; a native desktop window and fully managed application lifecycle are not implemented yet.
+- The earlier `v0.1.1-alpha` release contains **portable archives**. This source revision adds a Windows per-user setup installer; it is considered published only when a tagged CI run succeeds and the release includes `local-ai-runtime-windows-x64-setup.exe`. The [live Releases page](https://github.com/azmisahin-ai/local-ai-runtime/releases) is authoritative for the current download assets.
+- The new Windows shell hosts the existing dashboard in WebView2, starts the C++ runtime without a console window, and uses a tray menu for reopen, update check, and explicit graceful exit. The installer/payload must still pass tagged Windows CI and a clean Windows 10/11 manual acceptance run before the site calls it ready for general users.
 - The managed catalogue currently starts with official `llama.cpp` CPU/CUDA assets and one pinned Qwen2.5 1.5B GGUF model. It is not yet a catalogue of every relevant C/C++ engine or model.
 - Hardware detection and evidence-backed model recommendations are not implemented yet.
 - Hosted CI uses a fake OpenAI-compatible engine and intentionally does not download the real engine or the ~1.12 GB starter model. Real CPU/GPU inference therefore requires a separate maintainer validation run.
 - Windows tagged portable packages support user-confirmed update apply/restart with checksum-verified backup and rollback. Linux/macOS currently verify and stage an update but require manual archive replacement.
 
-The alpha is useful for previewing the runtime, but it is not yet the promised one-time-installed desktop experience. Do not describe console/script launchers as the finished UI.
+A release is a user-ready desktop install only when its tagged CI includes the setup executable and has passed install/payload checks. Until then, the website must continue to offer the portable fallback and must not describe the WinForms shell as publicly available. Clean Windows 10/11 user-session acceptance is still required before calling the desktop experience mature.
 
-## Priority 0 — restore and keep the release pipeline green
+## Priority 0 — keep the release pipeline green
 
-- [ ] Fix the Windows PowerShell 5.1 publisher smoke-test regression: the test intentionally runs a fake native command with a non-zero exit code, but must clear that expected status after all assertions pass so GitHub Actions does not mark a successful test as failed.
-- [ ] Confirm the whole four-target `main` pipeline passes: Windows x64, Linux x64, macOS Intel x64, and macOS Apple Silicon arm64. Pages must deploy only after all package jobs pass.
-- [ ] Keep one maintainer command and one stable bundle filename (`local-ai-runtime-update.bundle`). A push must use a normal fast-forward, never force-push, and stop on any failed CI gate.
-- [ ] Only after `main` CI passes, create the next alpha tag and let the tag pipeline publish the four packages and `SHA256SUMS.txt`. A failed main build must never create a release tag.
+- [x] Fix the Windows PowerShell 5.1 publisher smoke-test regression and confirm the canonical four-target pipeline passes. `d97b8ee` is the last confirmed green publisher/roadmap baseline.
+- [x] Keep one maintainer command and one stable bundle filename (`local-ai-runtime-update.bundle`). A push uses a normal fast-forward, never force-pushes, and stops at a failed CI gate.
+- [ ] Validate the new desktop shell and per-user setup installer on Windows CI before creating its next alpha tag. A failed main build must never create a release tag.
 
 ## Priority 1 — real Windows desktop installation (first product milestone)
 
-- [ ] Produce a per-user Windows installer (`.exe`) from the successful CI package. Default install must not require administrator elevation; include Start menu entry and optional desktop shortcut.
-- [ ] Provide a dedicated desktop window using the existing HTML dashboard in an embedded WebView2 shell. Normal use must not expose CMD/PowerShell windows or require the user to keep a terminal open.
-- [ ] Own the runtime and engine process lifecycle: single application instance; reopen focuses the existing window; the app can be closed/reopened safely; provide clear **Keep running** and **Exit and stop local engines** behavior (for example via a system-tray menu) so inference never stops unexpectedly or runs invisibly without user choice.
+- [ ] Validate the new self-contained WebView2/WinForms desktop host and Inno Setup per-user installer through Windows CI; include Start menu entry and optional desktop shortcut. The workflow is prepared to package, install, verify, and uninstall it, but this checkbox stays open until the new workflow run succeeds.
+- [ ] Validate console-free launcher invocation, single-instance activation, tray reopen/update actions, close-to-tray behavior, explicit graceful exit, and isolated user-data storage in Windows CI/manual acceptance.
+- [ ] Finish a dedicated Windows desktop launch smoke test and manual clean-machine acceptance on Windows 10/11. Confirm tray lifetime, upgrade, rollback, and uninstall behavior on actual user sessions.
 - [ ] Add a clear first-run wizard, progress/error states, repair/retry actions, and a user-readable diagnostics export. Do not ask users to run developer tests.
-- [ ] Update and rollback the installed application atomically without replacing settings, engine binaries, or model weights. Protect against interruption and provide a safe recovery path.
-- [ ] Uninstall application binaries and shortcuts cleanly; preserve settings, downloaded engines, and models by default, with a separate explicit option to remove user data.
+- [ ] Update the entire installed desktop application (shell + runtime) atomically, with rollback and interruption recovery, without replacing settings, engine binaries, or model weights. Until that exists, installed builds must use the full setup installer; the portable ZIP apply action is disabled for desktop-shell installs.
+- [x] Make the installer/uninstaller keep mutable user data outside the application directory and preserve it by default.
+- [ ] Add a separate explicit option to remove user data during uninstall and verify it safely.
 - [ ] Validate install, launch, close/reopen, upgrade, forced interruption recovery, rollback, and uninstall on clean Windows 10/11 x64 virtual machines. Verify that user data survives an application update.
 
 **Windows milestone acceptance:** a new user downloads one installer from the project site, installs it, launches from Start, sees a desktop window without a console, installs a suitable CPU engine/model through the UI, produces a real chat response, and updates from the UI without manually moving ZIP files or editing JSON.

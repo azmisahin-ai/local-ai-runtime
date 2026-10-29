@@ -36,6 +36,7 @@ async function main() {
   const dashboardHtml = fs.readFileSync(path.join(root, 'web/index.html'), 'utf8');
   const dashboardScript = fs.readFileSync(path.join(root, 'web/app.js'), 'utf8');
   const assets = [
+    'local-ai-runtime-windows-x64-setup.exe',
     'local-ai-runtime-windows-x64.zip',
     'local-ai-runtime-linux-x64.tar.gz',
     'local-ai-runtime-macos-x64.tar.gz',
@@ -99,18 +100,20 @@ async function main() {
   for (const label of ['Windows x64', 'Linux x64', 'macOS Intel (x64)', 'macOS Apple Silicon (arm64)']) {
     assert(rows.some((row) => row.text.includes(label)), `missing platform download: ${label}`);
   }
-  for (const file of assets.slice(0, 4).map((asset) => asset.name)) {
+  for (const file of ['local-ai-runtime-windows-x64-setup.exe', 'local-ai-runtime-linux-x64.tar.gz', 'local-ai-runtime-macos-x64.tar.gz', 'local-ai-runtime-macos-arm64.tar.gz']) {
     assert(rows.some((row) => row.hrefs.some((href) => href.endsWith(`/${file}`))), `missing asset link: ${file}`);
   }
+  const windowsRow = rows.find((row) => row.text.includes('Windows x64'));
+  assert(windowsRow.hrefs.some((href) => href.endsWith('/local-ai-runtime-windows-x64-setup.exe')), 'Windows must prefer the installer when a release contains it');
   assert.equal(elements.get('#latest-version').textContent, 'v0.1.0-alpha');
   assert.equal(elements.get('#site-updated').textContent, 'Project data · live');
   assert.equal(grid.afterChildren.length, 1, 'checksum link should be rendered below the platform downloads');
   assert(product.features.some((feature) => feature.name === 'Portable package launch (alpha)' && feature.status === 'preview'), 'product manifest should accurately describe the current portable launch flow');
-  assert(product.features.some((feature) => feature.name === 'Windows desktop installer' && feature.status === 'planned'), 'product manifest should expose the installed desktop app as the next milestone');
+  assert(product.features.some((feature) => feature.name === 'Windows desktop installer' && feature.status === 'preview'), 'product manifest should expose the CI-built Windows desktop installer as preview');
   assert(siteHtml.includes('From download to a local answer.'), 'site should explain a user-first first-run path');
-  assert(siteHtml.includes('current alpha is a portable archive, not a conventional installer'), 'site should be honest about the current delivery format');
+  assert(siteHtml.includes('When the selected Windows release includes the desktop setup installer'), 'site should explain installer and portable fallback selection');
   assert(siteHtml.includes('Start-LocalAIRuntime.cmd') && siteHtml.includes('Start-LocalAIRuntime.command'), 'site should explain the platform launchers');
-  assert(siteHtml.includes('One-time note for v0.1.0-alpha'), 'site should explain the one-time migration from the first alpha archive');
+  assert(siteHtml.includes('Moving from the portable archive:'), 'site should explain migration from a portable package to the installed desktop app');
   assert(dashboardHtml.includes('id="check-updates"'), 'dashboard should expose a manual update check');
   assert(dashboardHtml.includes('Chat with your model'), 'dashboard should present chat as a user task, not a developer test');
   assert(dashboardScript.includes('setInterval(() => { if (Date.now() - lastUpdateCheckAt > 6 * 60 * 60 * 1000) checkForUpdates(); }'), 'dashboard should refresh update metadata periodically');

@@ -8,42 +8,35 @@ Project site: **https://azmisahin-ai.github.io/local-ai-runtime/** (available af
 
 This is an early C++20 alpha. It orchestrates existing model engines; it does not implement inference itself. The product name and API are still evolving.
 
-> **Product status:** `v0.1.0-alpha` is currently a portable archive with a local browser dashboard, not a conventional installed desktop application. The native Windows app window, per-user installer, console-free lifecycle, hardware-aware first-run wizard, and real-hardware compatibility guidance are prioritized in the [roadmap](docs/roadmap.md). Do not ask normal users to run developer smoke-test scripts.
+> **Product status:** this branch builds a Windows per-user setup installer and an embedded desktop window. The installer is publicly available only for release tags whose CI run publishes `local-ai-runtime-windows-x64-setup.exe`; check the [live Releases page](https://github.com/azmisahin-ai/local-ai-runtime/releases) for the exact assets available today. Hardware-aware recommendations, broader engine support, signed binaries, and atomic in-app desktop updates remain in progress. See the [roadmap](docs/roadmap.md).
 
 ## For users
 
 ### Downloads
 
-Use the project site or [GitHub Releases](https://github.com/azmisahin-ai/local-ai-runtime/releases). After a version tag is published, GitHub Actions builds packages for Windows x64, Linux x64, macOS Intel (x64) and macOS Apple Silicon (arm64), then attaches `SHA256SUMS.txt`.
+Use the project site or [GitHub Releases](https://github.com/azmisahin-ai/local-ai-runtime/releases). The tagged pipeline builds a Windows x64 setup installer and portable ZIP, Linux x64, macOS Intel (x64), and macOS Apple Silicon (arm64) packages. Releases include `SHA256SUMS.txt`.
 
-The package includes the runtime, the web dashboard, an example configuration, a starter script, and the project license. It deliberately does not bundle inference engines, CUDA runtimes, or multi-gigabyte model weights. After launching the runtime, use **Managed Components** in the dashboard to download reviewed components on demand; each engine/model remains separate so versions and licenses can be tracked independently.
+The runtime includes the C++ control plane, HTML dashboard, example configuration, launcher/update helpers, and license. It does not bundle inference engines, CUDA runtimes, or multi-gigabyte model weights. Install reviewed engine/model components separately from **Managed Components** so versions and licenses remain independently tracked.
 
-- **Windows 10/11 x64 (portable alpha):** the current release is a ZIP, not an installer. Extract it and double-click `Start-LocalAIRuntime.cmd`; the dashboard opens in your browser. The launcher may expose a console during startup. A conventional installer and dedicated desktop window are not available yet; this is the highest-priority product milestone.
-- **Linux x64:** extract the TAR.GZ and run `./Start-LocalAIRuntime.sh`. A desktop session opens the dashboard automatically; on a headless/server session, open `http://127.0.0.1:8000` yourself. Press Ctrl+C in the terminal to stop the runtime.
-- **macOS Intel / Apple Silicon:** extract the matching architecture archive and double-click `Start-LocalAIRuntime.command`. The terminal stays open and the dashboard opens in your browser. This early CLI preview is not Developer ID signed or notarized, so Gatekeeper/security prompts may occur. Only open software obtained from the official project release.
+- **Windows 10/11 x64 — desktop installer:** when the release includes `local-ai-runtime-windows-x64-setup.exe`, download it from that release and run setup. It installs per-user without administrator elevation, adds a Start menu shortcut and offers an optional desktop shortcut. Open **Local AI Runtime** from Start; the dashboard opens in its own desktop window without a terminal. The current alpha installer is unsigned and may show a Windows publisher warning. Verify it against that release's `SHA256SUMS.txt`. Setup installs Microsoft's WebView2 Runtime if needed, which can require internet access.
+- **Windows portable fallback:** when a release has no setup installer, download the ZIP, extract it to a folder you own, and double-click `Start-LocalAIRuntime.cmd`. The dashboard opens in your browser; this is the interim alpha path.
+- **Linux x64:** extract the TAR.GZ and run `Start-LocalAIRuntime.sh`. The dashboard opens in your browser; press Ctrl+C in the terminal to stop the runtime.
+- **macOS Intel / Apple Silicon:** extract the matching architecture archive and double-click `Start-LocalAIRuntime.command`. This early CLI preview is not Developer ID signed or notarized, so Gatekeeper/security prompts may occur.
 
-The launchers create user configuration on first start. Settings, downloaded engines/models and logs are stored outside the extracted application folder, so they survive replacing the app package. The runtime package does not include an inference engine or multi-gigabyte model weights.
+The desktop app's close button minimizes it to the notification area. Choose **Exit and stop local engines** from the tray menu to stop the runtime and managed engines gracefully. Settings, downloaded engines/models and logs are stored under `%LOCALAPPDATA%\LocalAIRuntime`, outside the program directory, so they survive app updates/uninstall by default. For installed desktop builds, use **Check for updates** to open the official release page, exit the app from the tray, then run the complete setup installer; the portable ZIP updater is deliberately disabled for desktop installs until atomic shell/runtime updates are implemented. Linux/macOS currently stage verified update archives but still require replacing the archive manually.
 
 #### First model setup
 
-1. Start Local AI Runtime and open its local dashboard at `http://127.0.0.1:8000`.
-2. In **Managed Components**, begin with the llama.cpp CPU package. Review the upstream MIT license, confirm it in the UI, and let the runtime download, checksum-verify, safely extract and register it.
-3. Install the starter Qwen2.5 1.5B Instruct Q4_K_M model. Review its Apache-2.0 license, confirm it, and let the runtime download the pinned GGUF, check its exact size/SHA-256/header, and register it.
-4. Wait for both jobs to complete, start the engine and send a message when the dashboard reports it ready.
+1. Open Local AI Runtime and go to **Managed Components**.
+2. Install the reviewed llama.cpp CPU engine. Review the upstream MIT license and confirm it in the UI.
+3. Install the starter Qwen2.5 1.5B Instruct Q4_K_M model. Review its Apache-2.0 license and confirm it in the UI.
+4. Wait until the engine status says **Ready**, then send a message in **Chat with your model**.
 
-The initial model download is about 1.12 GB and requires an internet connection plus additional free disk space. The lightweight runtime release does not contain the engine archive or model weights. The catalog selects reviewed upstream URLs; arbitrary URLs are not accepted by the installer API. If the latest upstream engine release lacks a published SHA-256 digest or a matching platform/backend asset, installation fails closed rather than bypassing verification.
+The starter model download is about 1.12 GB. The lightweight runtime setup does not contain the engine or model. If upstream has no verified asset matching your platform, the catalog fails closed rather than bypassing checksum validation.
 
-You do not need a developer test script to verify a normal installation: when the engine is marked **Ready**, send a message in **Chat with your model**. The app sends the prompt to the configured local engine and shows the response in the dashboard. Maintainer-only real-device validation is documented separately in [real-engine Windows validation](docs/real-engine-validation.md).
+Advanced users can still use **Configure llama.cpp** to register engine/model files they installed themselves. NVIDIA CUDA packages are separate choices on supported Windows/Linux x64 hosts, but a package choice is not proof that a specific GPU, driver, and model work together. Start with CPU, then validate CUDA on the exact machine and model.
 
-Advanced users can still use **Configure llama.cpp** to register an engine and model they already installed. NVIDIA CUDA packages are available as separate choices on supported Windows/Linux x64 hosts, but a package option is not proof that a given GPU/driver/model combination works. Start with CPU, then test CUDA on the exact machine and model.
-
-- **Offline use:** once the app, engine and model are installed, local inference does not need GitHub. Catalog downloads and update checks require network access. The dashboard does not upload prompts, model paths or usage events; the source hosts may receive ordinary network metadata such as the request IP address.
-
-The local dashboard checks GitHub Releases at startup, provides **Check for updates**, and refreshes the check while the dashboard remains open. When a newer version is available, it offers release notes plus a **Download & verify package** action. The runtime restricts the request to the exact official release asset, checks the reported size and SHA-256 digest, and stages the verified archive under the per-user update directory. On tagged portable Windows releases, a second explicit **Apply update & restart** action revalidates the package, checks that the portable app folder is writable before stopping anything, backs up application files, restarts the runtime, and rolls back if the new version fails its health check. If an update helper is interrupted during replacement or rollback, the next launcher start verifies the saved backup and attempts recovery before executing the runtime. It does not request administrator elevation; if the app is under a protected folder, move the portable folder to a user-writable location or update manually. This action is disabled in development/preview builds to avoid replacing newer preview code with an older tagged release. Linux and macOS currently support staging only. The rollback copy is kept under the per-user updates folder; user settings, engines and model weights remain outside the application folder.
-
-
-
-**One-time transition from `v0.1.0-alpha`:** the first published archive predates the new top-level click-to-start launcher and its updater does not allow that new file. Install the next launcher-enabled release manually into a new application folder once; your settings, engines and models stay in the separate user-data folder. Later Windows tagged releases can use the in-app apply/restart flow.
+- **Offline use:** after the runtime, engine and model have been installed, inference runs locally without GitHub. Catalog downloads and update checks require network access. Prompts, model paths and usage events are not uploaded; ordinary network metadata may be visible to download sources.
 
 ### Security warning
 

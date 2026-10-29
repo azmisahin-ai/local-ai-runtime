@@ -84,6 +84,9 @@ def main():
     runtime_port, engine_port, setup_engine_port = reserve_distinct_ports()
     with tempfile.TemporaryDirectory(prefix="lar-http-smoke-") as temporary:
         temp = Path(temporary)
+        test_web_dir = temp / "web"
+        shutil.copytree(web_dir, test_web_dir)
+        web_dir = str(test_web_dir)
         config_path = temp / "engines.json"
         engine_working_directory = temp / "engine-cwd"
         engine_working_directory.mkdir()
@@ -183,6 +186,9 @@ def main():
             assert status == 200 and "application/json" in content_type
             assert version_info["version"] and version_info["repository"].endswith("/local-ai-runtime")
             assert "releases_api_url" in version_info and "api.github.com" in version_info["releases_api_url"]
+            assert isinstance(version_info.get("desktop_shell_installed"), bool), version_info
+            assert "desktop_installer_asset_name" in version_info, version_info
+            assert version_info["desktop_shell_installed"] is False
             if sys.platform == "win32":
                 expected_update_asset = "local-ai-runtime-windows-x64.zip"
             elif sys.platform == "darwin":
@@ -194,6 +200,15 @@ def main():
                 expected_update_asset = ""
             assert version_info.get("update_asset_name", "") == expected_update_asset, version_info
             assert isinstance(version_info.get("update_apply_supported"), bool), version_info
+            if sys.platform == "win32":
+                desktop_marker = Path(web_dir) / "desktop-shell.json"
+                desktop_marker.write_text('{"kind":"installed-desktop"}', encoding="utf-8")
+                status, desktop_version_raw, _ = request(base + "/version")
+                desktop_version = json.loads(desktop_version_raw)
+                assert status == 200 and desktop_version["desktop_shell_installed"] is True
+                assert desktop_version["desktop_installer_asset_name"] == "local-ai-runtime-windows-x64-setup.exe"
+                assert desktop_version["update_apply_supported"] is False, "Desktop installs must not apply the portable ZIP in place"
+                desktop_marker.unlink()
             if str(version_info.get("version", "")).endswith("-dev"):
                 assert version_info["update_apply_supported"] is False, "Development previews must never offer in-place updates"
 

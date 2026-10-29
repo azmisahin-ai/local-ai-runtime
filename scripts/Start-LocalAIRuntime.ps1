@@ -1,7 +1,8 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [switch]$NoBrowser,
     [switch]$PassThru,
+    [switch]$NoPrompts,
     [string]$DataRoot = ''
 )
 
@@ -241,11 +242,14 @@ try {
                 "PID $($_.Id) ($pathText)"
             }) -join ', '
             $reason = if ($health) { 'is healthy but runs from a different application folder' } else { 'does not answer the /health check' }
+            if ($NoPrompts) {
+                throw "Another Local AI Runtime instance on port $port $reason ($ownersText). No process was stopped. Close the other Local AI Runtime normally, then reopen this app."
+            }
             $answer = Read-Host "Existing Local AI Runtime on port $port $reason ($ownersText). Stop it and its managed engine process, then start this copy? [y/N]"
             if ($answer -match '^(?i:y|yes)$') {
                 Stop-ConfirmedRuntimeOwners $runtimeOwners
             } else {
-                throw "The existing Local AI Runtime was left running. Close its console with Ctrl+C, then rerun this launcher if you want to use this application folder."
+                throw "The existing Local AI Runtime was left running. Close it normally, then rerun this launcher if you want to use this application folder."
             }
         } else {
             $detailsText = ($listenerDetails | ForEach-Object {
@@ -261,7 +265,7 @@ try {
     # user names or package directories containing spaces remain valid.
     $webDir = Join-Path $root 'web'
     $arguments = '--config "{0}" --web-dir "{1}"' -f $configPath, $webDir
-    $process = Start-Process -FilePath $exe -ArgumentList $arguments -WorkingDirectory $dataRoot -PassThru
+    $process = Start-Process -FilePath $exe -ArgumentList $arguments -WorkingDirectory $dataRoot -WindowStyle Hidden -PassThru
     $ready = $false
     for ($i = 0; $i -lt 40; $i++) {
         if ($process.HasExited) {

@@ -117,8 +117,10 @@ function renderRelease(release) {
   latestVersion.textContent = release.tag_name || release.name || 'Latest release';
   const published = release.published_at ? new Date(release.published_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : 'Publication date unavailable';
   latestMeta.textContent = `${status} · Published ${published}${release.assets?.length ? ` · ${release.assets.length} downloadable assets` : ' · assets not attached'}`;
+  const windowsInstaller = findAsset(release, ['local-ai-runtime-windows-x64-setup.exe']);
+  const windowsPortable = findAsset(release, ['local-ai-runtime-windows-x64.zip']);
   downloadGrid.replaceChildren(
-    downloadOption('Windows x64', 'Portable ZIP · external engine/model required', '⊞', findAsset(release, ['local-ai-runtime-windows-x64.zip']), url),
+    downloadOption('Windows x64', windowsInstaller ? 'Desktop installer · Start menu app · unsigned alpha' : 'Portable ZIP · external engine/model required', '⊞', windowsInstaller || windowsPortable, url),
     downloadOption('Linux x64', 'Portable TAR.GZ · system libraries required', '⌁', findAsset(release, ['local-ai-runtime-linux-x64.tar.gz']), url),
     downloadOption('macOS Intel (x64)', 'Portable TAR.GZ · Intel Macs · not notarized', '⌘', findAsset(release, ['local-ai-runtime-macos-x64.tar.gz']), url),
     downloadOption('macOS Apple Silicon (arm64)', 'Portable TAR.GZ · M-series Macs · not notarized', '⌘', findAsset(release, ['local-ai-runtime-macos-arm64.tar.gz']), url)
