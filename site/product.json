@@ -65,8 +65,8 @@
       "status": "preview"
     },
     {
-      "name": "Verified runtime update staging",
-      "description": "The local dashboard selects the current platform's package from the official GitHub Release API, downloads it on user request and checks the advertised size and SHA-256 digest before staging it under local user data. This alpha does not install or replace application files automatically.",
+      "name": "Verified runtime updates",
+      "description": "The dashboard downloads the matching official platform release, verifies size and SHA-256, and stages it under local user data. Tagged portable Windows releases add explicit apply/restart, a backup, post-update health checks, and automatic rollback on failure. Development previews and Linux/macOS are staging-only; no telemetry is sent.",
       "status": "preview"
     },
     {

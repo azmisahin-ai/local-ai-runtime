@@ -53,6 +53,7 @@ public:
                       const std::string& digest, std::uint64_t expected_size,
                       std::string& job_id, std::string& error);
     static std::string runtime_update_asset_name();
+    static bool is_newer_release_tag(const std::string& candidate_tag, const std::string& current_version);
     bool cancel(const std::string& job_id, std::string& error);
     bool has_active_jobs() const;
 

@@ -163,6 +163,7 @@ def main():
             assert 'id="diagnostics-export"' in page and 'id="downloads-refresh"' in page
             assert 'id="include-engine-logs"' in page
             assert 'id="update-download"' in page
+            assert 'id="update-apply"' in page
 
             status, diagnostics_raw, diagnostics_type = request(base + "/v1/diagnostics/export")
             assert status == 200 and "text/plain" in diagnostics_type
@@ -192,6 +193,30 @@ def main():
             else:
                 expected_update_asset = ""
             assert version_info.get("update_asset_name", "") == expected_update_asset, version_info
+            assert isinstance(version_info.get("update_apply_supported"), bool), version_info
+            if str(version_info.get("version", "")).endswith("-dev"):
+                assert version_info["update_apply_supported"] is False, "Development previews must never offer in-place updates"
+
+            status, staged_status_raw, staged_status_type = request(
+                base + "/v1/updates/status", method="POST", body={"tag_name": "v987.654.321-smoke"},
+            )
+            staged_status = json.loads(staged_status_raw)
+            assert status == 200 and "application/json" in staged_status_type
+            assert staged_status["tag_name"] == "v987.654.321-smoke" and staged_status["staged"] is False
+            assert staged_status["verified"] is False and staged_status["apply_supported"] is False
+            try:
+                request(base + "/v1/updates/status", method="POST", body={"tag_name": "../invalid"})
+                raise AssertionError("Update status must reject path-like release tags")
+            except urllib.error.HTTPError as exc:
+                assert exc.code == 422, f"Expected 422 for an invalid status tag, got {exc.code}"
+
+            # In development/build-tree layouts the endpoint must fail closed;
+            # Windows apply is exposed only by a tagged portable release package.
+            try:
+                request(base + "/v1/updates/apply", method="POST", body={"tag_name": "v987.654.321-smoke"})
+                raise AssertionError("Apply-and-restart must be unavailable outside a supported portable release")
+            except urllib.error.HTTPError as exc:
+                assert exc.code == 501, f"Expected 501 for unsupported update apply, got {exc.code}"
 
             # The updater must fail closed on a release URL outside the exact
             # official asset path and on absent/invalid checksums. These tests do
@@ -432,7 +457,7 @@ def main():
             assert status == 202 and json.loads(shutdown_raw)["status"] == "shutting-down"
             wait_until(lambda: process.poll() is not None, 5, "graceful runtime shutdown")
             assert process.returncode == 0, f"Runtime exited with {process.returncode} after graceful shutdown"
-            print("HTTP smoke test passed: dashboard, health/version/platform-update metadata, update URL/digest guards, duplicate-startup diagnostics, security guards, readiness probe, engine lifecycle, chat/models proxy, GGUF validation, quoted paths, restricted engine CORS, CPU/GPU setup persistence, graceful shutdown.")
+            print("HTTP smoke test passed: dashboard, health/version/platform-update metadata, staged update status, apply capability guards, update URL/digest guards, duplicate-startup diagnostics, security guards, readiness probe, engine lifecycle, chat/models proxy, GGUF validation, quoted paths, restricted engine CORS, CPU/GPU setup persistence, graceful shutdown.")
         except Exception:
             runtime_log.flush()
             print(

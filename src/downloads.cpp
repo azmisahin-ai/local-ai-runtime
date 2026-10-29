@@ -656,6 +656,11 @@ void download_to_file(const std::string& url, const std::filesystem::path& desti
 DownloadManager::DownloadManager(RuntimeConfig config, EngineManager& engines)
     : config_(std::move(config)), engines_(engines) {}
 
+bool DownloadManager::is_newer_release_tag(const std::string& candidate_tag, const std::string& current_version) {
+    static const std::regex valid_tag(R"(^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$)");
+    return std::regex_match(candidate_tag, valid_tag) && is_newer_version(candidate_tag, current_version);
+}
+
 DownloadManager::~DownloadManager() {
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -938,8 +943,7 @@ bool DownloadManager::start_update(const std::string& current_version, const std
         error = "The release asset does not match this runtime's OS and architecture.";
         return false;
     }
-    static const std::regex valid_tag(R"(^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$)");
-    if (!std::regex_match(tag_name, valid_tag) || !is_newer_version(tag_name, current_version)) {
+    if (!is_newer_release_tag(tag_name, current_version)) {
         error = "The requested release tag is invalid or is not newer than the installed runtime.";
         return false;
     }
@@ -1159,7 +1163,11 @@ void DownloadManager::download_runtime_update(const std::shared_ptr<Job>& job) {
                << ",\"asset_name\":" << json_quote(job->asset_name)
                << ",\"sha256\":" << json_quote(job->expected_sha256)
                << ",\"size_bytes\":" << job->expected_size
+#ifdef _WIN32
+               << ",\"verified\":true,\"apply_supported\":true}\n";
+#else
                << ",\"verified\":true,\"apply_supported\":false}\n";
+#endif
         output.flush();
         if (!output) throw std::runtime_error("Could not flush the verified update metadata.");
     }

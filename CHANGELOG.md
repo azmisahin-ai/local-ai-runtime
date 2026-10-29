@@ -4,8 +4,11 @@ This project follows a lightweight Keep a Changelog structure. GitHub Release no
 
 ## Unreleased
 
-- Add a user-confirmed in-app runtime update staging flow for the current OS/architecture. Downloads are restricted to the exact official GitHub release asset, size-bounded, and SHA-256 verified before being kept under the per-user update directory. This step does not replace or execute application files.
-- Add HTTP smoke coverage for platform asset metadata and fail-closed update URL/digest validation.
+- Add a user-confirmed Windows portable-release update apply flow: revalidate the staged SHA-256, reject unsafe ZIP paths/symlinks/oversized archives, check installation-folder write access before shutdown, prepare a same-volume copy and rollback backup, gracefully stop/restart the runtime, and restore the previous application files if the new version fails `/health`.
+- Keep update application disabled in `-dev` previews and stage-only on Linux/macOS; the dashboard exposes apply only when the current tagged Windows package contains the update helper.
+- Add staged-update status revalidation and an explicit Apply update & restart action with a confirmation dialog; user configuration, engines and model weights remain outside the replaced app directory.
+- Add a Windows CI update-helper smoke test that rejects a modified archive, validates the packaged archive, updates a temporary installation, checks `/health`, confirms user-data preservation, and injects a post-replacement failure to verify automatic rollback/restart.
+- Add HTTP smoke coverage for staged-update status, apply capability gates, platform asset metadata, and fail-closed update URL/digest validation.
 - Add per-platform CI performance summaries for dependency install/configure, build, tests, package smoke checks and runner-side elapsed time; include Windows vcpkg cache hit identity, matched key, file counts and cache sizes to distinguish cache misses from runner queue delays.
 
 - Refresh the published-release website view: show download links for Windows, Linux, macOS Intel and Apple Silicon assets, update the displayed product version to `0.1.0-alpha`, and remove stale copy saying the first version tag has not been published.
@@ -68,4 +71,4 @@ This project follows a lightweight Keep a Changelog structure. GitHub Release no
 
 ### Security
 - Keep the runtime API bound to loopback by default.
-- Release binaries are not self-replaced automatically in this alpha; manual review is required before installing a package.
+- Release binaries are never replaced silently. Tagged portable Windows releases require explicit confirmation and perform a backup plus health-checked rollback; development builds and Linux/macOS remain stage-only. SHA-256 integrity checks are not a substitute for signed release provenance.

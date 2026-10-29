@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <chrono>
 #include <csignal>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <iterator>
@@ -23,6 +24,18 @@
 #include <sstream>
 #include <string_view>
 #include <thread>
+#include <vector>
+#include <system_error>
+
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 namespace lar {
 namespace {
@@ -74,6 +87,257 @@ std::string read_text_file(const std::filesystem::path& path) {
     std::ifstream input(path, std::ios::binary);
     if (!input) return {};
     return std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+}
+
+#ifdef _WIN32
+std::filesystem::path current_executable_path() {
+    std::wstring buffer(32768, L'\0');
+    const DWORD count = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+    if (count == 0 || count >= buffer.size()) return {};
+    buffer.resize(count);
+    return std::filesystem::path(buffer);
+}
+
+bool windows_update_apply_supported(const std::filesystem::path& web_dir,
+                                   std::filesystem::path* install_root_out = nullptr) {
+    // Preview/development builds may come from a newer source commit than the
+    // latest public tag. Never offer an in-place update that could replace a
+    // preview with an older release package merely because its semver sorts higher.
+    if (std::string_view(LAR_VERSION).find("-dev") != std::string_view::npos) return false;
+    try {
+        const auto executable = current_executable_path();
+        if (executable.empty()) return false;
+        const auto root = std::filesystem::weakly_canonical(executable.parent_path());
+        const auto actual_web = std::filesystem::weakly_canonical(std::filesystem::absolute(web_dir));
+        const auto expected_web = std::filesystem::weakly_canonical(root / L"web");
+        if (actual_web != expected_web) return false;
+        if (!std::filesystem::is_regular_file(root / L"local-ai-runtime.exe") ||
+            !std::filesystem::is_regular_file(root / L"web" / L"index.html") ||
+            !std::filesystem::is_regular_file(root / L"scripts" / L"Apply-LocalAIRuntimeUpdate.ps1")) return false;
+        if (install_root_out) *install_root_out = root;
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+std::wstring quote_windows_argument(const std::wstring& value) {
+    std::wstring out = L"\"";
+    std::size_t backslashes = 0;
+    for (const wchar_t ch : value) {
+        if (ch == L'\\') {
+            ++backslashes;
+            continue;
+        }
+        if (ch == L'"') {
+            out.append(backslashes * 2 + 1, L'\\');
+            out.push_back(L'"');
+            backslashes = 0;
+            continue;
+        }
+        out.append(backslashes, L'\\');
+        backslashes = 0;
+        out.push_back(ch);
+    }
+    out.append(backslashes * 2, L'\\');
+    out.push_back(L'"');
+    return out;
+}
+
+http::status start_windows_update_apply(const std::string& tag_name,
+                                       const RuntimeConfig& config,
+                                       DownloadManager& downloads,
+                                       const std::filesystem::path& web_dir,
+                                       std::string& error) {
+    static const std::regex valid_tag(R"(^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$)");
+    if (!std::regex_match(tag_name, valid_tag)) {
+        error = "The update tag is invalid.";
+        return http::status::unprocessable_entity;
+    }
+    if (!DownloadManager::is_newer_release_tag(tag_name, LAR_VERSION)) {
+        error = "The staged release is no longer newer than the installed runtime. Nothing was changed.";
+        return http::status::conflict;
+    }
+    if (downloads.has_active_jobs()) {
+        error = "Finish or cancel active downloads before applying a runtime update.";
+        return http::status::conflict;
+    }
+    std::filesystem::path install_root;
+    if (!windows_update_apply_supported(web_dir, &install_root)) {
+        error = "Apply-and-restart is available only from a portable Windows release package. This development layout can stage verified packages but will not modify its files.";
+        return http::status::not_implemented;
+    }
+
+    const auto expected_asset = DownloadManager::runtime_update_asset_name();
+    const auto data_root = DownloadManager::user_data_directory();
+    const auto stage_root = data_root / L"updates" / std::filesystem::path(tag_name);
+    const auto manifest_path = stage_root / L"staged-update.json";
+    const auto package_path = stage_root / std::filesystem::path(expected_asset);
+    std::error_code fs_error;
+    if (!std::filesystem::is_regular_file(manifest_path, fs_error) || fs_error ||
+        !std::filesystem::is_regular_file(package_path, fs_error) || fs_error) {
+        error = "No verified staged update exists for this release. Download and verify it first.";
+        return http::status::not_found;
+    }
+
+    try {
+        std::istringstream input(read_text_file(manifest_path));
+        boost::property_tree::ptree metadata;
+        boost::property_tree::read_json(input, metadata);
+        const auto manifest_tag = metadata.get<std::string>("tag_name", "");
+        const auto asset_name = metadata.get<std::string>("asset_name", "");
+        auto digest = metadata.get<std::string>("sha256", "");
+        const auto expected_size = metadata.get<std::uint64_t>("size_bytes", 0);
+        const auto verified = metadata.get<bool>("verified", false);
+        if (digest.rfind("sha256:", 0) == 0) digest.erase(0, 7);
+        std::transform(digest.begin(), digest.end(), digest.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (!verified || manifest_tag != tag_name || asset_name != expected_asset ||
+            !std::regex_match(digest, std::regex(R"(^[0-9a-f]{64}$)"))) {
+            error = "The staged update manifest is invalid, unsupported or does not match this platform/release.";
+            return http::status::unprocessable_entity;
+        }
+        const auto actual_size = std::filesystem::file_size(package_path, fs_error);
+        if (fs_error || actual_size != expected_size || DownloadManager::sha256_file(package_path) != digest) {
+            error = "The staged package no longer matches its verified size and SHA-256 manifest. Download it again before applying.";
+            return http::status::unprocessable_entity;
+        }
+        const auto helper_source = install_root / L"scripts" / L"Apply-LocalAIRuntimeUpdate.ps1";
+        const auto helper_copy = stage_root / L"Apply-LocalAIRuntimeUpdate.ps1";
+        if (!std::filesystem::is_regular_file(helper_source, fs_error) || fs_error) {
+            error = "The update helper is missing from this package. No files were changed.";
+            return http::status::not_implemented;
+        }
+        std::filesystem::copy_file(helper_source, helper_copy, std::filesystem::copy_options::overwrite_existing, fs_error);
+        if (fs_error) {
+            error = "Could not prepare the isolated update helper: " + fs_error.message();
+            return http::status::internal_server_error;
+        }
+
+        WCHAR windows_dir[MAX_PATH + 1]{};
+        const UINT windows_len = GetWindowsDirectoryW(windows_dir, MAX_PATH);
+        if (windows_len == 0 || windows_len >= MAX_PATH) {
+            error = "Could not locate Windows PowerShell to run the verified update helper.";
+            return http::status::internal_server_error;
+        }
+        const auto powershell = std::filesystem::path(windows_dir) / L"System32" / L"WindowsPowerShell" / L"v1.0" / L"powershell.exe";
+        if (!std::filesystem::is_regular_file(powershell, fs_error) || fs_error) {
+            error = "Windows PowerShell was not found; the update remains staged and no files were changed.";
+            return http::status::not_implemented;
+        }
+        std::vector<std::wstring> arguments = {
+            L"-NoLogo", L"-NoProfile", L"-NonInteractive", L"-ExecutionPolicy", L"Bypass", L"-WindowStyle", L"Hidden",
+            L"-File", helper_copy.wstring(),
+            L"-InstallRoot", install_root.wstring(),
+            L"-DataRoot", data_root.wstring(),
+            L"-StageRoot", stage_root.wstring(),
+            L"-PackagePath", package_path.wstring(),
+            L"-ManifestPath", manifest_path.wstring(),
+            L"-TagName", std::wstring(tag_name.begin(), tag_name.end()),
+            L"-AssetName", std::wstring(expected_asset.begin(), expected_asset.end()),
+            L"-ExpectedSha256", std::wstring(digest.begin(), digest.end()),
+            L"-RuntimePid", std::to_wstring(GetCurrentProcessId()),
+            L"-Port", std::to_wstring(config.port),
+            L"-CurrentVersion", std::wstring(LAR_VERSION, LAR_VERSION + std::char_traits<char>::length(LAR_VERSION))
+        };
+        std::wstring command = quote_windows_argument(powershell.wstring());
+        for (const auto& argument : arguments) { command.push_back(L' '); command += quote_windows_argument(argument); }
+        STARTUPINFOW startup{};
+        startup.cb = sizeof(startup);
+        startup.dwFlags = STARTF_USESHOWWINDOW;
+        startup.wShowWindow = SW_HIDE;
+        PROCESS_INFORMATION process{};
+        const auto working_directory = data_root.wstring();
+        const BOOL created = CreateProcessW(powershell.c_str(), command.data(), nullptr, nullptr, FALSE,
+                                             CREATE_NO_WINDOW | DETACHED_PROCESS, nullptr,
+                                             working_directory.c_str(), &startup, &process);
+        if (!created) {
+            error = "Could not start the isolated update helper (Windows error " + std::to_string(GetLastError()) + "). The verified package is still staged.";
+            return http::status::internal_server_error;
+        }
+        CloseHandle(process.hThread);
+        CloseHandle(process.hProcess);
+        log_diagnostic("INFO", "update.apply_started", "tag=" + tag_name + " platform=windows helper=detached");
+        return http::status::accepted;
+    } catch (const std::exception& ex) {
+        error = std::string("Could not validate or start the staged update: ") + ex.what();
+        return http::status::unprocessable_entity;
+    }
+}
+#endif
+
+std::string staged_update_status_json(const std::string& tag_name,
+                                      const std::filesystem::path& web_dir) {
+    static const std::regex valid_tag(R"(^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$)");
+    const auto asset_name = DownloadManager::runtime_update_asset_name();
+    const auto data_root = DownloadManager::user_data_directory();
+    const auto stage_root = data_root / "updates" / std::filesystem::path(tag_name);
+    const auto manifest_path = stage_root / "staged-update.json";
+    const auto package_path = stage_root / std::filesystem::path(asset_name);
+    bool staged = false;
+    bool apply_supported = false;
+    std::string apply_state;
+    std::string apply_message;
+    std::uint64_t package_size = 0;
+
+    if (std::regex_match(tag_name, valid_tag) && !asset_name.empty()) {
+        std::error_code fs_error;
+        if (std::filesystem::is_regular_file(manifest_path, fs_error) && !fs_error &&
+            std::filesystem::is_regular_file(package_path, fs_error) && !fs_error) {
+            try {
+                std::istringstream input(read_text_file(manifest_path));
+                boost::property_tree::ptree metadata;
+                boost::property_tree::read_json(input, metadata);
+                const auto manifest_tag = metadata.get<std::string>("tag_name", "");
+                const auto manifest_asset = metadata.get<std::string>("asset_name", "");
+                auto digest = metadata.get<std::string>("sha256", "");
+                const auto expected_size = metadata.get<std::uint64_t>("size_bytes", 0);
+                const auto verified = metadata.get<bool>("verified", false);
+                if (digest.rfind("sha256:", 0) == 0) digest.erase(0, 7);
+                std::transform(digest.begin(), digest.end(), digest.begin(), [](unsigned char c) {
+                    return static_cast<char>(std::tolower(c));
+                });
+                const auto actual_size = std::filesystem::file_size(package_path, fs_error);
+                staged = verified && manifest_tag == tag_name && manifest_asset == asset_name &&
+                    std::regex_match(digest, std::regex(R"(^[0-9a-f]{64}$)")) && !fs_error &&
+                    actual_size == expected_size && DownloadManager::sha256_file(package_path) == digest;
+                if (staged) {
+                    package_size = actual_size;
+#ifdef _WIN32
+                    apply_supported = windows_update_apply_supported(web_dir);
+#else
+                    (void)web_dir;
+#endif
+                }
+            } catch (...) {
+                staged = false;
+                apply_supported = false;
+            }
+        }
+    }
+
+    const auto status_path = stage_root / "apply-status.json";
+    std::error_code status_error;
+    if (std::filesystem::is_regular_file(status_path, status_error) && !status_error) {
+        try {
+            std::istringstream input(read_text_file(status_path));
+            boost::property_tree::ptree status;
+            boost::property_tree::read_json(input, status);
+            if (status.get<std::string>("tag_name", "") == tag_name) {
+                apply_state = status.get<std::string>("state", "");
+                apply_message = status.get<std::string>("message", "");
+            }
+        } catch (...) {
+            // A malformed status record must not be trusted or break dashboard loading.
+        }
+    }
+
+    return "{\"tag_name\":" + json_quoted(tag_name) +
+        ",\"staged\":" + std::string(staged ? "true" : "false") +
+        ",\"verified\":" + std::string(staged ? "true" : "false") +
+        ",\"apply_supported\":" + std::string(apply_supported ? "true" : "false") +
+        ",\"size_bytes\":" + std::to_string(package_size) +
+        ",\"apply_state\":" + json_quoted(apply_state) +
+        ",\"apply_message\":" + json_quoted(apply_message) + "}";
 }
 
 std::string read_engine_log_tails(const RuntimeConfig& config) {
@@ -422,7 +686,12 @@ http::response<http::string_body> handle_request(const http::request<http::strin
             ",\"repository\":\"https://github.com/azmisahin-ai/local-ai-runtime\"" +
             ",\"releases_api_url\":\"https://api.github.com/repos/azmisahin-ai/local-ai-runtime/releases?per_page=10\"" +
             ",\"releases_url\":\"https://github.com/azmisahin-ai/local-ai-runtime/releases\"" +
-            ",\"update_asset_name\":" + json_quoted(DownloadManager::runtime_update_asset_name()) + "}");
+            ",\"update_asset_name\":" + json_quoted(DownloadManager::runtime_update_asset_name()) +
+#ifdef _WIN32
+            ",\"update_apply_supported\":" + std::string(windows_update_apply_supported(web_dir) ? "true" : "false") + "}");
+#else
+            ",\"update_apply_supported\":false}");
+#endif
     }
     if (request.method() == http::verb::post && target == "/v1/updates/stage") {
         try {
@@ -452,6 +721,50 @@ http::response<http::string_body> handle_request(const http::request<http::strin
             return error_response(http::status::bad_request, version,
                                   "Runtime update request fields have invalid types.");
         }
+    }
+    if (request.method() == http::verb::post && target == "/v1/updates/status") {
+        try {
+            std::istringstream input(request.body());
+            boost::property_tree::ptree body;
+            boost::property_tree::read_json(input, body);
+            const auto tag_name = body.get<std::string>("tag_name", "");
+            static const std::regex valid_tag(R"(^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$)");
+            if (!std::regex_match(tag_name, valid_tag)) {
+                return error_response(http::status::unprocessable_entity, version, "The update status tag is invalid.");
+            }
+            return json_response(http::status::ok, version, staged_update_status_json(tag_name, web_dir));
+        } catch (const boost::property_tree::json_parser_error& ex) {
+            return error_response(http::status::bad_request, version,
+                                  std::string("Invalid update status request JSON: ") + ex.what());
+        } catch (const boost::property_tree::ptree_bad_data&) {
+            return error_response(http::status::bad_request, version,
+                                  "The update status request fields have invalid types.");
+        }
+    }
+    if (request.method() == http::verb::post && target == "/v1/updates/apply") {
+#ifdef _WIN32
+        try {
+            std::istringstream input(request.body());
+            boost::property_tree::ptree body;
+            boost::property_tree::read_json(input, body);
+            const auto tag_name = body.get<std::string>("tag_name", "");
+            std::string error;
+            const auto result = start_windows_update_apply(tag_name, config, downloads, web_dir, error);
+            if (result != http::status::accepted) return error_response(result, version, error);
+            return json_response(http::status::accepted, version,
+                "{\"status\":\"applying\",\"tag_name\":" + json_quoted(tag_name) +
+                ",\"message\":\"The verified update helper will shut down and restart the runtime.\"}");
+        } catch (const boost::property_tree::json_parser_error& ex) {
+            return error_response(http::status::bad_request, version,
+                                  std::string("Invalid update apply request JSON: ") + ex.what());
+        } catch (const boost::property_tree::ptree_bad_data&) {
+            return error_response(http::status::bad_request, version,
+                                  "The update apply request fields have invalid types.");
+        }
+#else
+        return error_response(http::status::not_implemented, version,
+                              "Verified package staging is available on this platform, but apply-and-restart is not yet supported. The current installation remains unchanged.");
+#endif
     }
     if (request.method() == http::verb::get && target == "/v1/diagnostics/export") {
         log_diagnostic("INFO", "diagnostics.export_requested", std::string("source=dashboard engine_logs=") + (include_engine_logs ? "included" : "omitted"));

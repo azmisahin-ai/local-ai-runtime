@@ -10,6 +10,7 @@ const updateTitle = document.querySelector('#update-title');
 const updateCopy = document.querySelector('#update-copy');
 const updateLink = document.querySelector('#update-link');
 const updateDownloadButton = document.querySelector('#update-download');
+const updateApplyButton = document.querySelector('#update-apply');
 const runtimeVersion = document.querySelector('#runtime-version');
 const chatReadiness = document.querySelector('#chat-readiness');
 const chatSendButton = document.querySelector('#send');
@@ -31,6 +32,8 @@ let catalogItems = [];
 let activeCatalogFilter = 'all';
 let availableRuntimeUpdate = null;
 let updateStageJobId = null;
+let updateApplySupported = false;
+let updateApplyInProgress = false;
 
 const REPOSITORY_RELEASES = 'https://github.com/azmisahin-ai/local-ai-runtime/releases';
 const FALLBACK_RELEASE_API = 'https://api.github.com/repos/azmisahin-ai/local-ai-runtime/releases?per_page=10';
@@ -118,6 +121,9 @@ async function checkForUpdates() {
     const local = await api('/version');
     const current = local.version || '0.0.0';
     runtimeVersion.textContent = current;
+    updateApplySupported = Boolean(local.update_apply_supported);
+    updateApplyButton.hidden = true;
+    updateApplyButton.disabled = true;
     const releaseApi = local.releases_api_url || FALLBACK_RELEASE_API;
     const response = await fetch(releaseApi, { headers: { Accept: 'application/vnd.github+json' }, cache: 'no-store' });
     if (!response.ok) throw new Error(`Release service returned ${response.status}`);
@@ -158,7 +164,9 @@ async function checkForUpdates() {
       updateDownloadButton.textContent = 'Download & verify package';
       updateDownloadButton.hidden = false;
       updateDownloadButton.disabled = false;
-      updateCopy.textContent = `You are using ${current}. This update is for this computer's platform. Downloading stores the package under your Local AI Runtime user-data folder and verifies GitHub's SHA-256 digest. This alpha will not replace running application files automatically.`;
+      updateCopy.textContent = `You are using ${current}. This update is for this computer's platform. Downloading stores the package under your Local AI Runtime user-data folder and verifies GitHub's SHA-256 digest. No application files change until you explicitly apply a verified update.`;
+      const stagedStatus = await getStagedUpdateStatus(latest.tag_name).catch(() => null);
+      if (stagedStatus?.staged) showStagedUpdateStatus(stagedStatus, current);
     } else {
       updateCopy.textContent = `You are using ${current}. A newer release exists, but GitHub did not provide a supported platform package with a SHA-256 digest. Open the release notes to inspect available downloads; automatic staging is disabled.`;
     }
@@ -166,6 +174,45 @@ async function checkForUpdates() {
   } catch (error) {
     // Offline use is expected. Keep local inference usable when GitHub is unreachable.
     console.info('Update check skipped:', error.message);
+  }
+}
+
+async function getStagedUpdateStatus(tagName) {
+  return api('/v1/updates/status', {
+    method: 'POST',
+    body: JSON.stringify({ tag_name: tagName }),
+  });
+}
+
+function showStagedUpdateStatus(status, currentVersion) {
+  updateApplyButton.hidden = true;
+  updateApplyButton.disabled = true;
+  if (!status || !status.staged) return;
+  const tagName = status.tag_name || availableRuntimeUpdate?.tag_name || 'the selected release';
+  updateCopy.textContent = `Verified package ${tagName} is staged (${formatBytes(status.size_bytes)}). Its size and SHA-256 were checked again on this device. Your running application, settings, engines and models have not been changed.`;
+  const state = String(status.apply_state || '');
+  if (state === 'applying') {
+    updateTitle.textContent = `Applying update ${tagName}`;
+    updateCopy.textContent = 'The update helper is applying the verified package. The runtime will restart; keep this folder and the user-data folder in place.';
+    return;
+  }
+  if (state === 'rolled_back') {
+    updateCopy.textContent += ` Previous update attempt was rolled back: ${String(status.apply_message || '').slice(0, 500)}`;
+  } else if (state === 'rollback_failed') {
+    updateTitle.textContent = `Manual recovery needed for ${tagName}`;
+    updateCopy.textContent = `${String(status.apply_message || 'Automatic rollback failed.').slice(0, 700)} Check the local update log before attempting another update.`;
+    return;
+  } else if (state === 'failed') {
+    updateCopy.textContent += ` Last apply attempt failed: ${String(status.apply_message || '').slice(0, 500)}`;
+  }
+  if (updateApplySupported && status.apply_supported && !updateApplyInProgress) {
+    updateApplyButton.hidden = false;
+    updateApplyButton.disabled = false;
+    updateApplyButton.textContent = 'Apply update & restart';
+  } else if (!updateApplySupported) {
+    updateCopy.textContent += ' This development/preview build can stage updates but cannot apply a public release in place; this prevents replacing newer preview code with an older tagged build.';
+  } else if (!status.apply_supported) {
+    updateCopy.textContent += ' Apply-and-restart is not supported by this installation. The verified package is kept staged and no files were changed.';
   }
 }
 
@@ -192,8 +239,10 @@ async function stageRuntimeUpdate() {
         : `${job.phase || job.state}. Your current installation and user data are unchanged.`;
       if (job.state === 'succeeded') {
         updateTitle.textContent = `Verified update ${job.version} is ready`;
-        updateCopy.textContent = `The ${job.version} package was downloaded and its SHA-256 digest matched GitHub release metadata. It is staged in the Local AI Runtime user-data folder. This alpha does not install or replace the running application yet; nothing has been changed.`;
+        updateCopy.textContent = `The ${job.version} package was downloaded and its SHA-256 digest matched GitHub release metadata. It is staged in the Local AI Runtime user-data folder. Nothing has been changed.`;
         reportDiagnosticEvent('ui.update.stage_succeeded', `version=${job.version}; bytes=${downloaded}; sha256_verified=true; install=not_performed`);
+        const stagedStatus = await getStagedUpdateStatus(job.version).catch(() => null);
+        if (stagedStatus?.staged) showStagedUpdateStatus(stagedStatus, runtimeVersion.textContent);
         break;
       }
       if (job.state === 'failed' || job.state === 'canceled') {
@@ -215,6 +264,65 @@ async function stageRuntimeUpdate() {
     updateDownloadButton.textContent = 'Download & verify package';
     await refreshDownloads();
   }
+}
+
+async function applyRuntimeUpdate() {
+  if (!availableRuntimeUpdate || !updateApplySupported || updateApplyInProgress) return;
+  const tagName = availableRuntimeUpdate.tag_name;
+  const accepted = window.confirm(
+    `Apply ${tagName} and restart Local AI Runtime?\n\nThe current runtime and managed AI engines will stop briefly. User settings, downloaded engines and model files are stored separately and will not be replaced. A backup will be kept for rollback. Do not close this folder or shut down the computer during the update.`
+  );
+  if (!accepted) return;
+
+  updateApplyInProgress = true;
+  updateApplyButton.disabled = true;
+  updateDownloadButton.disabled = true;
+  updateTitle.textContent = `Applying ${tagName}`;
+  updateCopy.textContent = 'The update helper is verifying the staged package once more, preparing a backup, and will restart the runtime. The dashboard may briefly disconnect.';
+  reportDiagnosticEvent('ui.update.apply_requested', `version=${tagName}; confirmation=accepted`);
+  const previousVersion = runtimeVersion.textContent;
+  try {
+    await api('/v1/updates/apply', {
+      method: 'POST',
+      body: JSON.stringify({ tag_name: tagName }),
+    });
+    updateCopy.textContent = 'Update accepted. Waiting for the runtime to stop and return. The page will reload when the apply result is available.';
+    await waitForUpdateRestart(tagName, previousVersion);
+  } catch (error) {
+    updateTitle.textContent = `Could not apply ${tagName}`;
+    updateCopy.textContent = `${error.message} The verified package remains staged; no update is reported as successful unless the restarted runtime passes its health check.`;
+    reportDiagnosticEvent('ui.update.apply_failed', `version=${tagName}; http_status=${Number.isInteger(error?.httpStatus) ? error.httpStatus : 0}; error_type=${String(error?.name || 'Error').slice(0, 40)}`);
+    updateApplyInProgress = false;
+    updateApplyButton.disabled = false;
+    updateDownloadButton.disabled = false;
+  }
+}
+
+async function waitForUpdateRestart(tagName, previousVersion) {
+  // Give the detached helper time to receive the current request and stop the
+  // old process. Then reload only after the restarted/rolled-back runtime reports
+  // a terminal apply state, rather than accidentally reloading the old process.
+  await new Promise((resolve) => setTimeout(resolve, 1800));
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    try {
+      const health = await api('/health');
+      if (health?.status === 'ok') {
+        const status = await getStagedUpdateStatus(tagName);
+        const terminal = ['succeeded', 'failed', 'rolled_back', 'rollback_failed'].includes(String(status.apply_state || ''));
+        if (terminal || (health.version && health.version !== previousVersion)) {
+          reportDiagnosticEvent('ui.update.apply_terminal', `version=${tagName}; state=${String(status.apply_state || 'version_changed').slice(0, 40)}; runtime_version=${String(health.version || '').slice(0, 40)}`);
+          window.location.reload();
+          return;
+        }
+      }
+    } catch (_) {
+      // Runtime downtime is expected between graceful shutdown and restart.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 750));
+  }
+  updateTitle.textContent = `Update status for ${tagName} is taking longer than expected`;
+  updateCopy.textContent = 'The runtime has not returned to a verifiable state yet. Do not delete the rollback folder. Inspect %LOCALAPPDATA%/LocalAIRuntime/logs/update-apply.log and apply-status.json before retrying.';
+  updateApplyInProgress = false;
 }
 
 async function refreshHealth() {
@@ -674,6 +782,7 @@ document.querySelector('#chat-form').addEventListener('submit', async (event) =>
 });
 
 updateDownloadButton.addEventListener('click', stageRuntimeUpdate);
+updateApplyButton.addEventListener('click', applyRuntimeUpdate);
 
 chatSendButton.disabled = true;
 refreshHealth();

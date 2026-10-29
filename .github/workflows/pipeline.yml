@@ -282,6 +282,11 @@ jobs:
           Copy-Item 'config/engines.example.json' (Join-Path $stage 'config')
           Copy-Item 'LICENSE' $stage
           Copy-Item 'scripts/Start-LocalAIRuntime.ps1' (Join-Path $stage 'scripts')
+          Copy-Item 'scripts/Apply-LocalAIRuntimeUpdate.ps1' (Join-Path $stage 'scripts')
+          $tokens = $null
+          $parseErrors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $stage 'scripts/Apply-LocalAIRuntimeUpdate.ps1'), [ref]$tokens, [ref]$parseErrors) | Out-Null
+          if ($parseErrors.Count -gt 0) { throw "Update helper PowerShell syntax check failed: $($parseErrors -join '; ')" }
           $vcpkgBin = Join-Path $env:GITHUB_WORKSPACE 'build/vcpkg_installed/x64-windows/bin'
           if (Test-Path $vcpkgBin) { Get-ChildItem $vcpkgBin -Filter '*.dll' | Copy-Item -Destination $stage -Force }
           @"
@@ -306,6 +311,7 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or $actual.Trim() -ne $version) { throw "Packaged Windows executable failed version check: $actual" }
           if (-not (Test-Path (Join-Path $verify 'web/index.html'))) { throw 'Packaged dashboard is missing.' }
           if (-not (Test-Path (Join-Path $verify 'scripts/Start-LocalAIRuntime.ps1'))) { throw 'Packaged Windows launcher is missing.' }
+          if (-not (Test-Path (Join-Path $verify 'scripts/Apply-LocalAIRuntimeUpdate.ps1'))) { throw 'Packaged Windows update helper is missing.' }
 
           # Validate that the extracted, relocatable package can actually serve HTTP.
           $runtime = $null
@@ -329,6 +335,7 @@ jobs:
               try { Wait-Process -Id $runtime.Id -Timeout 5 -ErrorAction SilentlyContinue } catch { }
             }
           }
+          & (Join-Path $env:GITHUB_WORKSPACE 'tests/update_apply_smoke.ps1') -PackagePath $package -Version $version
           Get-FileHash $package -Algorithm SHA256 | Format-List
           } finally {
             $packageTimer.Stop()
@@ -350,6 +357,15 @@ jobs:
         with:
           name: windows-test-diagnostics-${{ github.sha }}
           path: build/Testing/Temporary/LastTest.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload Windows update-apply smoke diagnostics on failure
+        if: ${{ failure() && steps.package.outcome == 'failure' && hashFiles('dist/update-smoke-diagnostics/**') != '' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-update-smoke-diagnostics-${{ github.sha }}
+          path: dist/update-smoke-diagnostics/**
           if-no-files-found: ignore
           retention-days: 7
 

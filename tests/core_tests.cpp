@@ -27,6 +27,18 @@ int main() {
         require(!lar::is_valid_engine_id("../llama"), "path traversal engine id accepted");
         require(!lar::is_valid_engine_id(""), "empty engine id accepted");
 
+        stage("runtime update version ordering");
+        require(lar::DownloadManager::is_newer_release_tag("v0.1.1-alpha", "0.1.0-alpha"),
+                "a newer patch release should be allowed for update");
+        require(lar::DownloadManager::is_newer_release_tag("v0.1.0-alpha", "0.1.0-dev"),
+                "alpha release should sort after development preview");
+        require(!lar::DownloadManager::is_newer_release_tag("v0.1.0-alpha", "0.1.0-alpha"),
+                "the same release must not be reapplied as an update");
+        require(!lar::DownloadManager::is_newer_release_tag("v0.0.9-alpha", "0.1.0-alpha"),
+                "older staged release must not be applied");
+        require(!lar::DownloadManager::is_newer_release_tag("latest", "0.1.0-alpha"),
+                "malformed release tag must be rejected");
+
         stage("archive path safety");
         // Engine archives are untrusted inputs; extraction must reject paths that
         // could escape the installation staging root on Windows or Unix.
