@@ -126,7 +126,7 @@ internal sealed class DashboardForm : Form
         Text = "Starting Local AI Runtime…",
         TextAlign = ContentAlignment.MiddleCenter,
         ForeColor = Color.White,
-        Font = new Font("Segoe UI", 16, FontStyle.Semibold)
+        Font = new Font("Segoe UI", 16, FontStyle.Bold)
     };
     private readonly Label _loadingDetail = new()
     {
