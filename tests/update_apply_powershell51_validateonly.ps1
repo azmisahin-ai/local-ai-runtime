@@ -15,6 +15,27 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
+
+# Avoid relying on optional utility-module auto-loading in the inbox Windows
+# PowerShell 5.1 process. Use the .NET cryptography API directly, matching the
+# updater helper's SHA-256 implementation and the framework shipped with 5.1.
+function Get-FileSha256Hex([string]$LiteralPath) {
+    if ([string]::IsNullOrWhiteSpace($LiteralPath)) {
+        throw 'A file path is required when calculating a SHA-256 digest.'
+    }
+
+    $fileStream = $null
+    $sha256 = $null
+    try {
+        $fileStream = [System.IO.File]::OpenRead($LiteralPath)
+        $sha256 = [System.Security.Cryptography.SHA256]::Create()
+        $digestBytes = $sha256.ComputeHash($fileStream)
+        return ([System.BitConverter]::ToString($digestBytes)).Replace('-', '')
+    } finally {
+        if ($null -ne $fileStream) { $fileStream.Dispose() }
+        if ($null -ne $sha256) { $sha256.Dispose() }
+    }
+}
 if ($PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSVersion.Minor -ne 1) {
     throw "This regression test must run under Windows PowerShell 5.1; current version is $($PSVersionTable.PSVersion)."
 }
@@ -22,10 +43,23 @@ foreach ($path in @($HelperPath, $InstallRoot, $DataRoot, $StageRoot, $PackagePa
     if (-not (Test-Path -LiteralPath $path)) { throw "Required ValidateOnly test path is missing: $path" }
 }
 
+# Verify the .NET hashing wrapper against the standard SHA-256 test vector
+# before using it to assert that ValidateOnly preserved installed/user files.
+$sha256ProbePath = Join-Path $StageRoot 'powershell51-sha256-selftest.tmp'
+try {
+    [System.IO.File]::WriteAllBytes($sha256ProbePath, [System.Text.Encoding]::ASCII.GetBytes('abc'))
+    $probeDigest = Get-FileSha256Hex -LiteralPath $sha256ProbePath
+    if ($probeDigest -cne 'BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD') {
+        throw "The Windows PowerShell 5.1 .NET SHA-256 self-test returned an unexpected digest: $probeDigest"
+    }
+} finally {
+    Remove-Item -LiteralPath $sha256ProbePath -Force -ErrorAction SilentlyContinue
+}
+
 $runtimePath = Join-Path $InstallRoot 'local-ai-runtime.exe'
 $configPath = Join-Path $DataRoot 'config/engines.json'
-$runtimeHashBefore = (Get-FileHash -LiteralPath $runtimePath -Algorithm SHA256).Hash
-$configHashBefore = (Get-FileHash -LiteralPath $configPath -Algorithm SHA256).Hash
+$runtimeHashBefore = (Get-FileSha256Hex -LiteralPath $runtimePath)
+$configHashBefore = (Get-FileSha256Hex -LiteralPath $configPath)
 $statusPath = Join-Path $StageRoot 'apply-status.json'
 $baseArgs = @(
     '-InstallRoot', $InstallRoot,
@@ -49,10 +83,10 @@ $status = Get-Content -LiteralPath $statusPath -Raw -ErrorAction Stop | ConvertF
 if ([string]$status.state -ne 'validated') {
     throw "Windows PowerShell 5.1 did not accept the valid validate-only package: state=$($status.state) message=$($status.message)"
 }
-if ((Get-FileHash -LiteralPath $runtimePath -Algorithm SHA256).Hash -cne $runtimeHashBefore) {
+if ((Get-FileSha256Hex -LiteralPath $runtimePath) -cne $runtimeHashBefore) {
     throw 'Windows PowerShell 5.1 validate-only changed the installed runtime executable.'
 }
-if ((Get-FileHash -LiteralPath $configPath -Algorithm SHA256).Hash -cne $configHashBefore) {
+if ((Get-FileSha256Hex -LiteralPath $configPath) -cne $configHashBefore) {
     throw 'Windows PowerShell 5.1 validate-only changed user configuration.'
 }
 
@@ -84,10 +118,10 @@ $status = Get-Content -LiteralPath $statusPath -Raw -ErrorAction Stop | ConvertF
 if ([string]$status.state -ne 'failed' -or [string]$status.message -notmatch '(?i)(sha.?256|digest|hash)') {
     throw "Wrong digest did not fail with an integrity-related status under Windows PowerShell 5.1: state=$($status.state) message=$($status.message)"
 }
-if ((Get-FileHash -LiteralPath $runtimePath -Algorithm SHA256).Hash -cne $runtimeHashBefore) {
+if ((Get-FileSha256Hex -LiteralPath $runtimePath) -cne $runtimeHashBefore) {
     throw 'Wrong-digest validate-only changed the installed runtime executable.'
 }
-if ((Get-FileHash -LiteralPath $configPath -Algorithm SHA256).Hash -cne $configHashBefore) {
+if ((Get-FileSha256Hex -LiteralPath $configPath) -cne $configHashBefore) {
     throw 'Wrong-digest validate-only changed user configuration.'
 }
 
