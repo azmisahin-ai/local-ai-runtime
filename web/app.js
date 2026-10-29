@@ -42,6 +42,7 @@ let updateStageJobId = null;
 let updateApplySupported = false;
 let updateApplyInProgress = false;
 let updateCheckInProgress = false;
+let desktopShellInstalled = false;
 let lastUpdateCheckAt = 0;
 
 const REPOSITORY_RELEASES = 'https://github.com/azmisahin-ai/local-ai-runtime/releases';
@@ -138,7 +139,7 @@ async function checkForUpdates(manual = false) {
     const local = await api('/version');
     const current = local.version || '0.0.0';
     runtimeVersion.textContent = current;
-    const desktopShellInstalled = Boolean(local.desktop_shell_installed);
+    desktopShellInstalled = Boolean(local.desktop_shell_installed);
     updateApplySupported = Boolean(local.update_apply_supported) && !desktopShellInstalled;
     updateApplyButton.hidden = true;
     updateApplyButton.disabled = true;
@@ -185,10 +186,13 @@ async function checkForUpdates(manual = false) {
         ? latest.assets.find((candidate) => candidate.name === installerName)
         : null;
       updateLink.href = safeHttpsUrl(latest.html_url) || REPOSITORY_RELEASES;
-      updateLink.textContent = installer ? 'Open Windows installer release' : 'Open official releases';
+      updateLink.textContent = installer ? 'Release notes' : 'Open official releases';
+      updateDownloadButton.hidden = false;
+      updateDownloadButton.disabled = !installer;
+      updateDownloadButton.textContent = 'Download & install desktop update';
       updateCopy.textContent = installer
-        ? `A complete desktop-app update (${latest.tag_name}) is available. This installed app must be updated with the full Windows setup installer so the desktop shell and runtime stay in sync. Open the official release, download ${installerName}, and verify it with SHA256SUMS.txt. Before running setup, choose “Exit and stop local engines” from the Local AI Runtime tray menu. Your settings, engine downloads and models remain in your user-data folder. The installer is currently unsigned; Windows may show a publisher warning.`
-        : `A newer release (${latest.tag_name}) is available, but its Windows desktop installer is not attached yet. Open the official release page to review the publication status. This installed app will not apply the portable ZIP because doing so could leave the desktop shell and runtime on different versions.`;
+        ? `The complete desktop update (${latest.tag_name}) is available. The desktop shell will verify the official Windows setup installer against GitHub's SHA-256 digest, create a full application backup, update the shell and runtime together, and check local health before keeping the update. Settings, engines, models and logs remain in your user-data folder.`
+        : `A newer release (${latest.tag_name}) is available, but its Windows desktop installer is not attached yet. The current installation will not be changed.`;
       updateNotice.hidden = false;
       updateCheckStatus.textContent = `Desktop app update available · ${latest.tag_name}`;
       return;
@@ -295,7 +299,38 @@ function showStagedUpdateStatus(status, currentVersion) {
   }
 }
 
+if (window.chrome?.webview?.addEventListener) {
+  window.chrome.webview.addEventListener('message', (event) => {
+    if (event.data && typeof event.data === 'object' && event.data.type === 'desktop-update-progress') {
+      updateNotice.hidden = false;
+      updateTitle.textContent = String(event.data.title || 'Desktop update');
+      updateCopy.textContent = String(event.data.detail || '');
+      if (updateDownloadButton && desktopShellInstalled) {
+        updateDownloadButton.disabled = true;
+        updateDownloadButton.textContent = String(event.data.title || 'Updating…').slice(0, 64);
+      }
+      return;
+    }
+    if (event.data !== 'desktop-update-check-finished') return;
+    if (desktopShellInstalled && updateDownloadButton) {
+      updateDownloadButton.disabled = false;
+      updateDownloadButton.textContent = 'Download & install desktop update';
+    }
+  });
+}
+
 async function stageRuntimeUpdate() {
+  if (desktopShellInstalled) {
+    const bridge = window.chrome?.webview;
+    if (bridge && typeof bridge.postMessage === 'function') {
+      updateDownloadButton.disabled = true;
+      updateDownloadButton.textContent = 'Checking desktop update…';
+      bridge.postMessage('check-for-desktop-updates');
+    } else {
+      updateCopy.textContent = 'The secure in-app installer is available in the Windows desktop shell. Use the Local AI Runtime notification-area icon and choose “Check for updates”.';
+    }
+    return;
+  }
   if (!availableRuntimeUpdate || updateStageJobId) return;
   updateDownloadButton.disabled = true;
   updateDownloadButton.textContent = 'Starting download…';

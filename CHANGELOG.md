@@ -1,8 +1,15 @@
+# Changelog
+
 ## Unreleased
+
+- Add user-confirmed in-app updates for installed Windows desktop builds using the full official setup installer, GitHub SHA-256/size verification, detached PowerShell 5.1 hand-off, whole-install backup, post-install runtime/data-root identity verification, automatic rollback and interruption recovery that waits for an active installer to finish.
+- Add Windows CI fault-injection coverage for failed setup rollback, forced process interruption recovery, desktop payload validation and preservation of user settings/engine/model data.
+- Prevent stale interrupted desktop-update status from overriding a newer terminal result, and verify the restored desktop/runtime starts successfully after rollback.
+- Keep the Windows desktop updater unsigned until a legitimate Authenticode identity and protected signing workflow are available; SHA-256 remains an integrity check, not publisher authentication.
 
 - Make only the newest timestamped update status for the current installation authoritative during launcher recovery; stale rollback failures from older tags can no longer trigger an unwanted old restore.
 - Add Windows PowerShell 5.1 ValidateOnly regression coverage for valid and invalid SHA-256 digests, plus stopping-phase interruption and stale-status recovery tests.
-- Document the remaining installed-desktop self-update limitation, Authenticode/SmartScreen trust work, and the English/Turkish UI localization foundation.
+- Track the remaining Authenticode/SmartScreen trust work, English/Turkish UI localization, and clean Windows 10/11 acceptance as separate product milestones.
 
 - Enforce one explicit per-user data-root contract across the Windows desktop shell, PowerShell launcher, C++ runtime, catalogue/download state and post-update restarts. Persist an opaque runtime-instance ID and expose it through a loopback identity endpoint so the desktop cannot attach to a healthy but stale/different runtime on the configured port.
 - Extend HTTP and Windows update smoke tests to prove installed catalogue assets and diagnostic logs are read from the explicit data root and that the root identity survives apply, rollback and interrupted-update recovery.
@@ -13,13 +20,9 @@
 - Report session-scoped llama.cpp CUDA initialization and layer-offload evidence in the Engines panel. Previous-session log entries are excluded; a reported offload is clearly distinguished from measured live GPU utilization.
 - Add regression tests for positive/zero layer offload, CUDA initialization without a layer count, missing logs, and stale-session evidence.
 
-# Changelog
 - Fix Windows installer smoke-test race by waiting for Inno Setup post-uninstall cleanup and preserving the uninstall log on failure.
 
-
 This project follows a lightweight Keep a Changelog structure. GitHub Release notes are generated from merged commits when a version tag is published; update this file with user-visible changes during each development cycle.
-
-## Unreleased
 
 - Add structured local hardware-aware starting recommendations: a conservative CPU/Qwen2.5 1.5B profile uses observed RAM and free disk; NVIDIA CUDA is shown only as a candidate when an adapter is detected, with an explicit not-verified warning. Add HTTP and dashboard smoke coverage for the recommendation schema.
 - Add structured hardware recommendation cards with explicit evidence/status labels, and make the Windows launcher reuse its configured port when Winsock confirms it can bind even if the TCP owner table reports an unresolved PID 0/4 entry.
@@ -33,7 +36,7 @@ This project follows a lightweight Keep a Changelog structure. GitHub Release no
 - Normalize and explicitly quote the Windows installer smoke-test destination passed to Inno Setup; report the actual installed directory contents if the desktop host is not found.
 - Fix the Windows desktop shell compilation by using a supported WinForms `FontStyle` value for the startup window heading.
 - Add a per-user Windows setup installer with a self-contained WinForms/WebView2 desktop host, Start menu entry, optional desktop shortcut, and notification-area controls for reopening, checking updates, and gracefully stopping the runtime.
-- Keep the installer separate from the portable ZIP; installed desktop builds use the full setup package for updates until atomic shell/runtime updates and rollback are implemented.
+- Keep the installer separate from the portable ZIP; installed desktop builds use the full setup package and verified whole-install rollback so the shell and runtime remain version-matched.
 - Gate the installer asset on the same four-platform CI pipeline and verify the signed Microsoft WebView2 bootstrapper, silent installation, installed payload, version check, and uninstall behavior before release.
 - Update the public download cards to prefer the Windows setup installer only when that asset exists; the live Releases page is authoritative for current downloadable assets.
 - Keep user settings, downloaded engines, models, WebView2 profile, and logs outside the application directory and preserve them by default on uninstall.

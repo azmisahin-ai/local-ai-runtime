@@ -1,6 +1,9 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Net.Http;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
 
@@ -66,7 +69,181 @@ internal static class Program
             return;
         }
 
+        if (DeferStartupForInterruptedDesktopUpdate()) return;
         Application.Run(new DashboardForm());
+    }
+
+    private static bool DeferStartupForInterruptedDesktopUpdate()
+    {
+        var installRoot = Path.GetFullPath(AppContext.BaseDirectory).TrimEnd(Path.DirectorySeparatorChar);
+        var dataRoot = Path.GetFullPath(Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LocalAIRuntime"));
+
+        // The updater deliberately marks the process it launches. That process
+        // must be allowed to start and satisfy the health check while its parent
+        // updater is still alive. Any other launch encountering an incomplete
+        // update hands control to the recovery helper before loading the EXE
+        // that may need to be restored.
+        var activeHelperPid = 0;
+        int.TryParse(Environment.GetEnvironmentVariable("LOCAL_AI_RUNTIME_DESKTOP_UPDATE_HELPER_PID"), out activeHelperPid);
+        if (activeHelperPid > 0)
+        {
+            try
+            {
+                using var helper = Process.GetProcessById(activeHelperPid);
+                var expectedStage = Environment.GetEnvironmentVariable("LOCAL_AI_RUNTIME_DESKTOP_UPDATE_STAGE");
+                var updatesRoot = Path.Combine(dataRoot, "updates");
+                if (helper.ProcessName.Equals("powershell", StringComparison.OrdinalIgnoreCase) &&
+                    !string.IsNullOrWhiteSpace(expectedStage) && Directory.Exists(expectedStage) &&
+                    Path.GetDirectoryName(Path.GetFullPath(expectedStage))!.Equals(updatesRoot, StringComparison.OrdinalIgnoreCase) &&
+                    (File.GetAttributes(expectedStage) & FileAttributes.ReparsePoint) == 0)
+                {
+                    var statusPath = Path.Combine(expectedStage, "desktop-update-status.json");
+                    if (File.Exists(statusPath) && (File.GetAttributes(statusPath) & FileAttributes.ReparsePoint) == 0)
+                    {
+                        using var statusDocument = JsonDocument.Parse(File.ReadAllText(statusPath));
+                        var status = statusDocument.RootElement;
+                        var recordedHelperPid = status.TryGetProperty("helper_pid", out var helperElement) &&
+                            helperElement.TryGetInt32(out var parsedHelperPid) ? parsedHelperPid : 0;
+                        var recordedInstallRoot = status.TryGetProperty("install_root", out var rootElement) ? rootElement.GetString() : null;
+                        var recordedDataRoot = status.TryGetProperty("data_root", out var dataElement) ? dataElement.GetString() : null;
+                        var recordedState = status.TryGetProperty("state", out var stateElement) ? stateElement.GetString() : null;
+                        if (recordedHelperPid == activeHelperPid &&
+                            Path.GetFullPath(recordedInstallRoot ?? string.Empty).TrimEnd(Path.DirectorySeparatorChar).Equals(installRoot, StringComparison.OrdinalIgnoreCase) &&
+                            Path.GetFullPath(recordedDataRoot ?? string.Empty).TrimEnd(Path.DirectorySeparatorChar).Equals(dataRoot, StringComparison.OrdinalIgnoreCase) &&
+                            (recordedState is "waiting_for_shutdown" or "installing" or "awaiting_health" or "rollback_failed"))
+                        {
+                            return false;
+                        }
+                    }
+                }
+            }
+            catch { /* A stale or unverified helper marker must not bypass recovery inspection. */ }
+        }
+
+        var updatesRoot = Path.Combine(dataRoot, "updates");
+        if (!Directory.Exists(updatesRoot)) return false;
+        try
+        {
+            if ((File.GetAttributes(updatesRoot) & FileAttributes.ReparsePoint) != 0)
+            {
+                MessageBox.Show("The desktop update recovery folder is a symbolic link or junction. For safety, automatic recovery was not started.",
+                    WindowTitle, MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return true;
+            }
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"The desktop update recovery folder could not be inspected. Automatic recovery was not started.\n\n{ex.Message}",
+                WindowTitle, MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return true;
+        }
+        string? selectedStage = null;
+        string? selectedState = null;
+        DateTimeOffset selectedAt = DateTimeOffset.MinValue;
+        DateTime selectedFileTime = DateTime.MinValue;
+        foreach (var stage in Directory.EnumerateDirectories(updatesRoot))
+        {
+            var statusPath = Path.Combine(stage, "desktop-update-status.json");
+            if (!File.Exists(statusPath)) continue;
+            try
+            {
+                if ((File.GetAttributes(stage) & FileAttributes.ReparsePoint) != 0 ||
+                    (File.GetAttributes(statusPath) & FileAttributes.ReparsePoint) != 0) continue;
+                using var document = JsonDocument.Parse(File.ReadAllText(statusPath));
+                var status = document.RootElement;
+                var recordedRoot = status.TryGetProperty("install_root", out var rootElement) ? rootElement.GetString() : null;
+                var recordedDataRoot = status.TryGetProperty("data_root", out var dataRootElement) ? dataRootElement.GetString() : null;
+                var recordedTag = status.TryGetProperty("tag_name", out var tagElement) ? tagElement.GetString() : null;
+                var previousVersion = status.TryGetProperty("previous_version", out var previousElement) ? previousElement.GetString() : null;
+                var targetVersion = status.TryGetProperty("target_version", out var targetElement) ? targetElement.GetString() : null;
+                var runtimePort = status.TryGetProperty("runtime_port", out var portElement) && portElement.TryGetInt32(out var port) ? port : 0;
+                var state = status.TryGetProperty("state", out var stateElement) ? stateElement.GetString() : null;
+                var stageTag = Path.GetFileName(stage);
+                if (!Regex.IsMatch(stageTag, @"^v\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$") ||
+                    !string.Equals(recordedTag, stageTag, StringComparison.Ordinal) ||
+                    string.IsNullOrWhiteSpace(recordedRoot) || string.IsNullOrWhiteSpace(recordedDataRoot) ||
+                    !Path.GetFullPath(recordedRoot).TrimEnd(Path.DirectorySeparatorChar).Equals(installRoot, StringComparison.OrdinalIgnoreCase) ||
+                    !Path.GetFullPath(recordedDataRoot).TrimEnd(Path.DirectorySeparatorChar).Equals(dataRoot, StringComparison.OrdinalIgnoreCase) ||
+                    state is not ("waiting_for_shutdown" or "installing" or "awaiting_health" or "succeeded" or "rolled_back" or "failed" or "rollback_failed")) continue;
+                var needsRecovery = state is "waiting_for_shutdown" or "installing" or "awaiting_health" or "rollback_failed";
+                if (needsRecovery &&
+                    (!Regex.IsMatch(previousVersion ?? string.Empty, @"^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$") ||
+                     !Regex.IsMatch(targetVersion ?? string.Empty, @"^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$") ||
+                     runtimePort is < 1 or > 65535)) continue;
+                var timestamp = status.TryGetProperty("generated_utc", out var timeElement) &&
+                    DateTimeOffset.TryParse(timeElement.GetString(), out var parsed) ? parsed : File.GetLastWriteTimeUtc(statusPath);
+                var fileTime = File.GetLastWriteTimeUtc(statusPath);
+                if (selectedStage is null || timestamp > selectedAt || (timestamp == selectedAt && fileTime > selectedFileTime))
+                {
+                    selectedStage = stage;
+                    selectedState = state;
+                    selectedAt = timestamp;
+                    selectedFileTime = fileTime;
+                }
+            }
+            catch { /* Ignore malformed historical records; never trust their paths. */ }
+        }
+        // Terminal records are part of ordering. An older interrupted stage
+        // must never roll back an installation after a newer update succeeded.
+        if (selectedStage is null || selectedState is not ("waiting_for_shutdown" or "installing" or "awaiting_health" or "rollback_failed")) return false;
+
+        try
+        {
+            var stageAttributes = File.GetAttributes(selectedStage);
+            if ((stageAttributes & FileAttributes.ReparsePoint) != 0 ||
+                !Path.GetDirectoryName(Path.GetFullPath(selectedStage))!.Equals(updatesRoot, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("The selected update stage is not a direct, ordinary directory under the update root.");
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"The interrupted desktop update stage could not be trusted. Automatic recovery was not started.\n\n{ex.Message}",
+                WindowTitle, MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return true;
+        }
+
+        var helperScript = Path.Combine(selectedStage, "Apply-LocalAIRuntimeDesktopUpdate.ps1");
+        var powershell = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),
+            @"WindowsPowerShell\v1.0\powershell.exe");
+        if (!File.Exists(helperScript) || !File.Exists(powershell) ||
+            (File.GetAttributes(helperScript) & FileAttributes.ReparsePoint) != 0)
+        {
+            MessageBox.Show(
+                "An interrupted desktop update needs recovery, but its verified recovery helper is missing. Preserve the update backup under %LOCALAPPDATA%\LocalAIRuntime\updates and reinstall from the official release.",
+                WindowTitle, MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return true;
+        }
+
+        try
+        {
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = powershell,
+                WorkingDirectory = dataRoot,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WindowStyle = ProcessWindowStyle.Hidden
+            };
+            foreach (var argument in new[]
+            {
+                "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden",
+                "-File", helperScript,
+                "-InstallRoot", installRoot,
+                "-DataRoot", dataRoot,
+                "-StageRoot", selectedStage,
+                "-DesktopPid", Environment.ProcessId.ToString(),
+                "-RecoverInterrupted"
+            }) startInfo.ArgumentList.Add(argument);
+            using var recovery = Process.Start(startInfo) ?? throw new InvalidOperationException("Windows could not start the desktop update recovery helper.");
+            return true; // The helper waits for this process to exit before restoring files.
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                $"The interrupted desktop update could not start its recovery helper. Preserve the update backup and inspect desktop-update.log.\n\n{ex.Message}",
+                WindowTitle, MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return true;
+        }
     }
 
     private static bool VerifyInstall()
@@ -82,6 +259,7 @@ internal static class Program
                 Path.Combine("web", "index.html"),
                 Path.Combine("scripts", "Start-LocalAIRuntime.ps1"),
                 Path.Combine("scripts", "Apply-LocalAIRuntimeUpdate.ps1"),
+                Path.Combine("scripts", "Apply-LocalAIRuntimeDesktopUpdate.ps1"),
                 Path.Combine("config", "engines.example.json")
             };
             if (required.Any(file => !File.Exists(Path.Combine(root, file)))) return false;
@@ -151,6 +329,11 @@ internal sealed class DashboardForm : Form
     private bool _allowClose;
     private bool _startupFailed;
     private bool _isExiting;
+    private bool _updateCheckInProgress;
+    private int _runtimePort;
+    private string _runtimeVersion = string.Empty;
+    private string _releaseApiUrl = "https://api.github.com/repos/azmisahin-ai/local-ai-runtime/releases?per_page=20";
+    private string _desktopInstallerAssetName = "local-ai-runtime-windows-x64-setup.exe";
 
     public DashboardForm()
     {
@@ -278,6 +461,19 @@ internal sealed class DashboardForm : Form
                 _loadingDetail.Text = $"WebView2 reported {e.WebErrorStatus}. Close and reopen Local AI Runtime to retry.";
             }
         };
+        core.WebMessageReceived += async (_, e) =>
+        {
+            if (!IsLocalDashboardUri(e.Source)) return;
+            if (string.Equals(e.TryGetWebMessageAsString(), "check-for-desktop-updates", StringComparison.Ordinal))
+            {
+                if (_updateCheckInProgress || _isExiting)
+                {
+                    try { core.PostWebMessageAsString("desktop-update-check-finished"); } catch { }
+                    return;
+                }
+                await CheckForUpdatesAsync();
+            }
+        };
         core.ProcessFailed += (_, e) =>
         {
             _loadingPanel.Visible = true;
@@ -335,9 +531,22 @@ internal sealed class DashboardForm : Form
         using var config = JsonDocument.Parse(await File.ReadAllTextAsync(configPath));
         var port = config.RootElement.GetProperty("server").GetProperty("port").GetInt32();
         if (port is < 1 or > 65535) throw new InvalidDataException("The configured local port is outside the valid TCP range.");
+        _runtimePort = port;
         var url = new Uri($"http://127.0.0.1:{port}/");
 
         using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
+        using (var versionResponse = await client.GetAsync(new Uri(url, "version")))
+        {
+            versionResponse.EnsureSuccessStatusCode();
+            using var versionDocument = JsonDocument.Parse(await versionResponse.Content.ReadAsStringAsync());
+            var root = versionDocument.RootElement;
+            _runtimeVersion = root.TryGetProperty("version", out var versionElement) ? versionElement.GetString() ?? string.Empty : string.Empty;
+            if (root.TryGetProperty("releases_api_url", out var releaseApiElement))
+                _releaseApiUrl = releaseApiElement.GetString() ?? _releaseApiUrl;
+            if (root.TryGetProperty("desktop_installer_asset_name", out var installerElement))
+                _desktopInstallerAssetName = installerElement.GetString() ?? _desktopInstallerAssetName;
+        }
+        if (string.IsNullOrWhiteSpace(_runtimeVersion)) throw new InvalidDataException("The runtime did not report its installed version.");
         var healthy = false;
         for (var attempt = 0; attempt < 20; attempt++)
         {
@@ -412,16 +621,316 @@ internal sealed class DashboardForm : Form
 
     private async Task CheckForUpdatesAsync()
     {
+        if (_updateCheckInProgress || _isExiting) return;
+        _updateCheckInProgress = true;
+        var updateHandedOff = false;
         ShowDashboard();
         try
         {
-            if (_webView.CoreWebView2 is not null)
-                await _webView.CoreWebView2.ExecuteScriptAsync("document.getElementById('check-updates')?.click();");
+            if (_runtimePort is < 1 or > 65535 ||
+                !Regex.IsMatch(_runtimeVersion, @"^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$") ||
+                _runtimeVersion.Contains("-dev", StringComparison.OrdinalIgnoreCase))
+            {
+                SetUpdateProgress("Desktop update unavailable", "This is a development/preview build or the local runtime is still starting. Install a tagged desktop release before using the in-app updater.");
+                return;
+            }
+            SetUpdateProgress("Checking official releases…", "Local inference remains available while update metadata is checked.");
+            // Installer assets can be hundreds of MiB on slower links. Bound
+            // a stalled/abandoned request without imposing a 30-second total
+            // timeout on a legitimate streamed download.
+            using var client = new HttpClient { Timeout = TimeSpan.FromMinutes(20) };
+            client.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("LocalAIRuntime-Desktop-Updater/1.0");
+            using var releaseResponse = await client.GetAsync(_releaseApiUrl);
+            releaseResponse.EnsureSuccessStatusCode();
+            using var releaseDocument = JsonDocument.Parse(await releaseResponse.Content.ReadAsStringAsync());
+            if (releaseDocument.RootElement.ValueKind != JsonValueKind.Array)
+                throw new InvalidDataException("The official release service returned an unexpected response.");
+
+            var installedIsPrerelease = _runtimeVersion.Contains('-');
+            JsonElement? latest = null;
+            foreach (var release in releaseDocument.RootElement.EnumerateArray())
+            {
+                if (release.TryGetProperty("draft", out var draft) && draft.GetBoolean()) continue;
+                var prerelease = release.TryGetProperty("prerelease", out var pre) && pre.GetBoolean();
+                if (!installedIsPrerelease && prerelease) continue;
+                var tag = release.TryGetProperty("tag_name", out var tagElement) ? tagElement.GetString() : null;
+                if (string.IsNullOrWhiteSpace(tag) || CompareReleaseTags(tag, _runtimeVersion) <= 0) continue;
+                if (latest is null || CompareReleaseTags(tag, latest.Value.GetProperty("tag_name").GetString() ?? "") > 0)
+                    latest = release;
+            }
+
+            if (latest is null)
+            {
+                SetUpdateProgress("You’re up to date", $"This desktop installation is running {_runtimeVersion}. No newer release is available in the selected channel.");
+                MessageBox.Show($"Local AI Runtime {_runtimeVersion} is up to date.", WindowTitle,
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            var latestRelease = latest.Value;
+            var tagName = latestRelease.GetProperty("tag_name").GetString() ?? throw new InvalidDataException("The release tag is missing.");
+            var releaseUrl = latestRelease.TryGetProperty("html_url", out var html) ? html.GetString() : null;
+            if (!Regex.IsMatch(tagName, @"^v\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$") ||
+                releaseUrl != $"https://github.com/azmisahin-ai/local-ai-runtime/releases/tag/{tagName}")
+                throw new InvalidDataException("The official release tag or release URL did not match the expected repository.");
+            JsonElement? installerAsset = null;
+            JsonElement? checksumAsset = null;
+            if (latestRelease.TryGetProperty("assets", out var assets) && assets.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var asset in assets.EnumerateArray())
+                {
+                    if (!asset.TryGetProperty("name", out var name)) continue;
+                    var assetName = name.GetString();
+                    if (string.Equals(assetName, _desktopInstallerAssetName, StringComparison.Ordinal)) installerAsset = asset;
+                    else if (string.Equals(assetName, "SHA256SUMS.txt", StringComparison.Ordinal)) checksumAsset = asset;
+                }
+            }
+            if (installerAsset is null)
+            {
+                var answer = MessageBox.Show(
+                    $"Release {tagName} is available, but it does not contain the official Windows desktop installer. Open the release page?",
+                    WindowTitle, MessageBoxButtons.YesNo, MessageBoxIcon.Information);
+                if (answer == DialogResult.Yes && !string.IsNullOrWhiteSpace(releaseUrl)) OpenExternalUri(releaseUrl);
+                return;
+            }
+
+            var assetInfo = installerAsset.Value;
+            var digest = assetInfo.TryGetProperty("digest", out var digestElement) ? digestElement.GetString() ?? "" : "";
+            var assetUrl = assetInfo.TryGetProperty("browser_download_url", out var urlElement) ? urlElement.GetString() ?? "" : "";
+            var assetName = assetInfo.TryGetProperty("name", out var assetNameElement) ? assetNameElement.GetString() ?? "" : "";
+            var size = assetInfo.TryGetProperty("size", out var sizeElement) ? sizeElement.GetInt64() : 0;
+            var expectedUrl = $"https://github.com/azmisahin-ai/local-ai-runtime/releases/download/{tagName}/{_desktopInstallerAssetName}";
+            if (assetName != _desktopInstallerAssetName || assetUrl != expectedUrl || size < 1024 || size > 512L * 1024 * 1024)
+            {
+                var answer = MessageBox.Show(
+                    $"Release {tagName} is available, but its installer does not have the expected official URL, asset name or supported size. Open the official release page to review it manually?",
+                    WindowTitle, MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+                if (answer == DialogResult.Yes && !string.IsNullOrWhiteSpace(releaseUrl)) OpenExternalUri(releaseUrl);
+                return;
+            }
+            if (!Regex.IsMatch(digest, "^sha256:[a-fA-F0-9]{64}$"))
+            {
+                // GitHub's release asset `digest` field may be absent on older
+                // or imported releases. The project's own checksum manifest is
+                // still bound to the exact official tag URL and asset filename.
+                if (checksumAsset is null)
+                    throw new InvalidDataException("The release has neither a GitHub SHA-256 digest nor the official SHA256SUMS.txt asset.");
+                var checksum = checksumAsset.Value;
+                var checksumName = checksum.TryGetProperty("name", out var checksumNameElement) ? checksumNameElement.GetString() ?? "" : "";
+                var checksumUrl = checksum.TryGetProperty("browser_download_url", out var checksumUrlElement) ? checksumUrlElement.GetString() ?? "" : "";
+                var checksumSize = checksum.TryGetProperty("size", out var checksumSizeElement) ? checksumSizeElement.GetInt64() : 0;
+                var expectedChecksumUrl = $"https://github.com/azmisahin-ai/local-ai-runtime/releases/download/{tagName}/SHA256SUMS.txt";
+                if (checksumName != "SHA256SUMS.txt" || checksumUrl != expectedChecksumUrl || checksumSize is < 1 or > 65536)
+                    throw new InvalidDataException("The official SHA256SUMS.txt release asset failed URL/name/size validation.");
+                using var checksumResponse = await client.GetAsync(checksumUrl, HttpCompletionOption.ResponseHeadersRead);
+                checksumResponse.EnsureSuccessStatusCode();
+                var checksumText = await ReadBoundedTextAsync(checksumResponse.Content, 65536);
+                var checksumMatch = Regex.Match(checksumText,
+                    @"(?m)^([a-fA-F0-9]{64})[ \t]+\*?" + Regex.Escape(_desktopInstallerAssetName) + @"[ \t]*$");
+                if (!checksumMatch.Success)
+                    throw new InvalidDataException("SHA256SUMS.txt does not contain a checksum entry for the Windows desktop installer.");
+                digest = "sha256:" + checksumMatch.Groups[1].Value;
+            }
+
+            var sizeMiB = size / 1024d / 1024d;
+            var confirmation = MessageBox.Show(
+                $"Local AI Runtime {_runtimeVersion} can be updated to {tagName}.\n\nThe complete Windows desktop installer ({sizeMiB:F1} MiB) will be downloaded and verified against GitHub’s SHA-256 digest. The desktop window and local engines will close briefly. Settings, engines, downloaded models and logs are stored separately and will be preserved. A full application-folder backup will be retained for rollback.\n\nInstall this update now?",
+                WindowTitle, MessageBoxButtons.YesNo, MessageBoxIcon.Information);
+            if (confirmation != DialogResult.Yes)
+            {
+                SetUpdateProgress("Update postponed", $"{tagName} remains available from the official release page.");
+                return;
+            }
+
+            var updatesRoot = Path.GetFullPath(Path.Combine(_dataRoot, "updates"));
+            var stageRoot = Path.GetFullPath(Path.Combine(updatesRoot, tagName));
+            Directory.CreateDirectory(updatesRoot);
+            Directory.CreateDirectory(stageRoot);
+            foreach (var directory in new[] { updatesRoot, stageRoot })
+            {
+                if ((File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0)
+                    throw new InvalidDataException($"The desktop update folder cannot be a symbolic link or junction: {directory}");
+            }
+            var installerPath = Path.Combine(stageRoot, _desktopInstallerAssetName);
+            var partialPath = installerPath + ".part";
+            var manifestPath = Path.Combine(stageRoot, "desktop-update-manifest.json");
+            var helperPath = Path.Combine(stageRoot, "Apply-LocalAIRuntimeDesktopUpdate.ps1");
+            foreach (var existingPath in new[] { installerPath, partialPath, manifestPath, helperPath })
+            {
+                if (File.Exists(existingPath) && (File.GetAttributes(existingPath) & FileAttributes.ReparsePoint) != 0)
+                    throw new InvalidDataException($"A staged desktop update file is a symbolic link or junction: {existingPath}");
+            }
+            var expectedHash = digest.Substring("sha256:".Length).ToLowerInvariant();
+            var alreadyStaged = File.Exists(installerPath) && new FileInfo(installerPath).Length == size &&
+                string.Equals(await ComputeSha256Async(installerPath), expectedHash, StringComparison.Ordinal);
+            if (!alreadyStaged)
+            {
+                if (File.Exists(partialPath)) File.Delete(partialPath);
+                SetUpdateProgress($"Downloading {tagName}…", $"0 of {sizeMiB:F1} MiB downloaded. The installed application has not been changed.");
+                using var downloadTimeout = new CancellationTokenSource(TimeSpan.FromMinutes(20));
+                using var downloadResponse = await client.GetAsync(assetUrl, HttpCompletionOption.ResponseHeadersRead, downloadTimeout.Token);
+                downloadResponse.EnsureSuccessStatusCode();
+                await using var input = await downloadResponse.Content.ReadAsStreamAsync(downloadTimeout.Token);
+                await using var output = new FileStream(partialPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1024 * 128, useAsync: true);
+                using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+                var buffer = new byte[1024 * 128];
+                long downloaded = 0;
+                int read;
+                while ((read = await input.ReadAsync(buffer.AsMemory(0, buffer.Length), downloadTimeout.Token)) > 0)
+                {
+                    downloaded += read;
+                    if (downloaded > size || downloaded > 512L * 1024 * 1024)
+                        throw new InvalidDataException("The downloaded installer exceeded the size advertised by GitHub.");
+                    hash.AppendData(buffer, 0, read);
+                    await output.WriteAsync(buffer.AsMemory(0, read), downloadTimeout.Token);
+                    if (downloaded == size || downloaded % (1024 * 1024) < buffer.Length)
+                        SetUpdateProgress($"Downloading {tagName}…", $"{downloaded / 1024d / 1024d:F1} of {sizeMiB:F1} MiB downloaded. The installed application has not been changed.");
+                }
+                await output.FlushAsync(downloadTimeout.Token);
+                if (downloaded != size) throw new InvalidDataException($"The installer size was {downloaded} bytes; GitHub advertised {size} bytes.");
+                var actualHash = Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
+                if (!string.Equals(actualHash, expectedHash, StringComparison.Ordinal))
+                    throw new InvalidDataException("The downloaded installer SHA-256 does not match GitHub release metadata.");
+                output.Close();
+                File.Move(partialPath, installerPath, overwrite: true);
+            }
+
+            var manifest = new
+            {
+                verified = true,
+                tag_name = tagName,
+                asset_name = _desktopInstallerAssetName,
+                size_bytes = size,
+                sha256 = expectedHash,
+                release_url = releaseUrl
+            };
+            await File.WriteAllTextAsync(manifestPath, JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true }), new UTF8Encoding(false));
+
+            var sourceHelper = Path.Combine(_installRoot, "scripts", "Apply-LocalAIRuntimeDesktopUpdate.ps1");
+            if (!File.Exists(sourceHelper) || (File.GetAttributes(sourceHelper) & FileAttributes.ReparsePoint) != 0)
+                throw new FileNotFoundException("The desktop update helper is missing or not a regular installed file. Reinstall from the latest official setup package.", sourceHelper);
+            File.Copy(sourceHelper, helperPath, overwrite: true);
+
+            var powershell = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),
+                @"WindowsPowerShell\v1.0\powershell.exe");
+            if (!File.Exists(powershell)) throw new FileNotFoundException("Windows PowerShell 5.1 is required by the desktop installer hand-off.", powershell);
+            var helperStart = new ProcessStartInfo
+            {
+                FileName = powershell,
+                WorkingDirectory = _dataRoot,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WindowStyle = ProcessWindowStyle.Hidden
+            };
+            foreach (var argument in new[]
+            {
+                "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden",
+                "-File", helperPath,
+                "-InstallRoot", _installRoot,
+                "-DataRoot", _dataRoot,
+                "-StageRoot", stageRoot,
+                "-InstallerPath", installerPath,
+                "-ManifestPath", manifestPath,
+                "-TagName", tagName,
+                "-ExpectedSha256", expectedHash,
+                "-CurrentVersion", _runtimeVersion,
+                "-DesktopPid", Environment.ProcessId.ToString(),
+                "-Port", _runtimePort.ToString()
+            }) helperStart.ArgumentList.Add(argument);
+            using var updater = Process.Start(helperStart) ?? throw new InvalidOperationException("Windows could not start the verified desktop update helper.");
+            updateHandedOff = true;
+            SetUpdateProgress($"Installing {tagName}…", "The local runtime is shutting down. The complete desktop installation will be replaced and checked before the app reopens.");
+            _isExiting = true;
+            _allowClose = true;
+            _tray.Visible = false;
+            Close();
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"Open the dashboard and use Check for updates.\n\n{ex.Message}", "Check for updates", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            SetUpdateProgress("Update could not be installed", "Your current application and user data have not been intentionally changed. Review the local desktop-update.log if the problem continues.");
+            MessageBox.Show(
+                $"The desktop update could not be prepared. Your current installation remains available.\n\n{ex.Message}",
+                WindowTitle, MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
+        finally
+        {
+            _updateCheckInProgress = false;
+            if (!updateHandedOff)
+            {
+                try { _webView.CoreWebView2?.PostWebMessageAsString("desktop-update-check-finished"); }
+                catch { /* The dashboard may still be starting or already closed. */ }
+            }
+        }
+    }
+
+    private void SetUpdateProgress(string title, string detail)
+    {
+        if (IsDisposed || Disposing) return;
+        _loadingTitle.Text = title;
+        _loadingDetail.Text = detail;
+        try
+        {
+            _webView.CoreWebView2?.PostWebMessageAsJson(JsonSerializer.Serialize(new
+            {
+                type = "desktop-update-progress",
+                title,
+                detail
+            }));
+        }
+        catch { /* The WebView may not be initialized or may be navigating. */ }
+        if (_tray.Visible && !detail.Contains("MiB downloaded", StringComparison.OrdinalIgnoreCase))
+        {
+            _tray.BalloonTipTitle = title;
+            _tray.BalloonTipText = detail.Length > 240 ? detail[..240] : detail;
+            _tray.ShowBalloonTip(2500);
+        }
+    }
+
+    private static async Task<string> ReadBoundedTextAsync(HttpContent content, int maximumBytes)
+    {
+        if (content.Headers.ContentLength is long contentLength && (contentLength < 1 || contentLength > maximumBytes))
+            throw new InvalidDataException("The release checksum manifest has an unsupported size.");
+        await using var input = await content.ReadAsStreamAsync();
+        using var output = new MemoryStream();
+        var buffer = new byte[4096];
+        int read;
+        while ((read = await input.ReadAsync(buffer.AsMemory(0, buffer.Length))) > 0)
+        {
+            if (output.Length + read > maximumBytes)
+                throw new InvalidDataException("The release checksum manifest exceeded its maximum size.");
+            output.Write(buffer, 0, read);
+        }
+        return Encoding.UTF8.GetString(output.ToArray());
+    }
+
+    private static async Task<string> ComputeSha256Async(string path)
+    {
+        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1024 * 128, useAsync: true);
+        var digest = await SHA256.HashDataAsync(stream);
+        return Convert.ToHexString(digest).ToLowerInvariant();
+    }
+
+    private static int CompareReleaseTags(string left, string right)
+    {
+        static (int Major, int Minor, int Patch, string Pre) Parse(string value)
+        {
+            var match = Regex.Match(value, @"^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$");
+            if (!match.Success) return (-1, -1, -1, "");
+            return (int.Parse(match.Groups[1].Value), int.Parse(match.Groups[2].Value),
+                int.Parse(match.Groups[3].Value), match.Groups[4].Value);
+        }
+        var a = Parse(left);
+        var b = Parse(right);
+        var compare = a.Major.CompareTo(b.Major);
+        if (compare != 0) return compare;
+        compare = a.Minor.CompareTo(b.Minor);
+        if (compare != 0) return compare;
+        compare = a.Patch.CompareTo(b.Patch);
+        if (compare != 0) return compare;
+        if (string.IsNullOrEmpty(a.Pre) && !string.IsNullOrEmpty(b.Pre)) return 1;
+        if (!string.IsNullOrEmpty(a.Pre) && string.IsNullOrEmpty(b.Pre)) return -1;
+        return StringComparer.OrdinalIgnoreCase.Compare(a.Pre, b.Pre);
     }
 
     private async Task ExitAndStopAsync()

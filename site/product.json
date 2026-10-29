@@ -70,7 +70,7 @@
     },
     {
       "name": "Windows desktop installer",
-      "description": "Published in the v0.1.2-alpha preview: per-user Windows setup (.exe), dedicated WebView2 desktop window, Start menu and optional desktop shortcuts, tray controls, console-free runtime startup, and uninstall that preserves user data. The installer is not code-signed yet, so Windows may show an unknown-publisher/SmartScreen warning. Installed-app updates currently use the complete setup installer; in-app atomic updating is planned.",
+      "description": "Per-user Windows setup (.exe), dedicated WebView2 desktop window, Start menu and optional desktop shortcuts, tray controls, console-free runtime startup, and uninstall that preserves user data. New desktop builds include a user-confirmed in-app update using the official full setup package, GitHub SHA-256/size verification, full-install backup, health verification, rollback and interruption recovery. The installer is not code-signed yet, so Windows may show an unknown-publisher/SmartScreen warning.",
       "status": "preview"
     },
     {
@@ -95,7 +95,12 @@
     },
     {
       "name": "Verified runtime updates",
-      "description": "The dashboard checks official GitHub Releases and verifies matching packages before staging. Tagged portable Windows ZIP installs support confirmed apply/restart and rollback. Installed desktop Windows builds direct users to the full setup installer so the shell and runtime remain version-matched. Linux/macOS stage only; no silent executable replacement is enabled.",
+      "description": "The dashboard checks official GitHub Releases and verifies matching packages before staging. Tagged portable Windows ZIP installs support confirmed apply/restart and rollback. Installed Windows desktop builds that include the desktop updater can apply the full official setup installer with a verified full-install backup, health check, rollback and interrupted-update recovery. Linux/macOS currently stage only and require manual application archive replacement.",
+      "status": "preview"
+    },
+    {
+      "name": "Installed Windows desktop updates",
+      "description": "New installed desktop builds can download the exact official setup asset, verify its SHA-256 and size, shut down the local runtime gracefully, back up the full app directory, update shell and runtime together, confirm local health and restore the previous installation after failure or interruption. User settings, engines, models and logs remain outside the application directory. Publisher signing and clean Windows 10/11 manual acceptance remain outstanding.",
       "status": "preview"
     }
   ],
