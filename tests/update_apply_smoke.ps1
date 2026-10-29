@@ -181,8 +181,31 @@ try {
         '-CurrentVersion', $Version
     )
     $validationArgumentLine = ($validationArguments | ForEach-Object { Quote-WindowsArgument ([string]$_) }) -join ' '
-    $validationProcess = Start-Process -FilePath $windowsPowerShell -ArgumentList $validationArgumentLine -PassThru -Wait -WindowStyle Hidden
-    if ($validationProcess.ExitCode -ne 0) { throw "Windows PowerShell 5.1 ValidateOnly smoke failed with exit code $($validationProcess.ExitCode)." }
+    $validationStdout = Join-Path $dataRoot 'logs/powershell51-validateonly.stdout.log'
+    $validationStderr = Join-Path $dataRoot 'logs/powershell51-validateonly.stderr.log'
+    Write-Host 'Running the updater ValidateOnly regression under Windows PowerShell 5.1...'
+    $validationProcess = Start-Process -FilePath $windowsPowerShell -ArgumentList $validationArgumentLine `
+        -RedirectStandardOutput $validationStdout -RedirectStandardError $validationStderr `
+        -PassThru -Wait -WindowStyle Hidden
+    if ($validationProcess.ExitCode -ne 0) {
+        $failureDetails = @(
+            "Windows PowerShell 5.1 ValidateOnly smoke failed with exit code $($validationProcess.ExitCode)."
+        )
+        foreach ($diagnostic in @(
+            @{ Label = 'PowerShell 5.1 stdout'; Path = $validationStdout },
+            @{ Label = 'PowerShell 5.1 stderr'; Path = $validationStderr },
+            @{ Label = 'Updater status'; Path = (Join-Path $stageRoot 'apply-status.json') },
+            @{ Label = 'Updater log'; Path = (Join-Path $dataRoot 'logs/update-apply.log') }
+        )) {
+            if (Test-Path -LiteralPath $diagnostic.Path -PathType Leaf) {
+                $content = Get-Content -LiteralPath $diagnostic.Path -Raw -ErrorAction SilentlyContinue
+                if (-not [string]::IsNullOrWhiteSpace($content)) {
+                    $failureDetails += "--- $($diagnostic.Label) ---`n$content"
+                }
+            }
+        }
+        throw ($failureDetails -join "`n")
+    }
 
     # Pass 0: an actual apply still requires a live runtime PID. This guards
     # against fixing validate-only mode by accidentally relaxing the apply gate.
@@ -435,6 +458,8 @@ try {
     New-Item -ItemType Directory -Force -Path $diagnosticsRoot | Out-Null
     foreach ($path in @(
         (Join-Path $dataRoot 'logs/update-apply.log'),
+        (Join-Path $dataRoot 'logs/powershell51-validateonly.stdout.log'),
+        (Join-Path $dataRoot 'logs/powershell51-validateonly.stderr.log'),
         (Join-Path $dataRoot 'logs/smoke-before.stdout.log'),
         (Join-Path $dataRoot 'logs/smoke-before.stderr.log'),
         (Join-Path $stageRoot 'apply-status.json')
