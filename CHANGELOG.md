@@ -1,5 +1,8 @@
 ## Unreleased
 
+- Enforce one explicit per-user data-root contract across the Windows desktop shell, PowerShell launcher, C++ runtime, catalogue/download state and post-update restarts. Persist an opaque runtime-instance ID and expose it through a loopback identity endpoint so the desktop cannot attach to a healthy but stale/different runtime on the configured port.
+- Extend HTTP and Windows update smoke tests to prove installed catalogue assets and diagnostic logs are read from the explicit data root and that the root identity survives apply, rollback and interrupted-update recovery.
+
 - Publish a versioned component-v1 schema for catalog metadata and validate real `/v1/catalog` API responses in the HTTP smoke test. Include task/workspace, platform targets, resources, provenance, dependencies, evidence status and lifecycle policy so new engine families can be added consistently.
 - Add collapsed “Compatibility & requirements” details to component cards, keeping catalog cards readable while exposing target platforms, prerequisite drivers, memory estimate confidence, dependency packages and validation limits.
 

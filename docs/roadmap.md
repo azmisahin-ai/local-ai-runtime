@@ -37,6 +37,7 @@ The website can offer the Windows setup executable as an alpha because its tagge
 - [x] Make the installer/uninstaller keep mutable user data outside the application directory and preserve it by default.
 - [ ] Add a separate explicit option to remove user data during uninstall and verify it safely.
 - [ ] Validate install, launch, close/reopen, upgrade, forced interruption recovery, rollback, and uninstall on clean Windows 10/11 x64 virtual machines. Verify that user data survives an application update.
+- [ ] Use `/v1/system/identity` and a persistent per-user `runtime-instance.id` to verify that the desktop shell, launcher, runtime diagnostics, catalogue, and updater all point at the same user-data root; exercise this contract during Windows install/update/recovery CI and clean Windows 10/11 acceptance.
 
 **Windows milestone acceptance:** a new user downloads one installer from the project site, installs it, launches from Start, sees a desktop window without a console, installs a suitable CPU engine/model through the UI, produces a real chat response, and updates from the UI without manually moving ZIP files or editing JSON.
 

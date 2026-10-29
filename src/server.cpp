@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <chrono>
 #include <csignal>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -50,6 +51,14 @@ using tcp = asio::ip::tcp;
 
 volatile std::sig_atomic_t shutdown_requested = 0;
 void request_shutdown(int) { shutdown_requested = 1; }
+
+std::string runtime_data_root_id() {
+    const char* value = std::getenv("LOCAL_AI_RUNTIME_DATA_ROOT_ID");
+    if (!value) return {};
+    const std::string id(value);
+    static const std::regex guid_pattern(R"(^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$)");
+    return std::regex_match(id, guid_pattern) ? id : std::string{};
+}
 
 std::string json_escape(std::string_view input) {
     std::ostringstream out;
@@ -873,6 +882,14 @@ http::response<http::string_body> handle_request(const http::request<http::strin
     if (request.method() == http::verb::get && target == "/health") {
         return json_response(http::status::ok, version,
             "{\"status\":\"ok\",\"version\":" + json_quoted(LAR_VERSION) + ",\"bind\":\"loopback\"}");
+    }
+    if (request.method() == http::verb::get && target == "/v1/system/identity") {
+        // This is an opaque per-user data-root identifier, not a filesystem path
+        // or a credential. The desktop shell uses it to refuse attaching to a
+        // stale runtime instance that happens to own the configured port.
+        return json_response(http::status::ok, version,
+            "{\"schema_version\":1,\"version\":" + json_quoted(LAR_VERSION) +
+            ",\"data_root_id\":" + json_quoted(runtime_data_root_id()) + "}");
     }
     if (request.method() == http::verb::post && target == "/v1/runtime/shutdown") {
         log_diagnostic("INFO", "runtime.shutdown_requested", "source=local-launcher");

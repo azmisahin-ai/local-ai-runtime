@@ -38,6 +38,9 @@ fi
 
 # Keep logs and mutable data outside the extracted runtime folder. This lets a
 # user replace/upgrade the app package without overwriting settings or logs.
+# Pass the same explicit data root to the runtime's diagnostics/catalog/download
+# layer rather than relying on it to reconstruct this path from a shell env.
+export LOCAL_AI_RUNTIME_DATA_DIR="$DATA_ROOT"
 cd "$DATA_ROOT"
 echo "Starting Local AI Runtime at http://127.0.0.1:8000"
 echo "Using executable: $RUNTIME"

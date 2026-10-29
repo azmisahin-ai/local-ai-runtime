@@ -10,6 +10,7 @@ The Windows setup artifact is built from the same tested C++ runtime package as 
 - The runtime is started without a console window and the local dashboard opens in a native desktop window.
 - Closing the window minimizes to the notification area. The tray menu can reopen the window, ask the dashboard to check for updates, or **Exit and stop local engines** using the loopback graceful-shutdown API.
 - The WebView2 browser profile and all runtime settings/engines/models/logs live below `%LOCALAPPDATA%\LocalAIRuntime`, outside the program directory.
+- On first launch, the launcher persists an opaque `runtime-instance.id` in that user-data directory and passes the canonical data root into the runtime process. `/v1/system/identity` lets the shell confirm that the HTTP listener serves the same persistent data directory; a healthy old runtime that cannot prove its identity is not silently reused.
 - Uninstall removes the program directory and shortcuts but deliberately preserves user data. A separate explicit data-removal choice is still planned.
 
 ## Updates and trust boundary

@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$InstallRoot,
     [Parameter(Mandatory = $true)][string]$DataRoot,
@@ -108,6 +108,29 @@ function Wait-Health([int]$ExpectedPort, [string]$ExpectedVersion, [int]$Seconds
     return $false
 }
 
+function Get-OrCreateRuntimeInstanceId([string]$Root) {
+    $idPath = Join-Path $Root 'runtime-instance.id'
+    if (-not (Test-Path -LiteralPath $idPath -PathType Leaf)) {
+        $candidate = [Guid]::NewGuid().ToString('D').ToLowerInvariant()
+        $temporary = "$idPath.$PID.$([Guid]::NewGuid().ToString('N')).tmp"
+        try {
+            [System.IO.File]::WriteAllText($temporary, $candidate + [Environment]::NewLine, [System.Text.UTF8Encoding]::new($false))
+            try { [System.IO.File]::Move($temporary, $idPath) }
+            catch {
+                if (-not (Test-Path -LiteralPath $idPath -PathType Leaf)) { throw }
+            }
+        } finally {
+            Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
+        }
+    }
+    $raw = (Get-Content -LiteralPath $idPath -Raw -ErrorAction Stop).Trim()
+    $parsed = [Guid]::Empty
+    if (-not [Guid]::TryParse($raw, [ref]$parsed) -or $parsed -eq [Guid]::Empty) {
+        throw "The persistent runtime instance marker '$idPath' is invalid; refusing to restart after update."
+    }
+    return $parsed.ToString('D').ToLowerInvariant()
+}
+
 function Start-Runtime([string]$VersionToStart) {
     $runtime = Join-Path $InstallRoot 'local-ai-runtime.exe'
     $configPath = Join-Path $DataRoot 'config/engines.json'
@@ -115,12 +138,24 @@ function Start-Runtime([string]$VersionToStart) {
     if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) {
         throw "User configuration is missing; refusing to start update target: $configPath"
     }
+    $runtimeInstanceId = Get-OrCreateRuntimeInstanceId $DataRoot
     $logSuffix = "$($VersionToStart -replace '[^A-Za-z0-9.-]', '_')-$([Guid]::NewGuid().ToString('N'))"
     $stdout = Join-Path $logDirectory "runtime-after-update-$logSuffix.stdout.log"
     $stderr = Join-Path $logDirectory "runtime-after-update-$logSuffix.stderr.log"
     $arguments = '--config "{0}" --web-dir "{1}"' -f $configPath, $webPath
-    return Start-Process -FilePath $runtime -ArgumentList $arguments -WorkingDirectory $DataRoot `
-        -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
+    $previousDataRoot = $env:LOCAL_AI_RUNTIME_DATA_DIR
+    $previousInstanceId = $env:LOCAL_AI_RUNTIME_DATA_ROOT_ID
+    try {
+        $env:LOCAL_AI_RUNTIME_DATA_DIR = [System.IO.Path]::GetFullPath($DataRoot)
+        $env:LOCAL_AI_RUNTIME_DATA_ROOT_ID = $runtimeInstanceId
+        return Start-Process -FilePath $runtime -ArgumentList $arguments -WorkingDirectory $DataRoot `
+            -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
+    } finally {
+        if ($null -eq $previousDataRoot) { Remove-Item Env:LOCAL_AI_RUNTIME_DATA_DIR -ErrorAction SilentlyContinue }
+        else { $env:LOCAL_AI_RUNTIME_DATA_DIR = $previousDataRoot }
+        if ($null -eq $previousInstanceId) { Remove-Item Env:LOCAL_AI_RUNTIME_DATA_ROOT_ID -ErrorAction SilentlyContinue }
+        else { $env:LOCAL_AI_RUNTIME_DATA_ROOT_ID = $previousInstanceId }
+    }
 }
 
 function Restore-PreviousFiles {

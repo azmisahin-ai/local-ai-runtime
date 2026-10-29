@@ -28,6 +28,31 @@ try {
         throw 'The application folder and user-data folder must be separate.'
     }
 
+    function Get-OrCreateRuntimeInstanceId([string]$Root) {
+        New-Item -ItemType Directory -Force -Path $Root | Out-Null
+        $idPath = Join-Path $Root 'runtime-instance.id'
+        if (-not (Test-Path -LiteralPath $idPath -PathType Leaf)) {
+            $candidate = [Guid]::NewGuid().ToString('D').ToLowerInvariant()
+            $temporary = "$idPath.$PID.$([Guid]::NewGuid().ToString('N')).tmp"
+            try {
+                [System.IO.File]::WriteAllText($temporary, $candidate + [Environment]::NewLine, [System.Text.UTF8Encoding]::new($false))
+                try { [System.IO.File]::Move($temporary, $idPath) }
+                catch {
+                    # Another launcher may have created the marker concurrently.
+                    if (-not (Test-Path -LiteralPath $idPath -PathType Leaf)) { throw }
+                }
+            } finally {
+                Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
+            }
+        }
+        $raw = (Get-Content -LiteralPath $idPath -Raw -ErrorAction Stop).Trim()
+        $parsed = [Guid]::Empty
+        if (-not [Guid]::TryParse($raw, [ref]$parsed) -or $parsed -eq [Guid]::Empty) {
+            throw "The persistent runtime instance marker '$idPath' is invalid. It was preserved; inspect it before retrying."
+        }
+        return $parsed.ToString('D').ToLowerInvariant()
+    }
+
     function Test-UpdateHelperRunning($Status, [string]$StageRootFull) {
         $helperPid = 0
         try { $helperPid = [int]$Status.helper_pid } catch { return $false }
@@ -105,6 +130,7 @@ try {
     $legacyConfigPath = Join-Path $root 'config/engines.json'
     $diagnosticLogPath = Join-Path $dataRoot 'logs/runtime.log'
     New-Item -ItemType Directory -Force -Path $configDir, $dataRoot | Out-Null
+    $runtimeInstanceId = Get-OrCreateRuntimeInstanceId $dataRoot
     if (-not (Test-Path -LiteralPath $configPath)) {
         if (Test-Path -LiteralPath $legacyConfigPath) {
             Copy-Item $legacyConfigPath $configPath
@@ -135,6 +161,16 @@ try {
             if ($response.StatusCode -ne 200) { return $null }
             $health = $response.Content | ConvertFrom-Json -ErrorAction Stop
             if ($health.status -eq 'ok' -and $health.version) { return $health }
+        } catch { }
+        return $null
+    }
+
+    function Get-RuntimeIdentity {
+        try {
+            $response = Invoke-WebRequest -UseBasicParsing -Uri "$baseUrl/v1/system/identity" -TimeoutSec 2 -ErrorAction Stop
+            if ($response.StatusCode -ne 200) { return $null }
+            $identity = $response.Content | ConvertFrom-Json -ErrorAction Stop
+            if ($identity.schema_version -eq 1 -and $identity.data_root_id) { return $identity }
         } catch { }
         return $null
     }
@@ -295,8 +331,10 @@ try {
                 }
             }
 
-            if ($health -and $sameInstallation) {
-                Write-Host "A Local AI Runtime instance from this folder is already healthy on $baseUrl. Opening it instead of starting a duplicate." -ForegroundColor Yellow
+            $identity = if ($health) { Get-RuntimeIdentity } else { $null }
+            $sameDataRoot = $identity -and ([string]$identity.data_root_id).Equals($runtimeInstanceId, [StringComparison]::OrdinalIgnoreCase)
+            if ($health -and $sameInstallation -and $sameDataRoot) {
+                Write-Host "A Local AI Runtime instance from this folder and user-data directory is already healthy on $baseUrl. Opening it instead of starting a duplicate." -ForegroundColor Yellow
                 if (-not $NoBrowser) { Start-Process $baseUrl }
                 if ($PassThru) { throw 'A runtime instance was already running; no new process handle is available.' }
                 return
@@ -306,7 +344,15 @@ try {
                 $pathText = if ([string]::IsNullOrWhiteSpace($_.ExecutablePath)) { 'path unavailable' } else { $_.ExecutablePath }
                 "PID $($_.Id) ($pathText)"
             }) -join ', '
-            $reason = if ($health) { 'is healthy but runs from a different application folder' } else { 'does not answer the /health check' }
+            if (-not $health) {
+                $reason = 'does not answer the /health check'
+            } elseif (-not $sameInstallation) {
+                $reason = 'is healthy but runs from a different application folder'
+            } elseif (-not $sameDataRoot) {
+                $reason = 'is healthy but belongs to a different or older user-data session'
+            } else {
+                $reason = 'cannot be safely identified'
+            }
             if ($NoPrompts) {
                 throw "Another Local AI Runtime instance on port $port $reason ($ownersText). No process was stopped. Close the other Local AI Runtime normally, then reopen this app."
             }
@@ -368,7 +414,18 @@ try {
     # user names or package directories containing spaces remain valid.
     $webDir = Join-Path $root 'web'
     $arguments = '--config "{0}" --web-dir "{1}"' -f $configPath, $webDir
-    $process = Start-Process -FilePath $exe -ArgumentList $arguments -WorkingDirectory $dataRoot -WindowStyle Hidden -PassThru
+    $previousDataRoot = $env:LOCAL_AI_RUNTIME_DATA_DIR
+    $previousInstanceId = $env:LOCAL_AI_RUNTIME_DATA_ROOT_ID
+    try {
+        $env:LOCAL_AI_RUNTIME_DATA_DIR = $dataRoot
+        $env:LOCAL_AI_RUNTIME_DATA_ROOT_ID = $runtimeInstanceId
+        $process = Start-Process -FilePath $exe -ArgumentList $arguments -WorkingDirectory $dataRoot -WindowStyle Hidden -PassThru
+    } finally {
+        if ($null -eq $previousDataRoot) { Remove-Item Env:LOCAL_AI_RUNTIME_DATA_DIR -ErrorAction SilentlyContinue }
+        else { $env:LOCAL_AI_RUNTIME_DATA_DIR = $previousDataRoot }
+        if ($null -eq $previousInstanceId) { Remove-Item Env:LOCAL_AI_RUNTIME_DATA_ROOT_ID -ErrorAction SilentlyContinue }
+        else { $env:LOCAL_AI_RUNTIME_DATA_ROOT_ID = $previousInstanceId }
+    }
     $ready = $false
     for ($i = 0; $i -lt 40; $i++) {
         if ($process.HasExited) {

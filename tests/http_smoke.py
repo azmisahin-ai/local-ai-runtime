@@ -11,6 +11,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+import uuid
 from pathlib import Path
 
 from catalog_contract import validate_catalog_schema
@@ -119,22 +120,46 @@ def main():
         engine_base = f"http://127.0.0.1:{engine_port}"
         runtime_log_path = temp / "runtime.log"
         runtime_log = runtime_log_path.open("w", encoding="utf-8")
+        # Force the runtime to use an explicit root that differs from both
+        # platform defaults. This mirrors the installed desktop shell passing
+        # the same per-user path to the launcher/runtime, and catches catalog
+        # or diagnostics silently reading a fresh/empty directory after upgrade.
+        data_root = temp / "explicit-user-data-root"
         if os.name == "nt":
-            data_root = temp / "local-app-data" / "LocalAIRuntime"
+            default_data_root = temp / "local-app-data" / "LocalAIRuntime"
         else:
-            data_root = temp / "xdg-data" / "local-ai-runtime"
+            default_data_root = temp / "xdg-data" / "local-ai-runtime"
+        runtime_instance_id = str(uuid.uuid4())
+        engine_fixture = data_root / "engines" / "llama.cpp" / "state-contract-fixture-cpu"
+        engine_fixture.mkdir(parents=True, exist_ok=True)
+        installed_server = engine_fixture / ("llama-server.exe" if os.name == "nt" else "llama-server")
+        shutil.copy2(fake_engine, installed_server)
+        if os.name != "nt":
+            installed_server.chmod(installed_server.stat().st_mode | 0o111)
         engine_log_for_diagnostics = data_root / "logs" / "fake-engine.log"
         engine_log_for_diagnostics.parent.mkdir(parents=True, exist_ok=True)
         engine_log_for_diagnostics.write_text("engine-log-diagnostics-smoke-marker\n", encoding="utf-8")
         test_env = os.environ.copy()
         test_env["LOCALAPPDATA"] = str(temp / "local-app-data")
         test_env["XDG_DATA_HOME"] = str(temp / "xdg-data")
+        test_env["LOCAL_AI_RUNTIME_DATA_DIR"] = str(data_root)
+        test_env["LOCAL_AI_RUNTIME_DATA_ROOT_ID"] = runtime_instance_id
         process = subprocess.Popen(
             [runtime, "--config", str(config_path), "--web-dir", web_dir],
             cwd=str(temp), stdout=runtime_log, stderr=subprocess.STDOUT, env=test_env,
         )
         try:
             wait_until(lambda: request(base + "/health")[0] == 200, 15, "runtime health endpoint")
+
+            status, identity_raw, identity_type = request(base + "/v1/system/identity")
+            identity = json.loads(identity_raw)
+            assert status == 200 and "application/json" in identity_type
+            assert identity.get("schema_version") == 1 and identity.get("data_root_id") == runtime_instance_id
+            explicit_runtime_log = data_root / "logs" / "runtime.log"
+            assert explicit_runtime_log.exists(), "Runtime diagnostics did not use LOCAL_AI_RUNTIME_DATA_DIR"
+            assert not (default_data_root / "logs" / "runtime.log").exists(), (
+                "Runtime unexpectedly created diagnostics in the platform-default user-data root"
+            )
 
             # A duplicate instance must exit cleanly and leave a startup-failure
             # event in the local diagnostics log instead of looking like a hang.
@@ -318,6 +343,13 @@ def main():
             assert model_item["provenance"]["revision_policy"] == "pinned-revision"
             assert "llama.cpp-cpu" in items
             assert items["llama.cpp-cpu"]["compatibility"]["backends"] == ["cpu"]
+            cpu_item = items["llama.cpp-cpu"]
+            assert cpu_item["installed"] is True, (
+                "Catalog did not discover the installed fixture under the explicit user-data root: " + json.dumps(cpu_item)
+            )
+            assert Path(cpu_item["installed_path"]).resolve() == engine_fixture.resolve(), (
+                "Catalog reported an engine from a different user-data root: " + cpu_item["installed_path"]
+            )
             if "llama.cpp-cuda12" in items:
                 cuda_dependencies = items["llama.cpp-cuda12"]["provenance"]["dependencies"]
                 assert any(dependency["id"] == "llama.cpp-cudart-cuda12" for dependency in cuda_dependencies)

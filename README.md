@@ -113,6 +113,7 @@ GitHub Actions is the source for repeatable cross-platform build/test results. L
 - `/v1/engines` reports process state and API readiness separately; the dashboard does not enable chat until the default engine is ready.
 - `POST /v1/runtime/shutdown` is a loopback-only graceful shutdown used by the Windows launcher when replacing an older runtime instance; managed engine processes are stopped as the runtime exits.
 - `/version` and `/health` endpoints; dashboard offers official per-platform runtime update staging with size and SHA-256 verification, plus user-confirmed apply/restart and automatic rollback for tagged Windows portable releases. Linux/macOS and development builds remain stage-only.
+- `/v1/system/identity` returns an opaque persistent user-data-root ID (never an absolute path). The Windows desktop shell, launcher, runtime catalogue/download state and updater pass the same explicit data-root contract; a healthy but stale runtime on the selected port is not silently treated as the current instance.
 - Built-in managed component catalog for the official llama.cpp release (CPU/CUDA variants) and a pinned Qwen2.5 1.5B GGUF starter model. Downloads are cancellable, size-bounded, HTTPS-only, SHA-256 checked, and safely extracted; model license confirmation is required.
 - `/v1/catalog`, `/v1/downloads`, per-job progress/cancel routes and dashboard installation progress.
 - Local-only rotating runtime event log, user-initiated diagnostic export (download jobs and engine status), and optional user-consented engine log excerpts.

@@ -755,7 +755,20 @@ DownloadManager::~DownloadManager() {
 }
 
 std::filesystem::path DownloadManager::user_data_directory() {
+    // The desktop shell/launcher set this explicit contract so configuration,
+    // catalog state, downloads, diagnostics and the embedded browser all resolve
+    // to the same persistent per-user directory even across upgrades or when
+    // the process environment differs from a terminal session.
 #ifdef _WIN32
+    std::wstring explicit_value(32768, L'\0');
+    const DWORD explicit_length = GetEnvironmentVariableW(
+        L"LOCAL_AI_RUNTIME_DATA_DIR", explicit_value.data(), static_cast<DWORD>(explicit_value.size()));
+    if (explicit_length > 0 && explicit_length < explicit_value.size()) {
+        explicit_value.resize(explicit_length);
+        std::error_code ec;
+        auto selected = std::filesystem::absolute(std::filesystem::path(explicit_value), ec);
+        return (ec ? std::filesystem::path(explicit_value) : selected).lexically_normal();
+    }
     std::wstring value(32768, L'\0');
     const DWORD length = GetEnvironmentVariableW(L"LOCALAPPDATA", value.data(), static_cast<DWORD>(value.size()));
     if (length > 0 && length < value.size()) {
@@ -763,7 +776,13 @@ std::filesystem::path DownloadManager::user_data_directory() {
         return std::filesystem::path(value) / L"LocalAIRuntime";
     }
     return std::filesystem::temp_directory_path() / L"LocalAIRuntime";
-#elif defined(__APPLE__)
+#else
+    if (const char* explicit_root = std::getenv("LOCAL_AI_RUNTIME_DATA_DIR"); explicit_root && *explicit_root) {
+        std::error_code ec;
+        const auto selected = std::filesystem::absolute(std::filesystem::path(explicit_root), ec);
+        return (ec ? std::filesystem::path(explicit_root) : selected).lexically_normal();
+    }
+#ifdef __APPLE__
     if (const char* xdg = std::getenv("XDG_DATA_HOME"); xdg && *xdg) return std::filesystem::path(xdg) / "local-ai-runtime";
     if (const char* home = std::getenv("HOME")) return std::filesystem::path(home) / "Library" / "Application Support" / "LocalAIRuntime";
     return std::filesystem::temp_directory_path() / "LocalAIRuntime";
@@ -771,6 +790,7 @@ std::filesystem::path DownloadManager::user_data_directory() {
     if (const char* xdg = std::getenv("XDG_DATA_HOME"); xdg && *xdg) return std::filesystem::path(xdg) / "local-ai-runtime";
     if (const char* home = std::getenv("HOME")) return std::filesystem::path(home) / ".local" / "share" / "local-ai-runtime";
     return std::filesystem::temp_directory_path() / "local-ai-runtime";
+#endif
 #endif
 }
 

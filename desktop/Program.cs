@@ -114,8 +114,8 @@ internal static class Program
 internal sealed class DashboardForm : Form
 {
     private readonly string _installRoot = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
-    private readonly string _dataRoot = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LocalAIRuntime");
+    private readonly string _dataRoot = Path.GetFullPath(Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LocalAIRuntime"));
     private readonly WebView2 _webView = new() { Dock = DockStyle.Fill, Visible = false };
     private readonly Panel _loadingPanel = new() { Dock = DockStyle.Fill, BackColor = Color.FromArgb(17, 25, 37) };
     private readonly Label _loadingTitle = new()
@@ -310,7 +310,7 @@ internal sealed class DashboardForm : Form
         foreach (var arg in new[]
         {
             "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", launcher,
-            "-NoBrowser", "-NoPrompts"
+            "-NoBrowser", "-NoPrompts", "-DataRoot", _dataRoot
         }) startInfo.ArgumentList.Add(arg);
 
         using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Windows could not start the internal runtime launcher.");
@@ -338,6 +338,7 @@ internal sealed class DashboardForm : Form
         var url = new Uri($"http://127.0.0.1:{port}/");
 
         using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
+        var healthy = false;
         for (var attempt = 0; attempt < 20; attempt++)
         {
             try
@@ -346,14 +347,34 @@ internal sealed class DashboardForm : Form
                 if (response.IsSuccessStatusCode)
                 {
                     using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-                    if (doc.RootElement.TryGetProperty("status", out var status) && status.GetString() == "ok") return url;
+                    if (doc.RootElement.TryGetProperty("status", out var status) && status.GetString() == "ok")
+                    {
+                        healthy = true;
+                        break;
+                    }
                 }
             }
             catch (HttpRequestException) { }
             catch (TaskCanceledException) { }
             await Task.Delay(250);
         }
-        throw new TimeoutException("The local runtime did not become healthy after the launcher completed. The dashboard was not opened.");
+        if (!healthy) throw new TimeoutException("The local runtime did not become healthy after the launcher completed. The dashboard was not opened.");
+
+        // Never display a healthy but unrelated/stale runtime instance just
+        // because it answered on the configured port. The launcher passes the
+        // exact persistent data-root identity to the runtime, so UI/catalog and
+        // installed engine/model status must refer to the same user data.
+        var instanceIdPath = Path.Combine(_dataRoot, "runtime-instance.id");
+        if (!File.Exists(instanceIdPath) || !Guid.TryParse((await File.ReadAllTextAsync(instanceIdPath)).Trim(), out var expectedInstanceId))
+            throw new InvalidDataException("The persistent runtime identity is missing or invalid. Your settings were not changed; close any older runtime window and reopen Local AI Runtime.");
+        using var identityResponse = await client.GetAsync(new Uri(url, "v1/system/identity"));
+        if (!identityResponse.IsSuccessStatusCode)
+            throw new InvalidOperationException("The runtime on the selected port cannot confirm which user-data directory it is using. Close older Local AI Runtime instances and reopen this app.");
+        using var identityDocument = JsonDocument.Parse(await identityResponse.Content.ReadAsStringAsync());
+        var reportedId = identityDocument.RootElement.TryGetProperty("data_root_id", out var idElement) ? idElement.GetString() : null;
+        if (!Guid.TryParse(reportedId, out var reportedInstanceId) || reportedInstanceId != expectedInstanceId)
+            throw new InvalidOperationException("A different or older Local AI Runtime instance answered on the selected port. No process was stopped. Close the older instance from its notification-area menu and reopen this app.");
+        return url;
     }
 
     private bool IsLocalDashboardUri(string value)

@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$PackagePath,
     [Parameter(Mandatory = $true)][string]$Version
@@ -41,6 +41,16 @@ function Wait-TestHealth([int]$ExpectedPort, [string]$ExpectedVersion, [int]$Sec
         Start-Sleep -Milliseconds 250
     }
     return $false
+}
+
+function Assert-TestRuntimeIdentity([int]$ExpectedPort) {
+    $markerPath = Join-Path $dataRoot 'runtime-instance.id'
+    if (-not (Test-Path -LiteralPath $markerPath -PathType Leaf)) { throw 'Runtime data-root identity marker was not preserved.' }
+    $expectedId = (Get-Content -LiteralPath $markerPath -Raw).Trim()
+    $identity = Invoke-RestMethod -UseBasicParsing -Uri "http://127.0.0.1:$ExpectedPort/v1/system/identity" -TimeoutSec 2
+    if ([int]$identity.schema_version -ne 1 -or [string]$identity.data_root_id -cne $expectedId) {
+        throw "Runtime data-root identity changed across launch/update. Expected '$expectedId', got '$($identity.data_root_id)'."
+    }
 }
 
 
@@ -124,6 +134,8 @@ try {
     Write-Utf8NoBom $userConfigPath ($config | ConvertTo-Json -Depth 20)
     $preservedDataPath = Join-Path $dataRoot 'models/preserve-update-test.txt'
     Write-Utf8NoBom $preservedDataPath 'user-data-must-survive-update'
+    $runtimeInstanceId = [Guid]::NewGuid().ToString('D').ToLowerInvariant()
+    Write-Utf8NoBom (Join-Path $dataRoot 'runtime-instance.id') $runtimeInstanceId
     $configHashBefore = (Get-FileHash -LiteralPath $userConfigPath -Algorithm SHA256).Hash
 
     New-Item -ItemType Directory -Force -Path $stageRoot, (Join-Path $dataRoot 'logs') | Out-Null
@@ -201,12 +213,29 @@ try {
     # and verify that the helper stops/restarts the process while preserving data.
     $runtimeExe = Join-Path $installRoot 'local-ai-runtime.exe'
     $webPath = Join-Path $installRoot 'web'
+    $launcherPath = Join-Path $installRoot 'scripts/Start-LocalAIRuntime.ps1'
     $stdout = Join-Path $dataRoot 'logs/smoke-before.stdout.log'
     $stderr = Join-Path $dataRoot 'logs/smoke-before.stderr.log'
     $arguments = '--config "{0}" --web-dir "{1}"' -f $userConfigPath, $webPath
-    $startedRuntime = Start-Process -FilePath $runtimeExe -ArgumentList $arguments -WorkingDirectory $dataRoot `
-        -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
+    $previousDataRoot = $env:LOCAL_AI_RUNTIME_DATA_DIR
+    $previousInstanceId = $env:LOCAL_AI_RUNTIME_DATA_ROOT_ID
+    try {
+        $env:LOCAL_AI_RUNTIME_DATA_DIR = [System.IO.Path]::GetFullPath($dataRoot)
+        $env:LOCAL_AI_RUNTIME_DATA_ROOT_ID = $runtimeInstanceId
+        $startedRuntime = Start-Process -FilePath $runtimeExe -ArgumentList $arguments -WorkingDirectory $dataRoot `
+            -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
+    } finally {
+        if ($null -eq $previousDataRoot) { Remove-Item Env:LOCAL_AI_RUNTIME_DATA_DIR -ErrorAction SilentlyContinue }
+        else { $env:LOCAL_AI_RUNTIME_DATA_DIR = $previousDataRoot }
+        if ($null -eq $previousInstanceId) { Remove-Item Env:LOCAL_AI_RUNTIME_DATA_ROOT_ID -ErrorAction SilentlyContinue }
+        else { $env:LOCAL_AI_RUNTIME_DATA_ROOT_ID = $previousInstanceId }
+    }
     if (-not (Wait-TestHealth $port $Version 12)) { throw 'The temporary pre-update runtime did not become healthy.' }
+    Assert-TestRuntimeIdentity $port
+    $runtimePidBeforeReuse = Get-SmokeRuntimePid
+    & $launcherPath -NoBrowser -NoPrompts -DataRoot $dataRoot
+    if ((Get-SmokeRuntimePid) -ne $runtimePidBeforeReuse) { throw 'Launcher did not reuse the same healthy runtime/data-root instance; a duplicate or replacement process appeared.' }
+    Assert-TestRuntimeIdentity $port
 
     & $helperPath -InstallRoot $installRoot -DataRoot $dataRoot -StageRoot $stageRoot `
         -PackagePath $packageCopy -ManifestPath $manifestPath -TagName $tagName `
@@ -216,6 +245,7 @@ try {
     $status = Get-Content -LiteralPath $statusPath -Raw | ConvertFrom-Json -ErrorAction Stop
     if ($status.state -ne 'succeeded') { throw "Apply phase did not succeed: state=$($status.state) message=$($status.message)" }
     if (-not (Wait-TestHealth $port $Version 15)) { throw 'The post-update runtime did not pass /health.' }
+    Assert-TestRuntimeIdentity $port
     if ((Get-FileHash -LiteralPath $webIndexPath -Algorithm SHA256).Hash -ceq $webIndexHashBeforeApply) { throw 'Apply did not replace the pre-existing dashboard file.' }
     if ([System.IO.File]::ReadAllText($webIndexPath).Contains('update-smoke-before-apply')) { throw 'The successful update left pre-update application content in place.' }
     if ((Get-Content -LiteralPath $preservedDataPath -Raw) -cne 'user-data-must-survive-update') { throw 'The user-data sentinel was modified or removed by update.' }
@@ -238,6 +268,7 @@ try {
     $rollbackStatus = Get-Content -LiteralPath $statusPath -Raw | ConvertFrom-Json -ErrorAction Stop
     if ($rollbackStatus.state -ne 'rolled_back') { throw "Forced failure did not complete automatic rollback: state=$($rollbackStatus.state) message=$($rollbackStatus.message)" }
     if (-not (Wait-TestHealth $port $Version 15)) { throw 'The previous runtime did not become healthy after rollback.' }
+    Assert-TestRuntimeIdentity $port
     if ((Get-FileHash -LiteralPath $installedExe -Algorithm SHA256).Hash -cne $installedExeHashBefore) { throw 'Rollback did not restore the original executable bytes.' }
     if ((Get-FileHash -LiteralPath $webIndexPath -Algorithm SHA256).Hash -cne $webIndexHashBeforeRollback) { throw 'Rollback did not restore the pre-update application file bytes.' }
     if ((Get-FileHash -LiteralPath (Join-Path $rollbackStatus.backup_path 'web/index.html') -Algorithm SHA256).Hash -cne $webIndexHashBeforeRollback) { throw 'Rollback backup did not capture the previous application file.' }
@@ -281,11 +312,11 @@ try {
     }
     if (Wait-TestHealth $port $Version 3) { throw 'The runtime unexpectedly remained healthy after the helper was force-terminated before restart.' }
 
-    $launcherPath = Join-Path $installRoot 'scripts/Start-LocalAIRuntime.ps1'
     $startedRuntime = & $launcherPath -NoBrowser -PassThru -DataRoot $dataRoot
     $recoveredStatus = Get-Content -LiteralPath $statusPath -Raw | ConvertFrom-Json -ErrorAction Stop
     if ($recoveredStatus.state -ne 'rolled_back') { throw "Launcher did not recover the interrupted update: state=$($recoveredStatus.state) message=$($recoveredStatus.message)" }
     if (-not (Wait-TestHealth $port $Version 15)) { throw 'Runtime did not become healthy after interrupted-update recovery.' }
+    Assert-TestRuntimeIdentity $port
     if ((Get-FileHash -LiteralPath $webIndexPath -Algorithm SHA256).Hash -cne $webIndexHashBeforeInterruptedUpdate) {
         throw 'Interrupted-update recovery did not restore the exact pre-update application file bytes.'
     }
@@ -312,6 +343,7 @@ try {
     $retryRecoveredStatus = Get-Content -LiteralPath $statusPath -Raw | ConvertFrom-Json -ErrorAction Stop
     if ($retryRecoveredStatus.state -ne 'rolled_back') { throw "Launcher could not retry a failed rollback: state=$($retryRecoveredStatus.state) message=$($retryRecoveredStatus.message)" }
     if (-not (Wait-TestHealth $port $Version 15)) { throw 'Runtime did not become healthy after rollback-failure recovery.' }
+    Assert-TestRuntimeIdentity $port
     if ((Get-FileHash -LiteralPath $webIndexPath -Algorithm SHA256).Hash -cne $webIndexHashBeforeRollbackRetry) {
         throw 'Rollback-failure recovery did not restore the exact pre-update application file bytes.'
     }
