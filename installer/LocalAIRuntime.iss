@@ -13,7 +13,7 @@
 
 #define AppName "Local AI Runtime"
 #define AppExe "LocalAIRuntime.Desktop.exe"
-#define AppId "{F4DFB343-79B4-4E84-8C5E-C3F064EADDD2}"
+#define AppId "{{F4DFB343-79B4-4E84-8C5E-C3F064EADDD2}"
 
 [Setup]
 AppId={#AppId}
