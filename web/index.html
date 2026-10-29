@@ -16,13 +16,17 @@
         <h1>Local AI Runtime</h1>
         <p class="subtitle">Manage local AI engine processes from one place.</p>
       </div>
-      <div class="status-pill"><span id="api-dot" class="dot"></span><span id="api-status">Checking API…</span></div>
+      <div class="topbar-tools">
+        <div class="status-pill"><span id="api-dot" class="dot"></span><span id="api-status">Checking API…</span></div>
+        <button id="check-updates" class="button secondary" type="button">Check for updates</button>
+        <p id="update-check-status" class="hint" role="status" aria-live="polite">Checking on startup</p>
+      </div>
     </header>
 
     <nav class="dashboard-nav" aria-label="Dashboard sections">
       <a href="#catalog-panel">Component library</a>
       <a href="#runtime-panel">Installed engines</a>
-      <a href="#chat-panel">Test chat</a>
+      <a href="#chat-panel">Chat with your model</a>
     </nav>
 
     <section id="update-notice" class="update-notice" role="status" aria-live="polite" hidden>
@@ -113,9 +117,9 @@
     </section>
 
     <section id="chat-panel" class="panel chat-panel">
-      <div class="section-heading"><div><p class="eyebrow">OPENAI-COMPATIBLE PROXY</p><h2>Test chat</h2></div></div>
-      <p id="chat-readiness" class="hint">Configure llama.cpp above, then start the engine. Chat enables once the local model server reports ready.</p>
-      <p class="hint">Baseline test: ask a short question such as “Sadece 2+2 işleminin sonucunu yaz.” The starter model is small; answer quality can vary by language. Request timing and token counts may be included in local diagnostics, but prompts and model responses are not logged.</p>
+      <div class="section-heading"><div><p class="eyebrow">YOUR LOCAL MODEL</p><h2>Chat with your model</h2></div></div>
+      <p id="chat-readiness" class="hint">Install an engine and model in the component library above. Chat becomes available when the local model is ready.</p>
+      <p class="hint">To confirm your setup works, send a simple message such as “Sadece 2+2 işleminin sonucunu yaz.” Your prompt is sent to the configured model on this computer; prompts and responses are not uploaded by the runtime.</p>
       <form id="chat-form">
         <label for="message">Message</label>
         <textarea id="message" rows="3" required maxlength="12000" placeholder="Ask your local model something…"></textarea>

@@ -53,9 +53,19 @@
       <div class="download-footnote"><span>Need to compile it yourself?</span><a href="https://github.com/azmisahin-ai/local-ai-runtime#build-from-source" target="_blank" rel="noopener noreferrer">Build from source ↗</a><span class="bullet">·</span><a href="https://github.com/azmisahin-ai/local-ai-runtime/actions" target="_blank" rel="noopener noreferrer">CI results ↗</a></div>
     </section>
 
+    <section id="quick-start" class="section container quick-start-section">
+      <div class="section-intro"><p class="eyebrow">FIRST RUN</p><h2>From download to a local answer.</h2><p>You do not need Git, build tools or a developer test script to use a published package. The app keeps its settings, engines and models separately from the program files.</p></div>
+      <div class="quick-start-grid">
+        <article class="quick-start-card"><span class="quick-step">01</span><h3>Download and extract</h3><p>Choose Windows, Linux or macOS above and extract the archive into a folder you own. The runtime itself is small; the engine and model are installed separately.</p></article>
+        <article class="quick-start-card"><span class="quick-step">02</span><h3>Open the app</h3><p>Use the launcher included in the archive: <code>Start-LocalAIRuntime.cmd</code> on Windows, <code>Start-LocalAIRuntime.sh</code> on Linux or <code>Start-LocalAIRuntime.command</code> on macOS. If your older archive has no root launcher, follow its included <code>README-INSTALL.txt</code>.</p></article>
+        <article class="quick-start-card"><span class="quick-step">03</span><h3>Install a model and chat</h3><p>In the dashboard, install the reviewed llama.cpp CPU engine and starter model. When the engine status says <strong>Ready</strong>, send a message in <strong>Chat with your model</strong>.</p></article>
+      </div>
+      <p class="quick-start-note">Updates are checked when the dashboard starts and while it remains open. Downloads are verified before install. Eligible portable Windows installs support user-confirmed apply and rollback; Linux/macOS currently require replacing the app archive after verification. <strong>One-time note for v0.1.0-alpha:</strong> that first archive predates the click-to-start launcher, so install the next release manually into a new application folder once. Your settings, engines and models are stored separately and are preserved.</p>
+    </section>
+
     <section id="features" class="section section-alt">
       <div class="container">
-        <div class="section-intro"><p class="eyebrow">CAPABILITIES</p><h2>One runtime. Modular engines.</h2><p>The page reads feature status from a versioned product manifest in this repository. Every push deploys the updated site; release downloads and notes come from GitHub's release API.</p></div>
+        <div class="section-intro"><p class="eyebrow">CAPABILITIES</p><h2>One runtime. Modular engines.</h2><p>The page reads feature status from a versioned product manifest in this repository. The site updates after all four platform checks pass. Binary downloads come from the latest versioned GitHub Release, not directly from an unreviewed main-branch push.</p></div>
         <div id="feature-grid" class="feature-grid"><div class="feature-card skeleton"></div><div class="feature-card skeleton"></div><div class="feature-card skeleton"></div></div>
       </div>
     </section>

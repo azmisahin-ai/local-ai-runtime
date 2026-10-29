@@ -9,6 +9,19 @@
 - `SHA256SUMS.txt` is attached to each release so users can detect accidental corruption and verify file integrity against the published checksum.
 - `site/product.json` is the feature/status manifest used by the website. Keep it updated in the same change that adds/removes a user-visible feature. `site/app.js` fetches release assets and notes from the public GitHub Releases API.
 
+## One repeatable maintainer publish command
+
+Use the root-level [`Publish-LocalAIRuntime.ps1`](../Publish-LocalAIRuntime.ps1) as the one stable entry point instead of creating a new push script for each change. Download it once into the Downloads folder as `Publish-LocalAIRuntime.ps1`. The stable helper imports the exact commit from the prepared bundle, pushes `main` by fast-forward only, then delegates CI and release gating to `scripts/Publish-LocalAIRuntime.ps1` included in that bundle. For each prepared change, replace the fixed `local-ai-runtime-update.bundle` file in Downloads, then run the same command from PowerShell 5.1:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\Publish-LocalAIRuntime.ps1
+```
+
+The script uses the standard `local-ai-runtime-real-engine-push` working folder, fetches the official `main`, verifies and imports the prepared bundle at its original commit SHA, refuses stale/diverged bundles and dirty worktrees, and does a normal non-force push. It waits for the `main` workflow to pass all four platform/package gates and the Pages deployment before creating the next unused `vX.Y.Z-alpha` tag. It then waits for the tag workflow; GitHub publishes the Release and `SHA256SUMS.txt` only if those platform jobs also pass. The version is calculated from the existing version tags, so maintainers do not hand-edit a version for each alpha iteration. If a gate fails, the script stops before the next step and prints the Actions link. It never force-pushes, deletes a tag, or moves an existing release.
+
+Each new prepared bundle should replace the previous file at the same fixed path; keep the helper script and command unchanged. Preview/site deployment happens after successful `main` CI; the public download links change when the tag-driven Release finishes. Do not describe a preview build as the public release.
+
 ## Preview builds and release rehearsal
 
 The single `pipeline.yml` run orchestrates the whole lifecycle. Pull requests build and test on Windows, Linux, macOS Intel and macOS Apple Silicon without producing distribution packages. Each push to `main` runs one Windows, one Linux and two macOS architecture targets in parallel; every extracted package must pass `/health`. Only after all four target jobs succeed does the final website job publish `site/` to GitHub Pages. Preview artifacts are retained for 14 days. These are development previews, not public Releases and not recommended as stable updates. The weekly scheduled run invokes only the macOS compatibility matrix.
@@ -36,6 +49,10 @@ Do not reuse or move an already published release tag. Cut a new version for eve
 Enable **Settings → Pages → Build and deployment → Source: GitHub Actions** once. The `publish-pages` job in `.github/workflows/pipeline.yml` deploys `site/` at the end of a successful `main` pipeline, after all four package smoke tests pass (or on a successful manual run from `main`). This produces one workflow run with visible platform jobs and a final website deployment job. The release panel reads current GitHub Releases at page load, so downloadable assets do not need to be hardcoded into HTML.
 
 The expected URL is `https://azmisahin-ai.github.io/local-ai-runtime/` after Pages has been enabled and the first deployment succeeds.
+
+## One-time migration from the first alpha
+
+The `v0.1.0-alpha` package was published before the top-level platform launchers were added. Its updater intentionally rejects files it does not recognize, so that exact installed version cannot apply the first launcher-enabled archive in place. Users moving from `v0.1.0-alpha` to the next launcher-enabled alpha should download the new package from the project site, extract it into a new application folder, and launch it manually once. Configuration, engines, models and logs remain in the separate user-data folder. The updated Windows updater recognizes the launcher file for subsequent in-app upgrades. Do not remove the old application folder until the new one starts successfully.
 
 ## In-app update behavior in this alpha
 

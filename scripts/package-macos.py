@@ -135,6 +135,7 @@ def main() -> None:
     parser.add_argument("--config", required=True, type=Path)
     parser.add_argument("--license", required=True, type=Path)
     parser.add_argument("--launcher", required=True, type=Path)
+    parser.add_argument("--user-launcher", required=True, type=Path, help="Double-clickable user launcher copied to the package root")
     parser.add_argument("--stage", required=True, type=Path)
     parser.add_argument("--package", required=True, type=Path)
     parser.add_argument("--version", required=True)
@@ -158,6 +159,9 @@ def main() -> None:
     launcher = stage / "scripts" / "start-runtime.sh"
     shutil.copy2(args.launcher, launcher)
     launcher.chmod(launcher.stat().st_mode | 0o111)
+    user_launcher = stage / "Start-LocalAIRuntime.command"
+    shutil.copy2(args.user_launcher, user_launcher)
+    user_launcher.chmod(user_launcher.stat().st_mode | 0o111)
     runtime.chmod(runtime.stat().st_mode | 0o111)
 
     images: list[Path] = [runtime]
@@ -263,7 +267,8 @@ def main() -> None:
     readme = stage / "README-INSTALL.txt"
     readme.write_text(
         f"Local AI Runtime {args.version} — macOS {args.arch}\n\n"
-        "Run: ./scripts/start-runtime.sh\n\n"
+        "Double-click Start-LocalAIRuntime.command to start the app and open the dashboard.\n"
+        "Advanced: ./scripts/start-runtime.sh\n\n"
         "The package includes the runtime, its Homebrew dynamic-library dependencies, and\n"
         "third-party license notices. macOS system libraries remain an operating-system requirement.\n"
         "It does not include\n"

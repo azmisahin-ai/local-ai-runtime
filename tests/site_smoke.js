@@ -32,6 +32,9 @@ async function main() {
   const root = path.resolve(__dirname, '..');
   const product = JSON.parse(fs.readFileSync(path.join(root, 'site/product.json'), 'utf8'));
   const apiUrl = product.releasesApi;
+  const siteHtml = fs.readFileSync(path.join(root, 'site/index.html'), 'utf8');
+  const dashboardHtml = fs.readFileSync(path.join(root, 'web/index.html'), 'utf8');
+  const dashboardScript = fs.readFileSync(path.join(root, 'web/app.js'), 'utf8');
   const assets = [
     'local-ai-runtime-windows-x64.zip',
     'local-ai-runtime-linux-x64.tar.gz',
@@ -100,10 +103,17 @@ async function main() {
     assert(rows.some((row) => row.hrefs.some((href) => href.endsWith(`/${file}`))), `missing asset link: ${file}`);
   }
   assert.equal(elements.get('#latest-version').textContent, 'v0.1.0-alpha');
-  assert.equal(elements.get('#site-updated').textContent, 'Product manifest · 0.1.0-alpha');
+  assert.equal(elements.get('#site-updated').textContent, 'Project data · live');
   assert.equal(grid.afterChildren.length, 1, 'checksum link should be rendered below the platform downloads');
+  assert(product.features.some((feature) => feature.name === 'Simple first launch'), 'product manifest should describe the user launch flow');
+  assert(siteHtml.includes('From download to a local answer.'), 'site should explain a user-first first-run path');
+  assert(siteHtml.includes('Start-LocalAIRuntime.cmd') && siteHtml.includes('Start-LocalAIRuntime.command'), 'site should explain the platform launchers');
+  assert(siteHtml.includes('One-time note for v0.1.0-alpha'), 'site should explain the one-time migration from the first alpha archive');
+  assert(dashboardHtml.includes('id="check-updates"'), 'dashboard should expose a manual update check');
+  assert(dashboardHtml.includes('Chat with your model'), 'dashboard should present chat as a user task, not a developer test');
+  assert(dashboardScript.includes('setInterval(() => { if (Date.now() - lastUpdateCheckAt > 6 * 60 * 60 * 1000) checkForUpdates(); }'), 'dashboard should refresh update metadata periodically');
   assert(collectText(grid.afterChildren[0]).includes('SHA256SUMS.txt'));
-  process.stdout.write('Site smoke test passed: four platform assets, live version, and checksum link.\n');
+  process.stdout.write('Site smoke test passed: four platform assets, checksums, and user-first launch/update flow.\n');
 }
 
 main().catch((error) => {

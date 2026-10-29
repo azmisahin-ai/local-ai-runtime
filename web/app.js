@@ -12,6 +12,8 @@ const updateLink = document.querySelector('#update-link');
 const updateDownloadButton = document.querySelector('#update-download');
 const updateApplyButton = document.querySelector('#update-apply');
 const runtimeVersion = document.querySelector('#runtime-version');
+const checkUpdatesButton = document.querySelector('#check-updates');
+const updateCheckStatus = document.querySelector('#update-check-status');
 const chatReadiness = document.querySelector('#chat-readiness');
 const chatSendButton = document.querySelector('#send');
 const llamaSetupForm = document.querySelector('#llama-setup-form');
@@ -34,6 +36,8 @@ let availableRuntimeUpdate = null;
 let updateStageJobId = null;
 let updateApplySupported = false;
 let updateApplyInProgress = false;
+let updateCheckInProgress = false;
+let lastUpdateCheckAt = 0;
 
 const REPOSITORY_RELEASES = 'https://github.com/azmisahin-ai/local-ai-runtime/releases';
 const FALLBACK_RELEASE_API = 'https://api.github.com/repos/azmisahin-ai/local-ai-runtime/releases?per_page=10';
@@ -116,7 +120,15 @@ function compareVersions(leftText, rightText) {
   return left.prerelease.localeCompare(right.prerelease, undefined, { numeric: true });
 }
 
-async function checkForUpdates() {
+async function checkForUpdates(manual = false) {
+  if (updateCheckInProgress) return;
+  updateCheckInProgress = true;
+  lastUpdateCheckAt = Date.now();
+  if (manual) {
+    checkUpdatesButton.disabled = true;
+    checkUpdatesButton.textContent = 'Checking…';
+    updateCheckStatus.textContent = 'Checking the official release channel…';
+  }
   try {
     const local = await api('/version');
     const current = local.version || '0.0.0';
@@ -134,7 +146,24 @@ async function checkForUpdates() {
       .filter((release) => !release.draft && parseVersion(release.tag_name) &&
         (installedIsPrerelease || !release.prerelease))
       .sort((left, right) => compareVersions(right.tag_name, left.tag_name))[0];
-    if (!latest || compareVersions(latest.tag_name, current) <= 0) return;
+
+    if (!latest || compareVersions(latest.tag_name, current) <= 0) {
+      updateCheckStatus.textContent = `Up to date · ${current}`;
+      availableRuntimeUpdate = null;
+      updateDownloadButton.hidden = true;
+      updateDownloadButton.disabled = true;
+      updateApplyButton.hidden = true;
+      updateNotice.hidden = !manual;
+      if (manual) {
+        updateTitle.textContent = 'You’re up to date';
+        updateCopy.textContent = `This installation is running ${current}. No newer version is available in the selected release channel. Your local models and settings are unchanged.`;
+        updateLink.href = REPOSITORY_RELEASES;
+        updateLink.textContent = 'All releases';
+        updateNotice.hidden = false;
+        updateCheckStatus.textContent = `Up to date · ${current}`;
+      }
+      return;
+    }
 
     updateTitle.textContent = `Version ${latest.tag_name} is available`;
     updateLink.href = safeHttpsUrl(latest.html_url) || REPOSITORY_RELEASES;
@@ -161,19 +190,42 @@ async function checkForUpdates() {
         digest,
         size,
       };
-      updateDownloadButton.textContent = 'Download & verify package';
+      updateDownloadButton.textContent = 'Download & verify update';
       updateDownloadButton.hidden = false;
       updateDownloadButton.disabled = false;
-      updateCopy.textContent = `You are using ${current}. This update is for this computer's platform. Downloading stores the package under your Local AI Runtime user-data folder and verifies GitHub's SHA-256 digest. No application files change until you explicitly apply a verified update.`;
+      const applyGuidance = updateApplySupported
+        ? 'After verification, choose Apply update & restart. The previous files are kept for rollback.'
+        : /windows-x64\.zip$/i.test(asset.name)
+          ? 'This installation cannot safely replace itself in place. Use the release download to extract the verified package into a new application folder, then start it there. Your settings, engines and models remain in the separate user-data folder.'
+          : 'This platform currently verifies the official package in the app but does not yet install it in place. Close the app, extract the new archive into a new folder, and start it again; settings, engines and models remain in your user-data folder.';
+      updateCopy.textContent = `You are using ${current}. Downloading stores the official ${latest.tag_name} package under your Local AI Runtime user-data folder and checks its advertised size and SHA-256 digest. ${applyGuidance}`;
       const stagedStatus = await getStagedUpdateStatus(latest.tag_name).catch(() => null);
       if (stagedStatus?.staged) showStagedUpdateStatus(stagedStatus, current);
     } else {
-      updateCopy.textContent = `You are using ${current}. A newer release exists, but GitHub did not provide a supported platform package with a SHA-256 digest. Open the release notes to inspect available downloads; automatic staging is disabled.`;
+      updateCopy.textContent = `You are using ${current}. A newer release exists, but the official release metadata does not include a supported package and SHA-256 digest for this computer. Open the release notes to download manually; automatic staging is disabled.`;
     }
     updateNotice.hidden = false;
+    updateCheckStatus.textContent = `Update available · ${latest.tag_name}`;
   } catch (error) {
     // Offline use is expected. Keep local inference usable when GitHub is unreachable.
     console.info('Update check skipped:', error.message);
+    if (!manual) updateCheckStatus.textContent = 'Could not check for updates · local app remains available';
+    if (manual) {
+      updateTitle.textContent = 'Could not check for updates';
+      updateCopy.textContent = 'Local AI Runtime is still available. Check your internet connection or open GitHub Releases to check the current version manually.';
+      updateLink.href = REPOSITORY_RELEASES;
+      updateLink.textContent = 'Open GitHub Releases';
+      updateDownloadButton.hidden = true;
+      updateApplyButton.hidden = true;
+      updateNotice.hidden = false;
+      updateCheckStatus.textContent = 'Update check failed · local app remains available';
+    }
+  } finally {
+    updateCheckInProgress = false;
+    if (manual) {
+      checkUpdatesButton.disabled = false;
+      checkUpdatesButton.textContent = 'Check for updates';
+    }
   }
 }
 
@@ -213,7 +265,9 @@ function showStagedUpdateStatus(status, currentVersion) {
     updateApplyButton.disabled = false;
     updateApplyButton.textContent = 'Apply update & restart';
   } else if (!updateApplySupported) {
-    updateCopy.textContent += ' This development/preview build can stage updates but cannot apply a public release in place; this prevents replacing newer preview code with an older tagged build.';
+    updateCopy.textContent += /windows-x64\.zip$/i.test(status.asset_name || availableRuntimeUpdate?.asset_name || '')
+      ? ' This installation cannot safely apply updates in place. No application files were changed; download the verified release and extract it into a new application folder. Your user-data folder is preserved.'
+      : ' This platform verifies update packages in-app but does not yet install them in place. After verification, close the app and replace the application archive; settings, engines and models remain in your user-data folder.';
   } else if (!status.apply_supported) {
     updateCopy.textContent += ' Apply-and-restart is not supported by this installation. The verified package is kept staged and no files were changed.';
   }
@@ -785,6 +839,7 @@ document.querySelector('#chat-form').addEventListener('submit', async (event) =>
 });
 
 updateDownloadButton.addEventListener('click', stageRuntimeUpdate);
+checkUpdatesButton.addEventListener('click', () => checkForUpdates(true));
 updateApplyButton.addEventListener('click', applyRuntimeUpdate);
 
 chatSendButton.disabled = true;
@@ -793,6 +848,8 @@ refreshEngines();
 refreshCatalog();
 refreshDownloads();
 checkForUpdates();
+window.addEventListener('focus', () => { if (Date.now() - lastUpdateCheckAt > 5 * 60 * 1000) checkForUpdates(); });
+setInterval(() => { if (Date.now() - lastUpdateCheckAt > 6 * 60 * 60 * 1000) checkForUpdates(); }, 60 * 1000);
 setInterval(refreshHealth, 5000);
 setInterval(refreshEngines, 5000);
 setInterval(refreshDownloads, 2000);

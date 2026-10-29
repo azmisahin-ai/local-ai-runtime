@@ -4,6 +4,10 @@ This project follows a lightweight Keep a Changelog structure. GitHub Release no
 
 ## Unreleased
 
+- Add one stable maintainer publishing command that imports the prepared Git bundle with its original commit SHA, pushes `main` without force, waits for the four-platform CI and Pages job, then auto-increments the alpha release tag and waits for release CI.
+- Add platform-native root launchers and a three-step first-run path on the project site; normal users start the packaged app and verify local inference by chatting in the dashboard rather than running developer test scripts.
+- Add a manual dashboard update check, visible update status, and automatic metadata refresh on launch/focus/periodically; make non-applicable update/install limitations explicit.
+- Document the one-time manual migration from the first `v0.1.0-alpha` package to the new launcher-enabled package; preserve settings, engines, models and logs in the user-data folder.
 - Add a Windows PowerShell real-engine smoke test in the source tools for the configured `llama-server.exe` and GGUF model. It validates the GGUF header, waits for engine readiness, checks `/v1/models`, sends a non-streaming chat request, records a local report without generated response text, and cleans up only processes it started.
 - Document the Windows real-engine validation process and update the roadmap to reflect the successful `v0.1.0-alpha` release and the remaining device-level CPU/CUDA checks.
 - Fix Windows updater parameter validation so `-ValidateOnly` can verify a staged package without a running runtime PID; actual apply operations still require a positive runtime PID. This unblocks the tampered-archive SHA-256 check in the Windows package smoke test.

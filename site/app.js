@@ -41,7 +41,7 @@ function renderFeatures(product) {
     featureGrid.append(card);
   }
   projectStatus.textContent = `${product.status || 'OPEN SOURCE'} · OPEN SOURCE`;
-  siteUpdated.textContent = `Product manifest · ${product.currentVersion || 'development'}`;
+  siteUpdated.textContent = 'Project data · live';
 }
 
 function parseReleaseVersion(value) {

@@ -2,16 +2,16 @@
 
 The roadmap distinguishes implemented code from platform/model combinations that have actually been tested. A build passing on GitHub Actions does not prove that CUDA, a particular GPU, or a particular model works.
 
-## Active focus — Windows real-engine validation
+## Active focus — user-first delivery and updates
 
-The tagged Windows portable update flow and canonical four-platform package gate passed at commit `b764554`; `v0.1.0-alpha` was published successfully. Keep Windows as the primary user-facing platform while moving from fake-engine CI coverage to a repeatable, device-level real-inference check. The hosted CI intentionally does not download the engine or model weights.
+The four-platform package gate and the `v0.1.0-alpha` release passed. The next user-facing step is to make first launch and publishing predictable: one launcher per platform, one reusable maintainer publish command, and clear in-app update status. Windows remains the first platform for safe in-place apply/rollback. Linux/macOS must gain equivalent tested apply/recovery helpers before their updates can be described as one-click. Hosted CI intentionally does not download engine binaries or model weights.
 
 - [x] Re-run Windows x64 CI after the `-ValidateOnly` parameter fix; validation mode checks a tampered archive without a runtime PID while actual apply mode still requires a positive PID.
 - [x] Confirm the complete hosted Windows update smoke test passes: tamper rejection, package preflight, replacement/restart, user-data preservation, rollback, forced helper termination recovery, and retry after rollback failure.
 - [x] Confirm all four platform package jobs pass and Pages deploys only after those jobs pass.
 - [x] Publish the tag-gated `v0.1.0-alpha` prerelease with Windows/Linux/macOS Intel/macOS ARM64 archives and `SHA256SUMS.txt`.
 - [x] Add a source-distributed Windows PowerShell real-engine smoke test that checks the configured `llama-server.exe`, GGUF header, model readiness, `/v1/models`, and a real non-streaming chat completion without downloading components or editing user config.
-- [ ] Run `scripts\Test-LocalAIRuntimeRealEngine.ps1` on a real Windows 10/11 x64 machine with the starter model in CPU mode; preserve the local report and confirm user-data/configuration remain unchanged.
+- [ ] Maintainer release gate: run the real-engine smoke test on a Windows 10/11 x64 machine with the starter model in CPU mode; preserve the local report and confirm user-data/configuration remain unchanged. This is not a user setup step; users validate their setup by chatting in the dashboard.
 - [ ] Run a separate CUDA smoke test and record the GPU model, driver, VRAM, GGUF quantization, llama.cpp package/tag, and engine log evidence. A configured `--n-gpu-layers auto` value alone is not proof that CUDA is used.
 
 
@@ -85,10 +85,24 @@ The proposed separation and catalog fields are documented in [engine distributio
 - [ ] Optional MCP adapter with a narrow, audited tool allowlist
 - [ ] Equivalent platform-native apply/recovery helpers and tests for Linux and macOS
 - [ ] Release artifact provenance/signing plan; SHA-256 checks against release metadata are integrity checks, not publisher signatures
-- [ ] Optional signed updater with staged download, signature/provenance verification, restart orchestration and rollback
+- [ ] Optional signed updater with staged download, signature/provenance verification, restart orchestration and rollback; no silent executable replacement before trust and recovery are independently verified
 - [ ] Linux/macOS distributable releases only after packaging and clean-machine smoke tests
 
 
 ### Platform CI policy
 
 Windows x64, Linux x64, macOS Intel x64 and macOS Apple Silicon arm64 are coordinated by one `pipeline.yml`. Pull requests build and test each target without packaging. On `main`, the four platform/architecture targets build, test and package in parallel; the Pages deployment is the final job and runs only after all four extracted package smoke tests pass. A `v*` tag publishes all four assets with a SHA-256 manifest after the same gates pass. The weekly scheduled run executes only the macOS compatibility matrix, avoiding repeated Windows dependency compilation when no source push occurred.
+
+
+## User-first delivery policy
+
+- [x] Provide a double-click/one-command launcher in each platform package and describe the user path on the project site.
+- [x] Give maintainers one stable root-level publishing command: import the prepared Git bundle preserving its exact commit SHA, push `main` without force, then delegate to the versioned release gate inside that commit to wait for the four-platform workflow, create the next alpha tag, and wait for the release workflow.
+- [x] Add an in-dashboard **Check for updates** action, visible status, startup check, and periodic/focus refresh.
+- [ ] Add tested platform-native apply/recovery helpers for Linux and macOS; until these pass, the UI must be explicit that those platforms require manual archive replacement.
+- [ ] After signed provenance/attestation and rollback threat-model tests, evaluate optional automatic download and one-click restart/install. Do not silently replace executables.
+
+- End users download versioned packages from the project site and start them with a platform launcher; they should not need Git, build tools or maintainer test scripts.
+- The dashboard checks for updates on launch, offers a manual **Check for updates** action, and refreshes while the dashboard is open. Downloads are size/SHA-256 verified before any installation action.
+- Main pushes are automatically built/tested and update the project site after all four package gates pass. The public binary download remains the latest versioned Release until a new `v*` tag passes the same gates; this prevents unreviewed commits from silently becoming end-user updates.
+- Windows tagged portable packages support user-confirmed apply/restart and rollback. Linux/macOS still require manual package replacement after in-app verification; equivalent apply/recovery is a product priority, not a user-side test command.

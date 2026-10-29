@@ -206,7 +206,7 @@ function Test-SafeUpdateRelativePath([string]$RelativePath) {
     }
     return (($RelativePath -match '^local-ai-runtime\.exe$') -or
         ($RelativePath -match '^[^\\]+\.dll$') -or
-        ($RelativePath -in @('LICENSE', 'README-INSTALL.txt', 'config\engines.example.json',
+        ($RelativePath -in @('LICENSE', 'README-INSTALL.txt', 'Start-LocalAIRuntime.cmd', 'config\engines.example.json',
                               'scripts\Start-LocalAIRuntime.ps1', 'scripts\Apply-LocalAIRuntimeUpdate.ps1')) -or
         $RelativePath.StartsWith('web\', [StringComparison]::OrdinalIgnoreCase))
 }
@@ -533,7 +533,7 @@ try {
             }
             $allowed = ($relative -match '^local-ai-runtime\.exe$') -or
                 ($relative -match '^[^\\]+\.dll$') -or
-                ($relative -in @('LICENSE', 'README-INSTALL.txt', 'config\engines.example.json',
+                ($relative -in @('LICENSE', 'README-INSTALL.txt', 'Start-LocalAIRuntime.cmd', 'config\engines.example.json',
                                   'scripts\Start-LocalAIRuntime.ps1', 'scripts\Apply-LocalAIRuntimeUpdate.ps1')) -or
                 $relative.StartsWith('web\', [StringComparison]::OrdinalIgnoreCase)
             if (-not $allowed) { throw "Unexpected path in runtime update package: '$relative'." }

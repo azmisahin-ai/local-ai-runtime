@@ -1,6 +1,8 @@
-# Real engine validation on Windows
+# Maintainer-only: real engine validation on Windows
 
-The canonical CI workflow uses a fake OpenAI-compatible engine so that CI never downloads a model or claims support for a specific GPU. Use the repository script `scripts/Test-LocalAIRuntimeRealEngine.ps1` on a Windows 10/11 x64 machine after installing the reviewed llama.cpp component and a GGUF model. The helper is not included in the portable ZIP; run it from a source checkout and point `-RuntimeRoot` at the extracted release folder. This keeps the alpha updater’s strict ZIP file allowlist backward-compatible.
+**This is a maintainer/release-validation procedure, not a normal user setup step.** End users should install a published package, use the dashboard component library, and send a message in **Chat with your model**. They do not need a source checkout or PowerShell test script.
+
+The canonical CI workflow uses a fake OpenAI-compatible engine so that CI never downloads a model or claims support for a specific GPU. Maintainers can use the repository script `scripts/Test-LocalAIRuntimeRealEngine.ps1` on a Windows 10/11 x64 machine after installing the reviewed llama.cpp component and a GGUF model. The helper is not included in the portable ZIP; run it from a source checkout and point `-RuntimeRoot` at the extracted release folder. This keeps the alpha updater’s strict ZIP file allowlist backward-compatible.
 
 ## Before running
 

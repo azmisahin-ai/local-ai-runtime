@@ -2,7 +2,6 @@
   "productName": "Local AI Runtime",
   "tagline": "One local control plane for the AI engines you choose.",
   "status": "Early alpha",
-  "currentVersion": "0.1.0-alpha",
   "repository": "https://github.com/azmisahin-ai/local-ai-runtime",
   "releasesApi": "https://api.github.com/repos/azmisahin-ai/local-ai-runtime/releases?per_page=10",
   "releasesPage": "https://github.com/azmisahin-ai/local-ai-runtime/releases",
@@ -56,7 +55,7 @@
     },
     {
       "name": "Release downloads and checksums",
-      "description": "Version-tagged releases publish Windows x64, Linux x64, macOS Intel x64 and macOS Apple Silicon arm64 packages with one SHA-256 manifest, only after all platform build/test/package jobs pass. The v0.1.0-alpha pre-release is now published; future version tags follow the same gated process.",
+      "description": "Versioned releases publish Windows x64, Linux x64, macOS Intel x64 and macOS Apple Silicon arm64 packages with a SHA-256 manifest only after all platform build/test/package jobs pass.",
       "status": "preview"
     },
     {
@@ -65,8 +64,8 @@
       "status": "preview"
     },
     {
-      "name": "Verified runtime updates",
-      "description": "The dashboard downloads the matching official platform release, verifies size and SHA-256, and stages it under local user data. Tagged portable Windows releases add explicit apply/restart, a per-file SHA-256-verified backup, post-update health checks, automatic rollback, and next-launch recovery after an interrupted update. Development previews and Linux/macOS are staging-only; no telemetry is sent.",
+      "name": "Simple first launch",
+      "description": "Published packages include a platform launcher that opens the local dashboard: double-click on Windows and macOS, or run the Linux launcher. Normal users can install a reviewed engine/model and verify it by chatting in the dashboard; no source checkout or maintainer smoke-test command is required.",
       "status": "preview"
     },
     {
@@ -83,13 +82,18 @@
       "name": "MCP integration",
       "description": "Expose selected runtime operations through a deliberately limited, localhost-only MCP adapter.",
       "status": "planned"
+    },
+    {
+      "name": "Verified runtime updates",
+      "description": "The dashboard checks for updates on launch, provides a manual check and refreshes periodically while open. Matching official release packages are size/SHA-256 verified before use. Tagged portable Windows releases support user-confirmed apply/restart, backup verification, health checks, rollback and interrupted-update recovery; Linux/macOS still require manual archive replacement after verification.",
+      "status": "preview"
     }
   ],
   "securityNotes": [
     "Only localhost/loopback is supported by default.",
     "The built-in component downloader accepts only reviewed catalog IDs, uses HTTPS-only transfer, validates expected size and SHA-256, checks the GGUF header, and rejects archive traversal/link/special-file entries. It does not accept arbitrary URLs.",
     "Engine release SHA-256 metadata is fetched from the official upstream GitHub API; this verifies integrity against that metadata but is not a cryptographic signature or independent publisher attestation.",
-    "No usage telemetry or silent binary replacement is enabled; opening the dashboard can request public release metadata from GitHub. Windows portable-release updates require user confirmation and use SHA-256 checks against release metadata plus a verified local rollback copy; these checks do not replace signed release provenance or publisher attestation.",
+    "No usage telemetry or silent executable replacement is enabled. Update checks request public release metadata from GitHub. Windows portable-release updates require user confirmation and a verified local rollback copy; Linux/macOS currently require manual application archive replacement after verification. SHA-256 checks do not replace publisher signatures or provenance attestation.",
     "The API has no authentication. Do not expose the runtime or setup API to a LAN or public internet."
   ]
 }
