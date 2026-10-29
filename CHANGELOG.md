@@ -1,4 +1,5 @@
 # Changelog
+- Fix Windows installer smoke-test race by waiting for Inno Setup post-uninstall cleanup and preserving the uninstall log on failure.
 
 
 This project follows a lightweight Keep a Changelog structure. GitHub Release notes are generated from merged commits when a version tag is published; update this file with user-visible changes during each development cycle.

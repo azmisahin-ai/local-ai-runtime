@@ -438,9 +438,23 @@ jobs:
           }
           $uninstaller = Join-Path $installRoot 'unins000.exe'
           if (-not (Test-Path $uninstaller)) { throw 'Inno Setup uninstaller was not registered.' }
-          & $uninstaller '/VERYSILENT' '/SUPPRESSMSGBOXES' '/NORESTART'
-          if ($LASTEXITCODE -ne 0) { throw "Silent uninstall failed with exit code $LASTEXITCODE." }
-          if (Test-Path $installedHost) { throw 'Desktop application files remain after uninstallation.' }
+          $uninstallLog = Join-Path $env:GITHUB_WORKSPACE 'dist/uninstall-verification.log'
+          & $uninstaller '/VERYSILENT' '/SUPPRESSMSGBOXES' '/NORESTART' "/LOG=$uninstallLog"
+          if ($LASTEXITCODE -ne 0) { throw "Silent uninstall failed with exit code $LASTEXITCODE. Log: $uninstallLog" }
+          # Inno Setup's uninstaller can return while its temporary clone finishes
+          # post-uninstall cleanup. Wait for the installed host to disappear instead
+          # of racing the clone with an immediate Test-Path check.
+          $uninstallDeadline = [DateTime]::UtcNow.AddSeconds(15)
+          while ((Test-Path -LiteralPath $installedHost) -and [DateTime]::UtcNow -lt $uninstallDeadline) {
+            Start-Sleep -Milliseconds 200
+          }
+          if (Test-Path -LiteralPath $installedHost) {
+            $remainingEntries = if (Test-Path -LiteralPath $installRoot) {
+              (Get-ChildItem -LiteralPath $installRoot -Force -Recurse -ErrorAction SilentlyContinue | ForEach-Object FullName) -join [Environment]::NewLine
+            } else { '<install directory has been removed>' }
+            $uninstallTail = if (Test-Path -LiteralPath $uninstallLog) { (Get-Content -LiteralPath $uninstallLog -Tail 40) -join [Environment]::NewLine } else { '<uninstall log was not created>' }
+            throw "Desktop application files remain after uninstallation. Remaining entries:`n$remainingEntries`nUninstall log ($uninstallLog):`n$uninstallTail"
+          }
           Get-FileHash $package, $setup -Algorithm SHA256 | Format-List
           } finally {
             $packageTimer.Stop()
