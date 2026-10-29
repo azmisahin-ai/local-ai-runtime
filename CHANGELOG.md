@@ -4,6 +4,8 @@ This project follows a lightweight Keep a Changelog structure. GitHub Release no
 
 ## Unreleased
 
+- Add per-platform CI performance summaries for dependency install/configure, build, tests, package smoke checks and runner-side elapsed time; include Windows vcpkg cache hit identity, matched key, file counts and cache sizes to distinguish cache misses from runner queue delays.
+
 - Refresh the published-release website view: show download links for Windows, Linux, macOS Intel and Apple Silicon assets, update the displayed product version to `0.1.0-alpha`, and remove stale copy saying the first version tag has not been published.
 
 - Consolidate Windows, Linux, macOS Intel and macOS Apple Silicon build/test/package jobs into the canonical workflow. Main pushes create four preview artifacts; Pages deploys only when all four pass; `v*` releases publish all four packages and a single SHA-256 manifest. The weekly schedule runs only the macOS matrix.

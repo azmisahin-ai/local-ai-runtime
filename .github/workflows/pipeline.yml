@@ -42,6 +42,12 @@ jobs:
       - name: Checkout tagged source
         uses: actions/checkout@v7
 
+      - name: Record job start time
+        id: timing-start
+        shell: pwsh
+        run: |
+          "epoch=$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())" >> $env:GITHUB_OUTPUT
+
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
@@ -115,6 +121,12 @@ jobs:
           Write-Host "vcpkg binary cache: $binaryCache"
           Write-Host "vcpkg download cache: $downloadsCache"
 
+      - name: Start vcpkg cache restore timer
+        id: cache-restore-start
+        shell: pwsh
+        run: |
+          "epoch=$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())" >> $env:GITHUB_OUTPUT
+
       - name: Restore vcpkg dependency caches
         id: vcpkg-cache
         uses: actions/cache/restore@v6
@@ -125,6 +137,15 @@ jobs:
           key: windows-vcpkg-${{ runner.arch }}-${{ steps.vcpkg-cache-identity.outputs.identity }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: |
             windows-vcpkg-${{ runner.arch }}-${{ steps.vcpkg-cache-identity.outputs.identity }}-
+
+      - name: Record vcpkg cache restore duration
+        id: cache-restore-duration
+        if: ${{ always() }}
+        shell: pwsh
+        run: |
+          $start = '${{ steps.cache-restore-start.outputs.epoch }}'
+          $seconds = if ($start -match '^\d+$') { [math]::Max(0, [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [long]$start) } else { 0 }
+          "seconds=$seconds" >> $env:GITHUB_OUTPUT
 
       - name: Report dependency cache status
         shell: pwsh
@@ -143,13 +164,37 @@ jobs:
           if ($version -notmatch '^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$') { throw "Invalid release version: $version" }
           if ([string]::IsNullOrWhiteSpace($env:VCPKG_INSTALLATION_ROOT)) { throw 'vcpkg is not available on this runner.' }
           $toolchain = Join-Path $env:VCPKG_INSTALLATION_ROOT 'scripts/buildsystems/vcpkg.cmake'
+          $configureTimer = [System.Diagnostics.Stopwatch]::StartNew()
           & cmake -S . -B build "-DCMAKE_TOOLCHAIN_FILE=$toolchain" -DVCPKG_MANIFEST_MODE=ON "-DLAR_VERSION=$version" -DLAR_BUILD_TESTS=ON 2>&1 | Tee-Object -FilePath configure-vcpkg.log
           $configureExitCode = $LASTEXITCODE
+          $configureTimer.Stop()
+          $configureSeconds = [math]::Round($configureTimer.Elapsed.TotalSeconds, 2)
+          "seconds=$configureSeconds" >> $env:GITHUB_OUTPUT
           if ($configureExitCode -ne 0) {
             Write-Host 'CMake/vcpkg configure failed. Final diagnostic lines:' -ForegroundColor Red
             Get-Content configure-vcpkg.log -Tail 160
             exit $configureExitCode
           }
+
+      - name: Measure vcpkg cache contents
+        id: vcpkg-cache-stats
+        if: ${{ always() }}
+        shell: pwsh
+        run: |
+          $binaryCache = Join-Path $env:RUNNER_TEMP 'lar-vcpkg-binary-cache'
+          $downloadsCache = Join-Path $env:RUNNER_TEMP 'lar-vcpkg-downloads'
+          $binaryFiles = @(Get-ChildItem -LiteralPath $binaryCache -File -Recurse -ErrorAction SilentlyContinue)
+          $downloadFiles = @(Get-ChildItem -LiteralPath $downloadsCache -File -Recurse -ErrorAction SilentlyContinue)
+          $binaryBytes = ($binaryFiles | Measure-Object -Property Length -Sum).Sum
+          $downloadBytes = ($downloadFiles | Measure-Object -Property Length -Sum).Sum
+          if ($null -eq $binaryBytes) { $binaryBytes = 0 }
+          if ($null -eq $downloadBytes) { $downloadBytes = 0 }
+          "binary_files=$($binaryFiles.Count)" >> $env:GITHUB_OUTPUT
+          "binary_mb=$([math]::Round($binaryBytes / 1MB, 1))" >> $env:GITHUB_OUTPUT
+          "download_files=$($downloadFiles.Count)" >> $env:GITHUB_OUTPUT
+          "download_mb=$([math]::Round($downloadBytes / 1MB, 1))" >> $env:GITHUB_OUTPUT
+          Write-Host "vcpkg binary cache after configure: $($binaryFiles.Count) files, $([math]::Round($binaryBytes / 1MB, 1)) MiB"
+          Write-Host "vcpkg downloads cache after configure: $($downloadFiles.Count) files, $([math]::Round($downloadBytes / 1MB, 1)) MiB"
 
       - name: Save vcpkg dependency caches
         if: ${{ always() && steps.configure.outcome == 'success' && steps.vcpkg-cache.outputs.cache-hit != 'true' }}
@@ -161,7 +206,19 @@ jobs:
           key: windows-vcpkg-${{ runner.arch }}-${{ steps.vcpkg-cache-identity.outputs.identity }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
 
       - name: Build
-        run: cmake --build build --config Release --parallel 2
+        id: build
+        shell: pwsh
+        run: |
+          $timer = [System.Diagnostics.Stopwatch]::StartNew()
+          $exitCode = 0
+          try {
+            & cmake --build build --config Release --parallel 2
+            $exitCode = $LASTEXITCODE
+          } finally {
+            $timer.Stop()
+            "seconds=$([math]::Round($timer.Elapsed.TotalSeconds, 2))" >> $env:GITHUB_OUTPUT
+          }
+          if ($exitCode -ne 0) { exit $exitCode }
 
       - name: Verify executable version
         shell: pwsh
@@ -172,7 +229,18 @@ jobs:
 
       - name: Test
         id: test
-        run: ctest --test-dir build -C Release --output-on-failure
+        shell: pwsh
+        run: |
+          $timer = [System.Diagnostics.Stopwatch]::StartNew()
+          $exitCode = 0
+          try {
+            & ctest --test-dir build -C Release --output-on-failure
+            $exitCode = $LASTEXITCODE
+          } finally {
+            $timer.Stop()
+            "seconds=$([math]::Round($timer.Elapsed.TotalSeconds, 2))" >> $env:GITHUB_OUTPUT
+          }
+          if ($exitCode -ne 0) { exit $exitCode }
 
       - name: Smoke-test Windows developer launcher (PR validation)
         if: ${{ github.event_name == 'pull_request' }}
@@ -201,8 +269,11 @@ jobs:
 
       - name: Package portable Windows runtime
         if: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') }}
+        id: package
         shell: pwsh
         run: |
+          $packageTimer = [System.Diagnostics.Stopwatch]::StartNew()
+          try {
           $version = $env:LAR_RELEASE_VERSION -replace '^v', ''
           $stage = Join-Path $env:GITHUB_WORKSPACE 'dist/stage'
           New-Item -ItemType Directory -Force -Path $stage, (Join-Path $stage 'web'), (Join-Path $stage 'config'), (Join-Path $stage 'scripts') | Out-Null
@@ -259,6 +330,10 @@ jobs:
             }
           }
           Get-FileHash $package -Algorithm SHA256 | Format-List
+          } finally {
+            $packageTimer.Stop()
+            "seconds=$([math]::Round($packageTimer.Elapsed.TotalSeconds, 2))" >> $env:GITHUB_OUTPUT
+          }
 
       - name: Upload Windows configure diagnostics on failure
         if: ${{ always() && steps.configure.outcome == 'failure' && hashFiles('configure-vcpkg.log') != '' }}
@@ -287,6 +362,48 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Publish CI performance summary
+        if: ${{ always() }}
+        shell: pwsh
+        env:
+          CACHE_HIT: ${{ steps.vcpkg-cache.outputs.cache-hit }}
+          CACHE_MATCHED_KEY: ${{ steps.vcpkg-cache.outputs.cache-matched-key }}
+          CACHE_IDENTITY: ${{ steps.vcpkg-cache-identity.outputs.identity }}
+          CACHE_RESTORE_SECONDS: ${{ steps.cache-restore-duration.outputs.seconds }}
+          CONFIGURE_SECONDS: ${{ steps.configure.outputs.seconds }}
+          BUILD_SECONDS: ${{ steps.build.outputs.seconds }}
+          TEST_SECONDS: ${{ steps.test.outputs.seconds }}
+          PACKAGE_SECONDS: ${{ steps.package.outputs.seconds }}
+          BINARY_CACHE_FILES: ${{ steps.vcpkg-cache-stats.outputs.binary_files }}
+          BINARY_CACHE_MB: ${{ steps.vcpkg-cache-stats.outputs.binary_mb }}
+          DOWNLOAD_CACHE_FILES: ${{ steps.vcpkg-cache-stats.outputs.download_files }}
+          DOWNLOAD_CACHE_MB: ${{ steps.vcpkg-cache-stats.outputs.download_mb }}
+          JOB_START_EPOCH: ${{ steps.timing-start.outputs.epoch }}
+        run: |
+          $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+          $total = if ($env:JOB_START_EPOCH) { [math]::Max(0, $now - [long]$env:JOB_START_EPOCH) } else { 'n/a' }
+          $hit = if ($env:CACHE_HIT -eq 'true') { 'exact hit' } elseif ($env:CACHE_MATCHED_KEY) { 'compatible fallback hit' } else { 'miss' }
+          $rows = @(
+            '## CI performance — Windows x64',
+            '',
+            '| Stage | Duration / result |',
+            '|---|---:|',
+            "| vcpkg cache restore | $hit |",
+            "| Cache identity | $($env:CACHE_IDENTITY) |",
+            "| Matched key | $($env:CACHE_MATCHED_KEY) |",
+            "| Cache restore duration | $($env:CACHE_RESTORE_SECONDS) s |",
+            "| Configure (includes vcpkg) | $($env:CONFIGURE_SECONDS) s |",
+            "| Build | $($env:BUILD_SECONDS) s |",
+            "| Tests | $($env:TEST_SECONDS) s |",
+            "| Package + extracted-package smoke test | $($env:PACKAGE_SECONDS) s |",
+            "| Binary cache after configure | $($env:BINARY_CACHE_FILES) files / $($env:BINARY_CACHE_MB) MiB |",
+            "| Source/tool downloads cache after configure | $($env:DOWNLOAD_CACHE_FILES) files / $($env:DOWNLOAD_CACHE_MB) MiB |",
+            "| Elapsed after checkout (runner queue excluded) | $total s |",
+            '',
+            'GitHub runner queue time is shown separately by the Actions run details.'
+          )
+          $rows | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
   linux:
     if: ${{ github.event_name != 'schedule' }}
     name: Linux x64 build / test / package
@@ -294,6 +411,11 @@ jobs:
     steps:
       - name: Checkout tagged source
         uses: actions/checkout@v7
+
+      - name: Record job start time
+        id: timing-start
+        shell: bash
+        run: echo "epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -311,18 +433,37 @@ jobs:
           python -m json.tool config/engines.example.json >/dev/null
 
       - name: Install dependencies
+        id: dependencies
+        shell: bash
         run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential cmake ninja-build pkg-config patchelf pax-utils libboost-dev libcurl4-openssl-dev libarchive-dev libssl-dev
+          set +e
+          started=$SECONDS
+          sudo apt-get update && sudo apt-get install -y build-essential cmake ninja-build pkg-config patchelf pax-utils libboost-dev libcurl4-openssl-dev libarchive-dev libssl-dev
+          result=$?
+          echo "seconds=$((SECONDS - started))" >> "$GITHUB_OUTPUT"
+          exit "$result"
 
       - name: Configure
+        id: configure
+        shell: bash
         run: |
+          set +e
+          started=$SECONDS
           VERSION="${LAR_RELEASE_VERSION#v}"
-          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "Invalid release version: $VERSION" >&2; exit 1; }
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release "-DLAR_VERSION=${VERSION}" -DLAR_BUILD_TESTS=ON
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then echo "Invalid release version: $VERSION" >&2; result=1; else cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release "-DLAR_VERSION=${VERSION}" -DLAR_BUILD_TESTS=ON; result=$?; fi
+          echo "seconds=$((SECONDS - started))" >> "$GITHUB_OUTPUT"
+          exit "$result"
 
       - name: Build
-        run: cmake --build build --parallel 2
+        id: build
+        shell: bash
+        run: |
+          set +e
+          started=$SECONDS
+          cmake --build build --parallel 2
+          result=$?
+          echo "seconds=$((SECONDS - started))" >> "$GITHUB_OUTPUT"
+          exit "$result"
 
       - name: Verify executable version
         shell: bash
@@ -333,7 +474,14 @@ jobs:
 
       - name: Test
         id: test
-        run: ctest --test-dir build --output-on-failure
+        shell: bash
+        run: |
+          set +e
+          started=$SECONDS
+          ctest --test-dir build --output-on-failure
+          result=$?
+          echo "seconds=$((SECONDS - started))" >> "$GITHUB_OUTPUT"
+          exit "$result"
 
       - name: Smoke-test Linux developer launcher (PR validation)
         if: ${{ github.event_name == 'pull_request' }}
@@ -354,9 +502,12 @@ jobs:
           grep -q '"status":"ok"' /tmp/lar-health.json
 
       - name: Package portable Linux runtime
+        id: package
         if: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') }}
         shell: bash
         run: |
+          started=$SECONDS
+          trap 'echo "seconds=$((SECONDS - started))" >> "$GITHUB_OUTPUT"' EXIT
           set -euo pipefail
           VERSION="${LAR_RELEASE_VERSION#v}"
           STAGE="$GITHUB_WORKSPACE/dist/stage"
@@ -463,6 +614,33 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+      - name: Publish CI performance summary
+        if: ${{ always() }}
+        shell: bash
+        env:
+          DEPENDENCY_SECONDS: ${{ steps.dependencies.outputs.seconds }}
+          CONFIGURE_SECONDS: ${{ steps.configure.outputs.seconds }}
+          BUILD_SECONDS: ${{ steps.build.outputs.seconds }}
+          TEST_SECONDS: ${{ steps.test.outputs.seconds }}
+          PACKAGE_SECONDS: ${{ steps.package.outputs.seconds }}
+          JOB_START_EPOCH: ${{ steps.timing-start.outputs.epoch }}
+        run: |
+          now=$(date +%s)
+          total='n/a'
+          if [[ "$JOB_START_EPOCH" =~ ^[0-9]+$ ]]; then total=$((now - JOB_START_EPOCH)); fi
+          {
+            echo '## CI performance — Linux x64'
+            echo
+            echo '| Stage | Duration |'
+            echo '|---|---:|'
+            echo "| Dependency install | ${DEPENDENCY_SECONDS:-n/a} s |"
+            echo "| Configure | ${CONFIGURE_SECONDS:-n/a} s |"
+            echo "| Build | ${BUILD_SECONDS:-n/a} s |"
+            echo "| Tests | ${TEST_SECONDS:-n/a} s |"
+            echo "| Package + extracted-package smoke test | ${PACKAGE_SECONDS:-n/a} s |"
+            echo "| Elapsed after checkout (runner queue excluded) | ${total} s |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   macos:
     name: macOS ${{ matrix.arch }} build / test / package
     strategy:
@@ -478,6 +656,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+
+      - name: Record job start time
+        id: timing-start
+        shell: bash
+        run: echo "epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -495,8 +678,11 @@ jobs:
           python -m json.tool config/engines.example.json >/dev/null
 
       - name: Install only missing native dependencies (no brew update)
+        id: dependencies
         shell: bash
         run: |
+          started=$SECONDS
+          trap 'echo "seconds=$((SECONDS - started))" >> "$GITHUB_OUTPUT"' EXIT
           set -euo pipefail
           export HOMEBREW_NO_AUTO_UPDATE=1
           for formula in boost curl libarchive openssl@3; do
@@ -516,8 +702,11 @@ jobs:
           done
 
       - name: Configure
+        id: configure
         shell: bash
         run: |
+          started=$SECONDS
+          trap 'echo "seconds=$((SECONDS - started))" >> "$GITHUB_OUTPUT"' EXIT
           set -euo pipefail
           PREFIX_PATH="$(brew --prefix curl);$(brew --prefix libarchive);$(brew --prefix openssl@3)"
           VERSION="${LAR_RELEASE_VERSION#v}"
@@ -525,7 +714,15 @@ jobs:
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release "-DCMAKE_PREFIX_PATH=${PREFIX_PATH}" "-DLAR_VERSION=${VERSION}" -DLAR_BUILD_TESTS=ON
 
       - name: Build
-        run: cmake --build build --parallel 2
+        id: build
+        shell: bash
+        run: |
+          set +e
+          started=$SECONDS
+          cmake --build build --parallel 2
+          result=$?
+          echo "seconds=$((SECONDS - started))" >> "$GITHUB_OUTPUT"
+          exit "$result"
 
       - name: Verify executable version
         shell: bash
@@ -536,10 +733,25 @@ jobs:
 
       - name: Test
         id: test
-        run: ctest --test-dir build --output-on-failure
+        shell: bash
+        run: |
+          set +e
+          started=$SECONDS
+          ctest --test-dir build --output-on-failure
+          result=$?
+          echo "seconds=$((SECONDS - started))" >> "$GITHUB_OUTPUT"
+          exit "$result"
 
       - name: Repeat HTTP smoke test
-        run: ctest --test-dir build -C Release --repeat until-fail:3 -R '^lar_http_smoke$' --output-on-failure
+        id: repeat-http
+        shell: bash
+        run: |
+          set +e
+          started=$SECONDS
+          ctest --test-dir build -C Release --repeat until-fail:3 -R '^lar_http_smoke$' --output-on-failure
+          result=$?
+          echo "seconds=$((SECONDS - started))" >> "$GITHUB_OUTPUT"
+          exit "$result"
 
       - name: Smoke-test macOS developer launcher
         if: ${{ github.event_name == 'pull_request' || github.event_name == 'schedule' }}
@@ -560,9 +772,12 @@ jobs:
           grep -q '"status":"ok"' "$RUNNER_TEMP/lar-health.json"
 
       - name: Package and smoke-test portable macOS runtime
+        id: package
         if: ${{ github.event_name != 'pull_request' && github.event_name != 'schedule' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') }}
         shell: bash
         run: |
+          started=$SECONDS
+          trap 'echo "seconds=$((SECONDS - started))" >> "$GITHUB_OUTPUT"' EXIT
           set -euo pipefail
           export HOMEBREW_NO_AUTO_UPDATE=1
           VERSION="${LAR_RELEASE_VERSION#v}"
@@ -627,6 +842,37 @@ jobs:
             build/Testing/Temporary/LastTest.log
           if-no-files-found: ignore
           retention-days: 7
+
+      - name: Publish CI performance summary
+        if: ${{ always() }}
+        shell: bash
+        env:
+          DEPENDENCY_SECONDS: ${{ steps.dependencies.outputs.seconds }}
+          CONFIGURE_SECONDS: ${{ steps.configure.outputs.seconds }}
+          BUILD_SECONDS: ${{ steps.build.outputs.seconds }}
+          TEST_SECONDS: ${{ steps.test.outputs.seconds }}
+          REPEAT_HTTP_SECONDS: ${{ steps.repeat-http.outputs.seconds }}
+          PACKAGE_SECONDS: ${{ steps.package.outputs.seconds }}
+          JOB_START_EPOCH: ${{ steps.timing-start.outputs.epoch }}
+        run: |
+          now=$(date +%s)
+          total='n/a'
+          if [[ "$JOB_START_EPOCH" =~ ^[0-9]+$ ]]; then total=$((now - JOB_START_EPOCH)); fi
+          {
+            echo '## CI performance — macOS ${{ matrix.arch }}'
+            echo
+            echo '| Stage | Duration |'
+            echo '|---|---:|'
+            echo "| Dependency install | ${DEPENDENCY_SECONDS:-n/a} s |"
+            echo "| Configure | ${CONFIGURE_SECONDS:-n/a} s |"
+            echo "| Build | ${BUILD_SECONDS:-n/a} s |"
+            echo "| Tests | ${TEST_SECONDS:-n/a} s |"
+            echo "| Repeated HTTP smoke test (3 runs) | ${REPEAT_HTTP_SECONDS:-n/a} s |"
+            echo "| Package + extracted-package smoke test | ${PACKAGE_SECONDS:-n/a} s |"
+            echo "| Elapsed after checkout (runner queue excluded) | ${total} s |"
+            echo
+            echo 'GitHub runner queue time is shown separately by the Actions run details.'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   publish:
     name: Publish GitHub Release
