@@ -267,3 +267,8 @@ input:focus, select:focus { outline: 2px solid #92b7ff70; border-color: var(--ac
 .gpu-observation-control { display: grid; gap: .55rem; margin-top: .25rem; padding-top: .9rem; border-top: 1px solid var(--line); }
 .gpu-observation-control p { margin: 0; white-space: pre-line; line-height: 1.5; }
 .gpu-observation-control .button { justify-self: start; }
+.catalog-details { margin: .7rem 0 .2rem; padding-top: .55rem; border-top: 1px solid var(--line); }
+.catalog-details summary { cursor: pointer; color: var(--accent); font-size: .88rem; font-weight: 700; }
+.catalog-details[open] summary { margin-bottom: .5rem; }
+.catalog-details p { line-height: 1.45; overflow-wrap: anywhere; }
+.catalog-limit { margin: .4rem 0; color: #f0cf83; font-size: .85rem; }

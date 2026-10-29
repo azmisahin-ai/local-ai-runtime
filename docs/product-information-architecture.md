@@ -41,9 +41,9 @@ Search should match task, model family, quantization, backend, hardware requirem
 
 ## Versioned component metadata contract
 
-Every catalog entry should eventually provide the following fields (schema versioned and validated in CI):
+Every catalog API entry must follow the published [component-v1 schema](../catalog/schemas/component-v1.schema.json), which is validated against the actual `/v1/catalog` response in HTTP smoke tests. The current contract includes the following fields; future versions may add requirements but must not silently change v1 semantics:
 
-- Identity: `schema_version`, stable `id`, `kind`, `name`, `family`, `version`/version policy.
+- Identity: `schema_version`, stable `id`, `type` (`engine`/`model`), `name`, `family`, `version`/version policy.
 - Purpose: `workspaces`, `tasks`, `modalities`, `input_formats`, `output_formats`, and capabilities.
 - Compatibility: OS, architecture, CPU feature requirements, backend (`cpu`, `cuda`, `vulkan`, `metal`, etc.), driver/runtime requirements and known exclusions.
 - Resources: download size, installed size, minimum/recommended system RAM, minimum/recommended VRAM, disk-space overhead, expected context/working-memory impact where known.

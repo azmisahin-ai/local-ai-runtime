@@ -1,5 +1,8 @@
 ## Unreleased
 
+- Publish a versioned component-v1 schema for catalog metadata and validate real `/v1/catalog` API responses in the HTTP smoke test. Include task/workspace, platform targets, resources, provenance, dependencies, evidence status and lifecycle policy so new engine families can be added consistently.
+- Add collapsed “Compatibility & requirements” details to component cards, keeping catalog cards readable while exposing target platforms, prerequisite drivers, memory estimate confidence, dependency packages and validation limits.
+
 - Report session-scoped llama.cpp CUDA initialization and layer-offload evidence in the Engines panel. Previous-session log entries are excluded; a reported offload is clearly distinguished from measured live GPU utilization.
 - Add regression tests for positive/zero layer offload, CUDA initialization without a layer count, missing logs, and stale-session evidence.
 

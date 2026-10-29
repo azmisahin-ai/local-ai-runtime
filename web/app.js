@@ -473,6 +473,47 @@ function catalogItemCard(item) {
       info.append(source);
     }
   }
+  // Keep the catalog scannable as more runtimes arrive. Technical details are
+  // available on demand rather than taking over every component card.
+  const compatibility = item.compatibility && typeof item.compatibility === 'object' ? item.compatibility : null;
+  const resources = item.resources && typeof item.resources === 'object' ? item.resources : null;
+  const provenance = item.provenance && typeof item.provenance === 'object' ? item.provenance : null;
+  const evidence = item.evidence && typeof item.evidence === 'object' ? item.evidence : null;
+  if (compatibility || resources || provenance || evidence) {
+    const details = make('details', 'catalog-details');
+    details.append(make('summary', '', 'Compatibility & requirements'));
+    if (compatibility) {
+      const targets = Array.isArray(compatibility.targets) ? compatibility.targets : [];
+      if (targets.length) {
+        const targetText = targets.map((target) => `${String(target.platform || 'unknown')} ${String(target.architecture || '')}`.trim()).join(' · ');
+        details.append(make('p', 'hint', `Targets: ${targetText}`));
+      }
+      if (Array.isArray(compatibility.driver_requirements) && compatibility.driver_requirements.length) {
+        details.append(make('p', 'hint', `Prerequisites: ${compatibility.driver_requirements.join('; ')}`));
+      }
+      if (Array.isArray(compatibility.known_limits) && compatibility.known_limits.length) {
+        details.append(make('p', 'catalog-limit', `Known limits: ${compatibility.known_limits.join(' ')}`));
+      }
+    }
+    if (resources) {
+      const memoryParts = [];
+      if (Number.isFinite(Number(resources.minimum_system_ram_bytes)) && resources.minimum_system_ram_bytes !== null) memoryParts.push(`minimum system RAM ≈ ${formatBytes(resources.minimum_system_ram_bytes)}`);
+      if (Number.isFinite(Number(resources.recommended_system_ram_bytes)) && resources.recommended_system_ram_bytes !== null) memoryParts.push(`recommended ≈ ${formatBytes(resources.recommended_system_ram_bytes)}`);
+      if (Number.isFinite(Number(resources.minimum_vram_bytes)) && resources.minimum_vram_bytes !== null) memoryParts.push(`minimum VRAM ≈ ${formatBytes(resources.minimum_vram_bytes)}`);
+      if (Number.isFinite(Number(resources.recommended_vram_bytes)) && resources.recommended_vram_bytes !== null) memoryParts.push(`recommended VRAM ≈ ${formatBytes(resources.recommended_vram_bytes)}`);
+      if (memoryParts.length) details.append(make('p', 'hint', `Memory guidance (${resources.estimate_confidence || 'unspecified'}): ${memoryParts.join('; ')}. ${resources.notes || ''}`));
+      else if (resources.notes) details.append(make('p', 'hint', resources.notes));
+    }
+    if (provenance && Array.isArray(provenance.dependencies) && provenance.dependencies.length) {
+      const dependencies = provenance.dependencies.map((dependency) => `${dependency.id} (${dependency.resolution})`);
+      details.append(make('p', 'hint', `Included dependencies: ${dependencies.join('; ')}`));
+    }
+    if (evidence) {
+      details.append(make('p', 'hint', `Evidence: package ${evidence.package_verification || 'unspecified'}; real task ${evidence.real_task_test || 'unspecified'}; hardware profile ${evidence.profile_validation || 'unspecified'}.`));
+    }
+    details.append(make('p', 'hint', 'Compatibility and resource estimates are metadata, not a guarantee that this component will work on every machine.'));
+    info.append(details);
+  }
   if (item.installed_path) info.append(make('p', 'hint', `Installed at: ${item.installed_path}`));
 
   const actions = make('div', 'catalog-actions');

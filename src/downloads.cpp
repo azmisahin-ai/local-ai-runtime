@@ -850,7 +850,7 @@ std::string DownloadManager::catalog_json() const {
     const bool can_download_cuda12 = (os == "windows" || os == "linux") && arch == "x64";
     const bool can_download_cuda13 = (os == "windows" || os == "linux") && arch == "x64";
     std::ostringstream out;
-    out << "{\"data\":[";
+    out << "{\"schema_version\":1,\"data\":[";
     bool first = true;
     const auto write_engine = [&](const std::string& id, const std::string& variant, const std::string& title,
                                   const std::string& backend, bool supported) {
@@ -871,28 +871,64 @@ std::string DownloadManager::catalog_json() const {
             }
         }
         const bool installed = !installed_dir.empty();
-        out << "{\"id\":" << json_quote(id)
+        const bool cpu = backend == "cpu";
+        const std::string compatibility_targets = cpu
+            ? R"([{"platform":"windows","architecture":"x64"},{"platform":"linux","architecture":"x64"},{"platform":"macos","architecture":"x64"},{"platform":"macos","architecture":"arm64"}])"
+            : R"([{"platform":"windows","architecture":"x64"},{"platform":"linux","architecture":"x64"}])";
+        const std::string driver_requirements = cpu ? "[]" : "[\"NVIDIA driver compatible with the selected CUDA runtime\"]";
+        const std::string known_limits = cpu
+            ? R"(["CPU performance depends on model size, quantization, context and available system memory."])"
+            : R"(["GPU execution is not guaranteed by package installation.","NVIDIA driver, VRAM, model and context must be validated on the target machine.","The current GPU observation measures system-wide activity and may include other applications."])";
+        const std::string dependencies = backend == "cuda12"
+            ? R"([{"id":"llama.cpp-cudart-cuda12","kind":"runtime-archive","resolution":"same official release and matching CUDA 12 runtime"}])"
+            : backend == "cuda13"
+                ? R"([{"id":"llama.cpp-cudart-cuda13","kind":"runtime-archive","resolution":"same official release and matching CUDA 13 runtime"}])"
+                : "[]";
+        out << "{\"schema_version\":1,\"id\":" << json_quote(id)
             << ",\"type\":\"engine\",\"name\":" << json_quote(title)
             << ",\"description\":" << json_quote(
-                backend == "cpu"
+                cpu
                     ? "Finds the newest compatible official llama.cpp server package, preferring stable releases and falling back to an official prerelease only when no stable binary is published. Verifies GitHub's SHA-256 digest, safely extracts the archive and registers the engine."
                     : "Downloads the matching official llama.cpp CUDA server and CUDA runtime/DLL archives from the same release. Both archives must have official SHA-256 digests; both are verified before activation. Successful installation does not by itself prove GPU inference: driver, VRAM, model and real-task validation are still required.")
-            << ",\"version\":\"latest-compatible\",\"backend\":" << json_quote(backend)
-            << ",\"license\":\"MIT\",\"license_url\":\"https://github.com/ggml-org/llama.cpp/blob/master/LICENSE\""
-            << ",\"source_url\":\"https://github.com/ggml-org/llama.cpp/releases\""
-            << ",\"size_bytes\":0,\"installed\":" << (installed ? "true" : "false")
+            << ",\"family\":\"llama.cpp\",\"workspaces\":[\"language-chat\"],\"tasks\":[\"chat\",\"text-generation\"],"
+            << "\"modalities\":[\"text\"],\"input_formats\":[\"OpenAI-compatible chat JSON\"],\"output_formats\":[\"OpenAI-compatible chat JSON\"],"
+            << "\"version\":\"latest-compatible\",\"backend\":" << json_quote(backend)
+            << ",\"compatibility\":{\"targets\":" << compatibility_targets
+            << ",\"backends\":[" << json_quote(backend) << "],\"cpu_features\":[],\"driver_requirements\":" << driver_requirements
+            << ",\"known_limits\":" << known_limits << "},"
+            << "\"resources\":{\"download_bytes\":null,\"download_size_policy\":\"resolved-from-official-release\","
+            << "\"minimum_system_ram_bytes\":null,\"recommended_system_ram_bytes\":null,\"minimum_vram_bytes\":null,\"recommended_vram_bytes\":null,\"estimate_confidence\":\"not-estimated-for-engine-only\","
+            << "\"notes\":\"Memory needs depend on the selected model, quantization, context and offloaded layers.\"},"
+            << "\"provenance\":{\"source_url\":\"https://github.com/ggml-org/llama.cpp/releases\",\"revision_policy\":\"latest-compatible-official-release\",\"revision\":null,"
+            << "\"license_id\":\"MIT\",\"license_url\":\"https://github.com/ggml-org/llama.cpp/blob/master/LICENSE\",\"digest_policy\":\"official-sha256-required-at-install\",\"dependencies\":" << dependencies << "},"
+            << "\"evidence\":{\"metadata_review\":\"reviewed\",\"package_verification\":\"sha256-at-install\",\"real_task_test\":\"not-verified-by-hosted-ci\",\"profile_validation\":\"not-validated\"},"
+            << "\"lifecycle\":{\"install_scope\":\"per-user-data-directory\",\"user_data_separate\":true,\"update_policy\":\"versioned-managed-component\",\"automatic_update\":false},"
+            << "\"license\":\"MIT\",\"license_url\":\"https://github.com/ggml-org/llama.cpp/blob/master/LICENSE\","
+            << "\"source_url\":\"https://github.com/ggml-org/llama.cpp/releases\",\"size_bytes\":0,\"installed\":" << (installed ? "true" : "false")
             << ",\"installed_path\":" << json_quote(installed ? path_to_utf8(installed_dir) : std::string{}) << '}';
     };
     write_engine("llama.cpp-cpu", "cpu", "llama.cpp server — CPU", "cpu", can_download_cpu);
     write_engine("llama.cpp-cuda12", "cuda12", "llama.cpp server — NVIDIA CUDA 12", "cuda12", can_download_cuda12);
     write_engine("llama.cpp-cuda13", "cuda13", "llama.cpp server — NVIDIA CUDA 13", "cuda13", can_download_cuda13);
     if (!first) out << ',';
-    out << "{\"id\":\"qwen2.5-1.5b-q4km\",\"type\":\"model\",\"name\":\"Qwen2.5 1.5B Instruct — Q4_K_M\","
+    out << "{\"schema_version\":1,\"id\":\"qwen2.5-1.5b-q4km\",\"type\":\"model\",\"name\":\"Qwen2.5 1.5B Instruct — Q4_K_M\","
         << "\"description\":\"Small starter chat model in GGUF format. The download is about 1.12 GB; context and runtime memory add to this.\","
+        << "\"family\":\"Qwen2.5\",\"workspaces\":[\"language-chat\"],\"tasks\":[\"chat\",\"text-generation\"],\"modalities\":[\"text\"],"
+        << "\"input_formats\":[\"GGUF\"],\"output_formats\":[\"text\"],"
         << "\"version\":\"dd26da440ef0330c47919d1ecae0966d24022222\",\"backend\":\"gguf\","
+        << "\"compatibility\":{\"targets\":[{\"platform\":\"windows\",\"architecture\":\"x64\"},{\"platform\":\"linux\",\"architecture\":\"x64\"},{\"platform\":\"macos\",\"architecture\":\"x64\"},{\"platform\":\"macos\",\"architecture\":\"arm64\"}],"
+        << "\"backends\":[\"llama.cpp-cpu\",\"llama.cpp-cuda12\",\"llama.cpp-cuda13\"],\"cpu_features\":[],\"driver_requirements\":[],"
+        << "\"known_limits\":[\"Model fit depends on context and runtime overhead.\",\"CUDA compatibility and GPU placement must be tested on the target machine.\"]},"
+        << "\"resources\":{\"download_bytes\":" << kModelSize << ",\"download_size_policy\":\"pinned-exact-size\","
+        << "\"minimum_system_ram_bytes\":4294967296,\"recommended_system_ram_bytes\":8589934592,\"minimum_vram_bytes\":null,\"recommended_vram_bytes\":null,\"estimate_confidence\":\"heuristic\","
+        << "\"notes\":\"RAM guidance is heuristic; context size, runtime overhead and GPU offload change memory needs.\"},"
+        << "\"provenance\":{\"source_url\":\"https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF\",\"revision_policy\":\"pinned-revision\",\"revision\":\"dd26da440ef0330c47919d1ecae0966d24022222\","
+        << "\"license_id\":\"Apache-2.0\",\"license_url\":\"https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/blob/dd26da440ef0330c47919d1ecae0966d24022222/LICENSE\","
+        << "\"digest_policy\":\"pinned-sha256-and-exact-size\",\"dependencies\":[]},"
+        << "\"evidence\":{\"metadata_review\":\"reviewed\",\"package_verification\":\"sha256-and-header-at-install\",\"real_task_test\":\"not-verified-by-hosted-ci\",\"profile_validation\":\"not-validated\"},"
+        << "\"lifecycle\":{\"install_scope\":\"per-user-data-directory\",\"user_data_separate\":true,\"update_policy\":\"pinned-model-revision\",\"automatic_update\":false},"
         << "\"license\":\"Apache-2.0\",\"license_url\":\"https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/blob/dd26da440ef0330c47919d1ecae0966d24022222/LICENSE\","
-        << "\"source_url\":\"https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF\","
-        << "\"size_bytes\":" << kModelSize << ",\"sha256\":" << json_quote(kModelSha256)
+        << "\"source_url\":\"https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF\",\"size_bytes\":" << kModelSize << ",\"sha256\":" << json_quote(kModelSha256)
         << ",\"installed\":" << (model_installed ? "true" : "false")
         << ",\"installed_path\":" << json_quote(model_installed ? path_to_utf8(model_path) : std::string{}) << "}]}";
     return out.str();

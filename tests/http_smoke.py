@@ -13,6 +13,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from catalog_contract import validate_catalog_schema
+
 
 def reserve_distinct_ports():
     """Reserve three different ephemeral ports for runtime, fake engine and setup config."""
@@ -301,13 +303,25 @@ def main():
             status, catalog_raw, catalog_type = request(base + "/v1/catalog")
             catalog = json.loads(catalog_raw)
             assert status == 200 and "application/json" in catalog_type
+            catalog_schema_path = Path(__file__).resolve().parents[1] / "catalog" / "schemas" / "component-v1.schema.json"
+            catalog_schema = json.loads(catalog_schema_path.read_text(encoding="utf-8"))
+            catalog_errors = validate_catalog_schema(catalog, catalog_schema)
+            assert not catalog_errors, "Catalog API did not satisfy component-v1 schema: " + "; ".join(catalog_errors[:12])
             items = {item["id"]: item for item in catalog["data"]}
             assert "qwen2.5-1.5b-q4km" in items
             model_item = items["qwen2.5-1.5b-q4km"]
             assert model_item["license"] == "Apache-2.0"
             assert model_item["size_bytes"] == 1117320736
             assert model_item["sha256"] == "6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e"
+            assert model_item["family"] == "Qwen2.5"
+            assert model_item["resources"]["estimate_confidence"] == "heuristic"
+            assert model_item["provenance"]["revision_policy"] == "pinned-revision"
             assert "llama.cpp-cpu" in items
+            assert items["llama.cpp-cpu"]["compatibility"]["backends"] == ["cpu"]
+            if "llama.cpp-cuda12" in items:
+                cuda_dependencies = items["llama.cpp-cuda12"]["provenance"]["dependencies"]
+                assert any(dependency["id"] == "llama.cpp-cudart-cuda12" for dependency in cuda_dependencies)
+                assert items["llama.cpp-cuda12"]["evidence"]["real_task_test"] == "not-verified-by-hosted-ci"
             status, jobs_raw, _ = request(base + "/v1/downloads")
             assert status == 200 and json.loads(jobs_raw)["data"] == []
             try:

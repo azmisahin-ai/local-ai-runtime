@@ -124,6 +124,7 @@ async function main() {
   assert(dashboardScript.includes('GPU candidate · not verified'), 'dashboard must label GPU recommendations as candidates, not supported profiles');
   assert(dashboardScript.includes('renderHardwareRecommendations') && dashboardScript.includes('info.recommendations'), 'dashboard must render the API recommendation cards');
   assert(dashboardHtml.includes('id="gpu-observation-run"') && dashboardHtml.includes('id="gpu-observation-status"'), 'dashboard should expose an opt-in GPU observation control with a visible result area');
+  assert(dashboardScript.includes('Compatibility & requirements') && dashboardScript.includes('Memory guidance') && dashboardScript.includes('Known limits:'), 'catalog cards should reveal platform, resource, and limitation metadata on demand');
   assert(dashboardScript.includes('/v1/diagnostics/gpu-observation') && dashboardScript.includes('ui.gpu_observation.completed'), 'GPU observation should run through the local API and record privacy-safe summary metrics');
   assert(windowsLauncher.includes('function Test-PortCanBind') && windowsLauncher.includes('launcher.port_owner_unresolved_but_bindable'), 'Windows launcher should reuse a configured port when a direct bind probe succeeds despite an unresolved listener owner');
   assert(dashboardHtml.includes('Chat with your model'), 'dashboard should present chat as a user task, not a developer test');

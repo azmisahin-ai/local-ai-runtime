@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://azmisahin-ai.github.io/local-ai-runtime/schemas/component-v1.schema.json",
+  "title": "Local AI Runtime component catalog response v1",
+  "description": "Stable metadata contract for engines, models and their verified dependencies. Runtime-only fields such as installed state may be added by the API.",
+  "type": "object",
+  "required": ["schema_version", "data"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "data": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/component" }
+    }
+  },
+  "$defs": {
+    "target": {
+      "type": "object",
+      "required": ["platform", "architecture"],
+      "properties": {
+        "platform": { "type": "string", "enum": ["windows", "linux", "macos"] },
+        "architecture": { "type": "string", "enum": ["x64", "arm64"] }
+      }
+    },
+    "dependency": {
+      "type": "object",
+      "required": ["id", "kind", "resolution"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": { "type": "string", "minLength": 1 },
+        "resolution": { "type": "string", "minLength": 1 }
+      }
+    },
+    "component": {
+      "type": "object",
+      "required": [
+        "schema_version", "id", "type", "name", "description", "family",
+        "workspaces", "tasks", "modalities", "input_formats", "output_formats",
+        "compatibility", "resources", "provenance", "evidence", "lifecycle",
+        "version", "backend", "license", "license_url", "source_url", "size_bytes",
+        "installed", "installed_path"
+      ],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "id": { "type": "string", "minLength": 1 },
+        "type": { "type": "string", "enum": ["engine", "model"] },
+        "name": { "type": "string", "minLength": 1 },
+        "description": { "type": "string", "minLength": 1 },
+        "family": { "type": "string", "minLength": 1 },
+        "workspaces": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+        "tasks": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+        "modalities": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+        "input_formats": { "type": "array", "items": { "type": "string" } },
+        "output_formats": { "type": "array", "items": { "type": "string" } },
+        "version": { "type": "string" },
+        "backend": { "type": "string", "minLength": 1 },
+        "compatibility": {
+          "type": "object",
+          "required": ["targets", "backends", "cpu_features", "driver_requirements", "known_limits"],
+          "properties": {
+            "targets": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/target" } },
+            "backends": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+            "cpu_features": { "type": "array", "items": { "type": "string" } },
+            "driver_requirements": { "type": "array", "items": { "type": "string" } },
+            "known_limits": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "resources": {
+          "type": "object",
+          "required": ["download_bytes", "download_size_policy", "minimum_system_ram_bytes", "recommended_system_ram_bytes", "minimum_vram_bytes", "recommended_vram_bytes", "estimate_confidence", "notes"],
+          "properties": {
+            "download_bytes": { "type": ["integer", "null"], "minimum": 0 },
+            "download_size_policy": { "type": "string", "minLength": 1 },
+            "minimum_system_ram_bytes": { "type": ["integer", "null"], "minimum": 0 },
+            "recommended_system_ram_bytes": { "type": ["integer", "null"], "minimum": 0 },
+            "minimum_vram_bytes": { "type": ["integer", "null"], "minimum": 0 },
+            "recommended_vram_bytes": { "type": ["integer", "null"], "minimum": 0 },
+            "estimate_confidence": { "type": "string", "enum": ["unknown", "not-estimated-for-engine-only", "heuristic", "measured-profile"] },
+            "notes": { "type": "string" }
+          }
+        },
+        "provenance": {
+          "type": "object",
+          "required": ["source_url", "revision_policy", "revision", "license_id", "license_url", "digest_policy", "dependencies"],
+          "properties": {
+            "source_url": { "type": "string", "minLength": 1 },
+            "revision_policy": { "type": "string", "minLength": 1 },
+            "revision": { "type": ["string", "null"] },
+            "license_id": { "type": "string", "minLength": 1 },
+            "license_url": { "type": "string", "minLength": 1 },
+            "digest_policy": { "type": "string", "minLength": 1 },
+            "dependencies": { "type": "array", "items": { "$ref": "#/$defs/dependency" } }
+          }
+        },
+        "evidence": {
+          "type": "object",
+          "required": ["metadata_review", "package_verification", "real_task_test", "profile_validation"],
+          "properties": {
+            "metadata_review": { "type": "string", "enum": ["reviewed", "unreviewed"] },
+            "package_verification": { "type": "string", "minLength": 1 },
+            "real_task_test": { "type": "string", "minLength": 1 },
+            "profile_validation": { "type": "string", "minLength": 1 }
+          }
+        },
+        "lifecycle": {
+          "type": "object",
+          "required": ["install_scope", "user_data_separate", "update_policy", "automatic_update"],
+          "properties": {
+            "install_scope": { "type": "string", "minLength": 1 },
+            "user_data_separate": { "type": "boolean" },
+            "update_policy": { "type": "string", "minLength": 1 },
+            "automatic_update": { "type": "boolean" }
+          }
+        },
+        "license": { "type": "string", "minLength": 1 },
+        "license_url": { "type": "string", "minLength": 1 },
+        "source_url": { "type": "string", "minLength": 1 },
+        "size_bytes": { "type": "integer", "minimum": 0 },
+        "sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" },
+        "installed": { "type": "boolean" },
+        "installed_path": { "type": "string" }
+      }
+    }
+  }
+}
