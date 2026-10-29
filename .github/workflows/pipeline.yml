@@ -418,12 +418,19 @@ jobs:
 
           # Install and uninstall silently in a clean, isolated path. This checks
           # the actual installer payload without opening a console or launching the UI.
-          $installRoot = Join-Path $env:GITHUB_WORKSPACE 'dist/verify-installer-app'
-          if (Test-Path $installRoot) { Remove-Item -Recurse -Force $installRoot }
-          & $setup '/VERYSILENT' '/SUPPRESSMSGBOXES' '/NORESTART' '/SP-' "/DIR=$installRoot"
-          if ($LASTEXITCODE -ne 0) { throw "Silent setup install failed with exit code $LASTEXITCODE." }
+          # Inno Setup expects a fully qualified, quoted /DIR value. Normalize
+          # PowerShell's mixed-separator Join-Path result before passing it to
+          # the native installer so the requested test directory is unambiguous.
+          $installRoot = [System.IO.Path]::GetFullPath((Join-Path $env:GITHUB_WORKSPACE 'dist/verify-installer-app')).Replace('/', '\')
+          if (Test-Path -LiteralPath $installRoot) { Remove-Item -LiteralPath $installRoot -Recurse -Force }
+          $installDirArgument = '/DIR="' + $installRoot + '"'
+          $setupProcess = Start-Process -FilePath $setup -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', $installDirArgument) -Wait -PassThru
+          if ($setupProcess.ExitCode -ne 0) { throw "Silent setup install failed with exit code $($setupProcess.ExitCode)." }
           $installedHost = Join-Path $installRoot 'LocalAIRuntime.Desktop.exe'
-          if (-not (Test-Path $installedHost)) { throw 'Installed desktop shell executable is missing.' }
+          if (-not (Test-Path -LiteralPath $installedHost)) {
+            $installedEntries = if (Test-Path -LiteralPath $installRoot) { (Get-ChildItem -LiteralPath $installRoot -Force | ForEach-Object Name) -join ', ' } else { '<install directory was not created>' }
+            throw "Installed desktop shell executable is missing at '$installedHost'. Install directory entries: $installedEntries"
+          }
           & $installedHost '--verify-install'
           if ($LASTEXITCODE -ne 0) { throw 'Installed desktop shell package verification failed.' }
           foreach ($relativePath in @('local-ai-runtime.exe', 'web/index.html', 'web/desktop-shell.json', 'scripts/Start-LocalAIRuntime.ps1', 'scripts/Apply-LocalAIRuntimeUpdate.ps1', 'local-ai-runtime.ico')) {

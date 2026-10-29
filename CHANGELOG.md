@@ -5,6 +5,7 @@ This project follows a lightweight Keep a Changelog structure. GitHub Release no
 
 ## Unreleased
 
+- Normalize and explicitly quote the Windows installer smoke-test destination passed to Inno Setup; report the actual installed directory contents if the desktop host is not found.
 - Fix the Windows desktop shell compilation by using a supported WinForms `FontStyle` value for the startup window heading.
 - Add a per-user Windows setup installer with a self-contained WinForms/WebView2 desktop host, Start menu entry, optional desktop shortcut, and notification-area controls for reopening, checking updates, and gracefully stopping the runtime.
 - Keep the installer separate from the portable ZIP; installed desktop builds use the full setup package for updates until atomic shell/runtime updates and rollback are implemented.
