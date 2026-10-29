@@ -1,6 +1,7 @@
 #include "lar/config.hpp"
 #include "lar/catalog.hpp"
 #include "lar/diagnostics.hpp"
+#include "lar/hardware.hpp"
 #include "lar/downloads.hpp"
 #include "lar/process.hpp"
 
@@ -94,6 +95,18 @@ int main() {
         require(lar::DownloadManager::sha256_file(digest_path) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
                 "SHA-256 verifier returned incorrect result");
         std::filesystem::remove(digest_path);
+
+        stage("local hardware inventory");
+        const auto hardware = lar::detect_hardware(std::filesystem::temp_directory_path());
+        require(!hardware.platform.empty(), "hardware probe must report the platform");
+        require(!hardware.architecture.empty(), "hardware probe must report the architecture");
+        require(hardware.logical_cpu_count >= 1, "hardware probe must report at least one logical CPU");
+        require(hardware.gpu_probe_status == "complete" || hardware.gpu_probe_status == "partial" ||
+                hardware.gpu_probe_status == "unsupported", "hardware probe returned an unknown GPU evidence state");
+        for (const auto& gpu : hardware.gpus) {
+            require(!gpu.vendor.empty(), "detected graphics adapters must include a vendor label");
+            require(!gpu.vendor_id.empty(), "detected graphics adapters must include a vendor identifier");
+        }
 
         stage("example config loading");
         const auto config = lar::load_config(LAR_TEST_CONFIG);

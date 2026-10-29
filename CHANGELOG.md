@@ -6,6 +6,12 @@ This project follows a lightweight Keep a Changelog structure. GitHub Release no
 
 ## Unreleased
 
+- Add a local-only device inventory panel and `/v1/system/hardware` endpoint with OS/architecture, logical CPU count, total/available RAM, free space for models, and native GPU adapter inventory where supported. Adapter detection is explicitly not a claim that CUDA or any model/backend works.
+- Add evidence-aware engine status labels that distinguish the installed package (CPU/CUDA 12/CUDA 13), requested execution target, and unverified real GPU execution.
+- Include a bounded `hardware.snapshot` summary in local diagnostics so support reports can show machine resource limits and graphics-adapter identifiers without collecting chat prompts, model responses, or absolute storage paths.
+- Add regression coverage for the local hardware endpoint and its privacy/evidence contract; extend the dashboard with refreshable device information and conservative starting guidance based on system memory.
+
+
 - Normalize and explicitly quote the Windows installer smoke-test destination passed to Inno Setup; report the actual installed directory contents if the desktop host is not found.
 - Fix the Windows desktop shell compilation by using a supported WinForms `FontStyle` value for the startup window heading.
 - Add a per-user Windows setup installer with a self-contained WinForms/WebView2 desktop host, Start menu entry, optional desktop shortcut, and notification-area controls for reopening, checking updates, and gracefully stopping the runtime.

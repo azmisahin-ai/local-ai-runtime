@@ -110,11 +110,15 @@ async function main() {
   assert.equal(grid.afterChildren.length, 1, 'checksum link should be rendered below the platform downloads');
   assert(product.features.some((feature) => feature.name === 'Portable package launch (alpha)' && feature.status === 'preview'), 'product manifest should accurately describe the current portable launch flow');
   assert(product.features.some((feature) => feature.name === 'Windows desktop installer' && feature.status === 'preview'), 'product manifest should expose the CI-built Windows desktop installer as preview');
+  assert(product.features.some((feature) => feature.name === 'Local device inventory' && feature.status === 'preview'), 'product manifest should expose local device inventory as preview');
+  assert(product.features.some((feature) => feature.name === 'Hardware-aware model setup' && feature.status === 'planned'), 'product manifest must not claim recommendations are already available');
   assert(siteHtml.includes('From download to a local answer.'), 'site should explain a user-first first-run path');
   assert(siteHtml.includes('When the selected Windows release includes the desktop setup installer'), 'site should explain installer and portable fallback selection');
   assert(siteHtml.includes('Start-LocalAIRuntime.cmd') && siteHtml.includes('Start-LocalAIRuntime.command'), 'site should explain the platform launchers');
   assert(siteHtml.includes('Moving from the portable archive:'), 'site should explain migration from a portable package to the installed desktop app');
   assert(dashboardHtml.includes('id="check-updates"'), 'dashboard should expose a manual update check');
+  assert(dashboardHtml.includes('id="device-panel"') && dashboardHtml.includes('Your device &amp; model fit'), 'dashboard should expose a local hardware inventory panel');
+  assert(dashboardScript.includes('/v1/system/hardware') && dashboardScript.includes('GPU requested · not verified'), 'dashboard should distinguish detected hardware from verified GPU execution');
   assert(dashboardHtml.includes('Chat with your model'), 'dashboard should present chat as a user task, not a developer test');
   assert(dashboardScript.includes('setInterval(() => { if (Date.now() - lastUpdateCheckAt > 6 * 60 * 60 * 1000) checkForUpdates(); }'), 'dashboard should refresh update metadata periodically');
   assert(collectText(grid.afterChildren[0]).includes('SHA256SUMS.txt'));

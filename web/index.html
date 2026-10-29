@@ -24,6 +24,7 @@
     </header>
 
     <nav class="dashboard-nav" aria-label="Dashboard sections">
+      <a href="#device-panel">Your device</a>
       <a href="#catalog-panel">Component library</a>
       <a href="#runtime-panel">Installed engines</a>
       <a href="#chat-panel">Chat with your model</a>
@@ -44,6 +45,16 @@
         <article class="workspace-card planned"><span class="workspace-icon" aria-hidden="true">⌘</span><span class="workspace-copy"><strong>Automation &amp; tools</strong><small>Workflows and local integrations</small></span><span class="workspace-state">Planned</span></article>
       </div>
       <p class="hint workspace-footnote">Only Language &amp; chat is implemented in this alpha. Planned areas are shown to explain the product structure, not to imply that those features are already supported.</p>
+    </section>
+
+    <section id="device-panel" class="panel device-panel" aria-labelledby="device-title">
+      <div class="section-heading">
+        <div><p class="eyebrow">LOCAL HARDWARE</p><h2 id="device-title">Your device &amp; model fit</h2></div>
+        <button id="hardware-refresh" class="button secondary" type="button">Refresh device info</button>
+      </div>
+      <p class="hint">This information is detected on this computer only. It is not uploaded. Hardware detection is not a compatibility guarantee; the selected engine, driver, model, quantization and context must still be tested together.</p>
+      <div id="hardware-summary" class="hardware-summary" aria-live="polite"><div class="empty">Checking local device information…</div></div>
+      <p id="hardware-error" class="error" role="status" aria-live="polite"></p>
     </section>
 
     <section id="update-notice" class="update-notice" role="status" aria-live="polite" hidden>

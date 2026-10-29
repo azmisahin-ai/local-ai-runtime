@@ -1,6 +1,7 @@
 #include "lar/server.hpp"
 #include "lar/downloads.hpp"
 #include "lar/diagnostics.hpp"
+#include "lar/hardware.hpp"
 
 #ifndef LAR_VERSION
 #define LAR_VERSION "0.1.0-dev"
@@ -69,6 +70,62 @@ std::string json_escape(std::string_view input) {
 }
 
 std::string json_quoted(std::string_view value) { return "\"" + json_escape(value) + "\""; }
+
+
+std::string backend_package_from_path(const EngineConfig& config) {
+    auto value = config.executable_path.generic_string();
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (value.find("cuda12") != std::string::npos) return "cuda12-package";
+    if (value.find("cuda13") != std::string::npos) return "cuda13-package";
+    if (value.find("-cpu") != std::string::npos || value.find("/cpu/") != std::string::npos || value.find("\\cpu\\") != std::string::npos) return "cpu-package";
+    return "manual-or-unknown-package";
+}
+
+std::string engine_backend_target(const EngineConfig& config) {
+    const auto option = std::find(config.args.begin(), config.args.end(), "--n-gpu-layers");
+    if (option == config.args.end() || std::next(option) == config.args.end()) return "unspecified";
+    return *std::next(option) == "0" ? "cpu" : "gpu-requested";
+}
+
+std::string hardware_json(const HardwareInfo& info) {
+    std::ostringstream out;
+    out << "{\"platform\":" << json_quoted(info.platform)
+        << ",\"architecture\":" << json_quoted(info.architecture)
+        << ",\"logical_cpu_count\":" << info.logical_cpu_count
+        << ",\"total_memory_bytes\":" << info.total_memory_bytes
+        << ",\"available_memory_bytes\":" << info.available_memory_bytes
+        << ",\"available_disk_bytes\":" << info.available_disk_bytes
+        << ",\"gpu_probe_status\":" << json_quoted(info.gpu_probe_status)
+        << ",\"gpu_probe_message\":" << json_quoted(info.gpu_probe_message)
+        << ",\"gpus\":[";
+    for (std::size_t i = 0; i < info.gpus.size(); ++i) {
+        if (i) out << ',';
+        const auto& gpu = info.gpus[i];
+        out << "{\"name\":" << json_quoted(gpu.name)
+            << ",\"vendor\":" << json_quoted(gpu.vendor)
+            << ",\"vendor_id\":" << json_quoted(gpu.vendor_id)
+            << ",\"device_id\":" << json_quoted(gpu.device_id)
+            << ",\"dedicated_memory_bytes\":" << gpu.dedicated_memory_bytes << '}';
+    }
+    out << "],\"memory_profile\":";
+    const auto gib = 1024ULL * 1024ULL * 1024ULL;
+    if (info.total_memory_bytes == 0) out << json_quoted("unknown");
+    else if (info.total_memory_bytes < 8ULL * gib) out << json_quoted("low-memory");
+    else if (info.total_memory_bytes < 16ULL * gib) out << json_quoted("baseline");
+    else out << json_quoted("memory-headroom");
+    out << ",\"recommendation\":";
+    if (info.total_memory_bytes == 0) {
+        out << json_quoted("Memory could not be measured. Start with the CPU baseline and verify each model on this computer.");
+    } else if (info.total_memory_bytes < 8ULL * gib) {
+        out << json_quoted("Low-memory starting point: choose small quantized models and a modest context size. Larger models may fail even when a GPU is present.");
+    } else if (info.total_memory_bytes < 16ULL * gib) {
+        out << json_quoted("Baseline starting point: begin with small quantized models. Model size, available memory, context and GPU memory still decide compatibility.");
+    } else {
+        out << json_quoted("System memory headroom detected. This alone does not guarantee a model fits; check available RAM, GPU memory, quantization and context size.");
+    }
+    out << ",\"gpu_use_requires_validation\":true}";
+    return out.str();
+}
 
 bool is_loopback_host(const std::string& header, unsigned short port) {
     const auto expected_port = ":" + std::to_string(port);
@@ -409,6 +466,9 @@ std::string engine_status_json(const EngineStatus& engine) {
         << ",\"ready\":" << (ready ? "true" : "false")
         << ",\"readiness\":" << json_quoted(readiness)
         << ",\"upstream_base_url\":" << json_quoted(engine.config.upstream_base_url)
+        << ",\"backend_target\":" << json_quoted(engine_backend_target(engine.config))
+        << ",\"backend_package\":" << json_quoted(backend_package_from_path(engine.config))
+        << ",\"gpu_execution_evidence\":\"not-verified\""
         << ",\"capabilities\":[";
     for (std::size_t i = 0; i < engine.config.capabilities.size(); ++i) {
         if (i) out << ',';
@@ -832,6 +892,22 @@ http::response<http::string_body> handle_request(const http::request<http::strin
         response.keep_alive(false);
         response.prepare_payload();
         return response;
+    }
+    if (request.method() == http::verb::get && target == "/v1/system/hardware") {
+        const auto hardware = detect_hardware(DownloadManager::user_data_directory());
+        std::ostringstream summary;
+        summary << "platform=" << hardware.platform << " architecture=" << hardware.architecture
+                << " logical_cpus=" << hardware.logical_cpu_count
+                << " total_ram_bytes=" << hardware.total_memory_bytes
+                << " available_ram_bytes=" << hardware.available_memory_bytes
+                << " free_disk_bytes=" << hardware.available_disk_bytes
+                << " gpu_probe=" << hardware.gpu_probe_status;
+        for (const auto& gpu : hardware.gpus) {
+            summary << " gpu=" << gpu.vendor << ':' << gpu.device_id
+                    << ":vram_bytes=" << gpu.dedicated_memory_bytes;
+        }
+        log_diagnostic("INFO", "hardware.snapshot", summary.str());
+        return json_response(http::status::ok, version, hardware_json(hardware));
     }
     if (request.method() == http::verb::get && target == "/v1/catalog") {
         return json_response(http::status::ok, version, downloads.catalog_json());

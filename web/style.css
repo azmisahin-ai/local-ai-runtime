@@ -228,3 +228,21 @@ input:focus, select:focus { outline: 2px solid #92b7ff70; border-color: var(--ac
 .workspace-footnote { margin: .8rem 0 0; font-size: .82rem; }
 @media (max-width: 1050px) { .workspace-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .workspace-heading { align-items: flex-start; flex-direction: column; } }
 @media (max-width: 540px) { .workspace-grid { grid-template-columns: 1fr; } .workspace-card { grid-template-columns: 2.25rem minmax(0, 1fr) auto; grid-template-rows: auto; } .workspace-icon { grid-row: auto; } .workspace-state { grid-column: 3; grid-row: 1; } }
+
+
+/* Device inventory stays compact and uses evidence labels instead of implying
+   that detected hardware is automatically a supported inference backend. */
+.hardware-summary { display: grid; gap: .8rem; }
+.hardware-facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .65rem; }
+.hardware-fact { min-width: 0; padding: .85rem; border: 1px solid var(--line); border-radius: .8rem; background: #101319; }
+.hardware-fact strong { display: block; margin-bottom: .2rem; font-size: 1.08rem; overflow-wrap: anywhere; }
+.hardware-fact span { color: var(--muted); font-size: .8rem; }
+.hardware-gpu-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: .65rem; }
+.hardware-gpu { padding: .85rem; border: 1px solid var(--line); border-radius: .8rem; background: #101319; }
+.hardware-gpu h3 { margin: 0 0 .25rem; font-size: .95rem; overflow-wrap: anywhere; }
+.hardware-gpu p { margin: .2rem 0; color: var(--muted); font-size: .82rem; overflow-wrap: anywhere; }
+.hardware-guidance { margin: 0; padding: .9rem 1rem; border: 1px solid #59677d; border-radius: .8rem; background: #1c2432; }
+.hardware-guidance strong { display: block; margin-bottom: .25rem; }
+.hardware-guidance p { margin: .2rem 0 0; color: var(--muted); font-size: .86rem; }
+@media (max-width: 760px) { .hardware-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 420px) { .hardware-facts { grid-template-columns: 1fr 1fr; } }

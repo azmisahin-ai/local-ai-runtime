@@ -2,6 +2,9 @@ const apiStatus = document.querySelector('#api-status');
 const apiDot = document.querySelector('#api-dot');
 const engineList = document.querySelector('#engine-list');
 const engineError = document.querySelector('#engine-error');
+const hardwareSummary = document.querySelector('#hardware-summary');
+const hardwareError = document.querySelector('#hardware-error');
+const hardwareRefreshButton = document.querySelector('#hardware-refresh');
 const chatError = document.querySelector('#chat-error');
 const answerWrap = document.querySelector('#answer-wrap');
 const answer = document.querySelector('#answer');
@@ -639,6 +642,73 @@ async function refreshDownloads() {
   }
 }
 
+function formatBytes(value) {
+  const bytes = Number(value);
+  if (!Number.isFinite(bytes) || bytes <= 0) return 'Not available';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let amount = bytes;
+  let unit = 0;
+  while (amount >= 1024 && unit < units.length - 1) { amount /= 1024; unit += 1; }
+  return `${amount >= 10 || unit === 0 ? amount.toFixed(0) : amount.toFixed(1)} ${units[unit]}`;
+}
+
+function renderHardware(info) {
+  hardwareSummary.replaceChildren();
+  const facts = make('div', 'hardware-facts');
+  const addFact = (label, value) => {
+    const fact = make('div', 'hardware-fact');
+    fact.append(make('strong', '', value), make('span', '', label));
+    facts.append(fact);
+  };
+  addFact('Platform', `${info.platform || 'Unknown'} ${info.architecture || ''}`.trim());
+  addFact('Logical processors', Number.isFinite(Number(info.logical_cpu_count)) ? String(info.logical_cpu_count) : 'Not available');
+  addFact('System RAM', formatBytes(info.total_memory_bytes));
+  addFact('Available RAM', formatBytes(info.available_memory_bytes));
+  addFact('Free space for models', formatBytes(info.available_disk_bytes));
+  hardwareSummary.append(facts);
+
+  const gpuHeading = make('p', 'eyebrow', 'GRAPHICS ADAPTERS');
+  hardwareSummary.append(gpuHeading);
+  if (Array.isArray(info.gpus) && info.gpus.length) {
+    const gpuList = make('div', 'hardware-gpu-list');
+    for (const gpu of info.gpus) {
+      const item = make('article', 'hardware-gpu');
+      item.append(make('h3', '', gpu.name || `${gpu.vendor || 'Unknown'} graphics adapter`));
+      item.append(make('p', '', `${gpu.vendor || 'Unknown vendor'} · ${gpu.vendor_id || 'Vendor ID unavailable'} / ${gpu.device_id || 'Device ID unavailable'}`));
+      item.append(make('p', '', `Dedicated video memory: ${formatBytes(gpu.dedicated_memory_bytes)}`));
+      gpuList.append(item);
+    }
+    hardwareSummary.append(gpuList);
+  } else {
+    const probeMessage = info.gpu_probe_message || (info.gpu_probe_status === 'unsupported'
+      ? 'GPU enumeration is not supported by this build.'
+      : 'No graphics adapter was reported by the operating system.');
+    hardwareSummary.append(make('p', 'hint', probeMessage));
+  }
+
+  const guidance = make('div', 'hardware-guidance');
+  guidance.append(make('strong', '', `Starting profile · ${String(info.memory_profile || 'unknown').replaceAll('-', ' ')}`));
+  guidance.append(make('p', '', info.recommendation || 'Start with the CPU baseline and verify each model on this computer.'));
+  guidance.append(make('p', '', 'GPU inference is not automatically confirmed by detecting an adapter or installing a CUDA package. Check engine logs and GPU activity during a real request.'));
+  hardwareSummary.append(guidance);
+}
+
+async function refreshHardware() {
+  hardwareError.textContent = '';
+  hardwareRefreshButton.disabled = true;
+  hardwareRefreshButton.textContent = 'Checking…';
+  try {
+    const info = await api('/v1/system/hardware');
+    renderHardware(info);
+  } catch (error) {
+    hardwareError.textContent = error.message;
+    hardwareSummary.replaceChildren(make('div', 'empty', 'Device information could not be read. The local model runtime remains available.'));
+  } finally {
+    hardwareRefreshButton.disabled = false;
+    hardwareRefreshButton.textContent = 'Refresh device info';
+  }
+}
+
 function engineCard(engine) {
   const card = make('article', 'engine-card');
   const info = make('div');
@@ -649,7 +719,17 @@ function engineCard(engine) {
   meta.append(make('span', `tag ${readinessClass}`, readinessLabel));
   if (engine.pid) meta.append(make('span', 'tag', `PID ${engine.pid}`));
   for (const capability of (engine.capabilities || [])) meta.append(make('span', 'tag', capability));
+  if (engine.backend_package && engine.backend_package !== 'manual-or-unknown-package') {
+    const packageLabel = engine.backend_package === 'cuda12-package' ? 'CUDA 12 package'
+      : engine.backend_package === 'cuda13-package' ? 'CUDA 13 package' : 'CPU package';
+    meta.append(make('span', 'tag', packageLabel));
+  }
+  if (engine.backend_target === 'gpu-requested') meta.append(make('span', 'tag loading', 'GPU requested · not verified'));
+  else if (engine.backend_target === 'cpu') meta.append(make('span', 'tag', 'CPU requested'));
   info.append(meta);
+  if (engine.backend_target === 'gpu-requested') {
+    info.append(make('p', 'engine-loading', 'This engine is configured to request GPU layers. The runtime has not yet confirmed that layers were offloaded; check the engine log and GPU activity during inference.'));
+  }
   if (engine.last_error) info.append(make('p', 'engine-error', engine.last_error));
   else if (!engine.executable_configured) info.append(make('p', 'engine-error', 'Configure llama.cpp above or set the engine executable path.'));
   else if ((engine.capabilities || []).includes('chat') && !engine.model_configured) info.append(make('p', 'engine-error', 'Choose a GGUF model file in the setup form before starting.'));
@@ -855,12 +935,14 @@ document.querySelector('#chat-form').addEventListener('submit', async (event) =>
   }
 });
 
+hardwareRefreshButton.addEventListener('click', refreshHardware);
 updateDownloadButton.addEventListener('click', stageRuntimeUpdate);
 checkUpdatesButton.addEventListener('click', () => checkForUpdates(true));
 updateApplyButton.addEventListener('click', applyRuntimeUpdate);
 
 chatSendButton.disabled = true;
 refreshHealth();
+refreshHardware();
 refreshEngines();
 refreshCatalog();
 refreshDownloads();

@@ -42,9 +42,11 @@ The website can offer the Windows setup executable as an alpha because its tagge
 
 ## Priority 2 — hardware-aware first run and compatibility reporting
 
-- [ ] Detect OS/architecture, CPU features, system RAM, available disk, GPU vendor/device, driver version, and VRAM where available. Keep detection local; do not upload machine data.
-- [ ] Expose evidence states as `detected`, `available`, `configured`, and `tested`.
-- [ ] Recommend an engine/backend/model based on explicit memory and runtime constraints. Offer a CPU fallback when acceleration is unavailable or not verified; never infer backend support from GPU presence alone.
+- [x] Add the first local hardware inventory endpoint and dashboard panel for OS/architecture, logical CPU count, total/available RAM and available disk; enumerate GPU adapters using DXGI on Windows and DRM/sysfs on Linux.
+- [ ] Complete hardware discovery on macOS and add CPU-feature, driver-version, GPU-runtime and VRAM probes where platform APIs expose reliable information.
+- [x] Distinguish the installed engine package and configured execution target from actual GPU inference evidence; current GPU execution stays explicitly `not-verified` until logs or a repeatable test prove offloaded layers/device activity.
+- [ ] Expose the complete evidence progression `detected`, `available`, `configured`, `installed`, `process-ready`, `task-tested`, and `profile-validated` consistently in the UI and catalogue.
+- [ ] Turn the initial RAM-based guidance into measured engine/backend/model recommendations using free RAM, available disk, dedicated/shared GPU memory, driver and known model runtime needs. Offer a CPU fallback when acceleration is unavailable or not verified; never infer backend support from GPU presence alone.
 - [ ] Explain estimated download size, model memory needs, context-size tradeoffs, license, and the reason a recommendation is or is not suitable.
 - [ ] Record repeatable baseline profiles, including the project's low-hardware target and the referenced RTX 3060 6 GB / 16 GB RAM profile. A profile is a test record, not a universal guarantee.
 

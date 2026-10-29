@@ -184,6 +184,20 @@ def main():
             status, diagnostics_raw, _ = request(base + "/v1/diagnostics/export")
             assert "ui.smoke_test" in diagnostics_raw and "diagnostic endpoint smoke marker" in diagnostics_raw
 
+            status, hardware_raw, hardware_type = request(base + "/v1/system/hardware")
+            hardware_info = json.loads(hardware_raw)
+            assert status == 200 and "application/json" in hardware_type
+            assert hardware_info["platform"] and hardware_info["architecture"]
+            assert isinstance(hardware_info["logical_cpu_count"], int) and hardware_info["logical_cpu_count"] >= 1
+            assert isinstance(hardware_info["total_memory_bytes"], int)
+            assert isinstance(hardware_info["available_memory_bytes"], int)
+            assert isinstance(hardware_info["available_disk_bytes"], int)
+            assert hardware_info["gpu_probe_status"] in ("complete", "partial", "unsupported")
+            assert isinstance(hardware_info["gpus"], list)
+            assert hardware_info["gpu_use_requires_validation"] is True
+            status, hardware_diagnostics, _ = request(base + "/v1/diagnostics/export")
+            assert status == 200 and "hardware.snapshot" in hardware_diagnostics
+
             status, version_raw, content_type = request(base + "/version")
             version_info = json.loads(version_raw)
             assert status == 200 and "application/json" in content_type
@@ -323,6 +337,8 @@ def main():
                 assert status == 200 and engine_status["ready"] is True, (
                     "Runtime should distinguish process-running from HTTP-ready: " + engine_status_raw
                 )
+                assert engine_status["backend_target"] == "unspecified"
+                assert engine_status["gpu_execution_evidence"] == "not-verified"
                 try:
                     request(base + "/v1/setup/llama-cpp", method="POST", body={
                         "executable_path": str(setup_binary),
@@ -445,6 +461,8 @@ def main():
             llama_status = next(item for item in engines if item["id"] == "llama-cpp")
             assert status == 200 and llama_status["model_configured"] is True and llama_status["default_for_chat"] is True
             assert llama_status["status"] == "stopped" and llama_status["ready"] is False
+            assert llama_status["backend_target"] == "cpu"
+            assert llama_status["gpu_execution_evidence"] == "not-verified"
 
             # GPU mode must use llama.cpp's automatic placement rather than
             # blindly forcing every layer onto a potentially small GPU.
@@ -458,6 +476,10 @@ def main():
             configured_llama = next(item for item in persisted["engines"] if item["id"] == "llama-cpp")
             assert "--n-gpu-layers" in configured_llama["args"]
             assert "auto" in configured_llama["args"], "GPU setup should use automatic layer placement"
+            status, engine_status_raw, _ = request(base + "/v1/engines")
+            engine_status = next(item for item in json.loads(engine_status_raw)["data"] if item["id"] == "llama-cpp")
+            assert status == 200 and engine_status["backend_target"] == "gpu-requested"
+            assert engine_status["gpu_execution_evidence"] == "not-verified", "GPU request must not be mislabeled as verified execution"
             assert configured_llama["args"][configured_llama["args"].index("--cors-origins") + 1] == "localhost"
             assert "--no-cors-credentials" in configured_llama["args"]
             denied_shutdown = urllib.request.Request(
@@ -475,7 +497,7 @@ def main():
             assert status == 202 and json.loads(shutdown_raw)["status"] == "shutting-down"
             wait_until(lambda: process.poll() is not None, 5, "graceful runtime shutdown")
             assert process.returncode == 0, f"Runtime exited with {process.returncode} after graceful shutdown"
-            print("HTTP smoke test passed: dashboard, health/version/platform-update metadata, staged update status, apply capability guards, update URL/digest guards, duplicate-startup diagnostics, security guards, readiness probe, engine lifecycle, chat/models proxy, GGUF validation, quoted paths, restricted engine CORS, CPU/GPU setup persistence, graceful shutdown.")
+            print("HTTP smoke test passed: dashboard, local hardware inventory, health/version/platform-update metadata, staged update status, apply capability guards, update URL/digest guards, duplicate-startup diagnostics, security guards, readiness probe, engine lifecycle, chat/models proxy, GGUF validation, quoted paths, restricted engine CORS, CPU/GPU setup persistence, graceful shutdown.")
         except Exception:
             runtime_log.flush()
             print(

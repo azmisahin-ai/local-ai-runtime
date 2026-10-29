@@ -24,6 +24,11 @@
       "status": "preview"
     },
     {
+      "name": "Local device inventory",
+      "description": "The dashboard reports local OS/architecture, logical CPU count, total/available system RAM, free user-data disk space and graphics adapters when the platform probe supports them (Windows DXGI and Linux DRM/sysfs). This information stays on the computer. Detecting a GPU or installing a CUDA package is not proof that inference used the GPU.",
+      "status": "preview"
+    },
+    {
       "name": "Managed engine and model downloads",
       "description": "The reviewed starter catalog contains the official llama.cpp CPU package, CUDA 12/13 server packages with their matching official CUDA runtime/DLL dependencies, and a pinned Qwen2.5 1.5B GGUF starter model. Each asset is SHA-256 verified and safely extracted before activation; real GPU task validation remains a separate evidence gate.",
       "status": "preview"
@@ -70,7 +75,7 @@
     },
     {
       "name": "Hardware-aware model setup",
-      "description": "Planned local detection of CPU features, system RAM, GPU/driver/VRAM and disk, followed by evidence-backed engine/model recommendations and safe CPU fallbacks. Hardware presence alone will not be treated as proof of backend support.",
+      "description": "A first local device inventory is available in the dashboard. CPU feature and driver discovery, reliable VRAM/runtime evidence, measured compatibility profiles, and evidence-backed engine/backend/model recommendations with safe fallbacks remain planned.",
       "status": "planned"
     },
     {
