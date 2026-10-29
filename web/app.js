@@ -5,6 +5,8 @@ const engineError = document.querySelector('#engine-error');
 const hardwareSummary = document.querySelector('#hardware-summary');
 const hardwareError = document.querySelector('#hardware-error');
 const hardwareRefreshButton = document.querySelector('#hardware-refresh');
+const gpuObservationButton = document.querySelector('#gpu-observation-run');
+const gpuObservationStatus = document.querySelector('#gpu-observation-status');
 const chatError = document.querySelector('#chat-error');
 const answerWrap = document.querySelector('#answer-wrap');
 const answer = document.querySelector('#answer');
@@ -813,6 +815,11 @@ async function refreshEngines() {
     for (const engine of result.data) engineList.append(engineCard(engine));
     const defaultChat = result.data.find((engine) => engine.default_for_chat);
     chatSendButton.disabled = !defaultChat?.ready;
+    const gpuReady = Boolean(defaultChat?.ready && defaultChat.backend_target === 'gpu-requested');
+    gpuObservationButton.disabled = !gpuReady;
+    gpuObservationButton.title = gpuReady
+      ? 'Runs a fixed local chat task and samples NVIDIA system utilization/memory while it runs.'
+      : 'Configure a CUDA-enabled engine with GPU layers set to auto, then start it.';
     if (!defaultChat) chatReadiness.textContent = 'Configure llama.cpp above, then start the engine.';
     else if (defaultChat.ready) chatReadiness.textContent = 'Model server ready. Chat requests stay on this machine.';
     else if (defaultChat.status === 'running') chatReadiness.textContent = 'The model is loading or the server is not ready yet. Chat will enable when its health check succeeds.';
@@ -821,6 +828,7 @@ async function refreshEngines() {
   } catch (error) {
     engineError.textContent = error.message;
     engineList.replaceChildren(make('div', 'empty', 'Could not load engine status.'));
+    gpuObservationButton.disabled = true;
   }
 }
 
@@ -983,6 +991,49 @@ document.querySelector('#chat-form').addEventListener('submit', async (event) =>
   } finally {
     send.disabled = false;
     send.textContent = 'Send message';
+  }
+});
+
+gpuObservationButton.addEventListener('click', async () => {
+  gpuObservationStatus.className = 'hint';
+  gpuObservationStatus.textContent = 'Running a fixed local inference request and sampling NVIDIA GPU utilization/memory. Other applications may also contribute to these system-wide measurements.';
+  gpuObservationButton.disabled = true;
+  const originalLabel = gpuObservationButton.textContent;
+  gpuObservationButton.textContent = 'Measuring…';
+  try {
+    const result = await api('/v1/diagnostics/gpu-observation', { method: 'POST', body: '{}' });
+    const lines = [
+      result.task_succeeded
+        ? `Local inference request completed in ${(Number(result.elapsed_ms || 0) / 1000).toFixed(2)} s.`
+        : 'The local inference request did not complete successfully.',
+      result.message || 'No additional measurement details were provided.',
+      `Engine startup evidence: ${String(result.startup_evidence || 'not-verified')}. ${String(result.startup_evidence_summary || '')}`.trim(),
+    ];
+    for (const device of Array.isArray(result.devices) ? result.devices : []) {
+      const utilization = Number.isInteger(device.peak_utilization_percent) ? `${device.peak_utilization_percent}%` : 'not available';
+      const before = Number.isInteger(device.memory_before_mib) ? `${device.memory_before_mib} MiB` : 'not available';
+      const peak = Number.isInteger(device.memory_peak_mib) ? `${device.memory_peak_mib} MiB` : 'not available';
+      const after = Number.isInteger(device.memory_after_mib) ? `${device.memory_after_mib} MiB` : 'not available';
+      const total = Number.isInteger(device.memory_total_mib) ? ` / ${device.memory_total_mib} MiB total` : '';
+      lines.push(`GPU ${device.index}: peak utilization ${utilization}; memory before ${before}, peak ${peak}, after ${after}${total}.`);
+    }
+    gpuObservationStatus.className = !result.task_succeeded ? 'status-message failure' : (result.status === 'sampled' ? 'status-message success' : 'hint');
+    gpuObservationStatus.textContent = lines.join('\n');
+    reportDiagnosticEvent('ui.gpu_observation.completed', [
+      `task_succeeded=${Boolean(result.task_succeeded)}`,
+      `measurement=${String(result.status || 'unknown').slice(0, 32)}`,
+      `samples=${Number(result.samples_during_request || 0)}`,
+      `elapsed_ms=${Number(result.elapsed_ms || 0)}`,
+      `device_count=${Array.isArray(result.devices) ? result.devices.length : 0}`,
+      `startup_evidence=${String(result.startup_evidence || 'unknown').slice(0, 32)}`,
+    ].join('; '));
+  } catch (error) {
+    gpuObservationStatus.className = 'status-message failure';
+    gpuObservationStatus.textContent = error.message;
+    reportDiagnosticEvent('ui.gpu_observation.failed', `http_status=${Number.isInteger(error?.httpStatus) ? error.httpStatus : 0}; error_type=${String(error?.name || 'Error').slice(0, 40)}`);
+  } finally {
+    gpuObservationButton.textContent = originalLabel;
+    await refreshEngines();
   }
 });
 

@@ -54,6 +54,10 @@
       </div>
       <p class="hint">This information is detected on this computer only. It is not uploaded. Hardware detection is not a compatibility guarantee; the selected engine, driver, model, quantization and context must still be tested together.</p>
       <div id="hardware-summary" class="hardware-summary" aria-live="polite"><div class="empty">Checking local device information…</div></div>
+      <div class="gpu-observation-control">
+        <button id="gpu-observation-run" class="button secondary" type="button" disabled>Measure GPU during a local test</button>
+        <p id="gpu-observation-status" class="hint" role="status" aria-live="polite">Select and start a CUDA-enabled chat engine to measure NVIDIA GPU activity during a real local request. Measurements are local and may include other applications.</p>
+      </div>
       <p id="hardware-error" class="error" role="status" aria-live="polite"></p>
     </section>
 

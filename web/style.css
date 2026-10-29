@@ -261,3 +261,9 @@ input:focus, select:focus { outline: 2px solid #92b7ff70; border-color: var(--ac
 .recommendation-model { margin: 0; font-weight: 700; }
 .recommendation-engine, .recommendation-reason { margin: 0; color: var(--muted); font-size: .84rem; line-height: 1.5; overflow-wrap: anywhere; }
 .recommendation-card .button { margin-top: auto; }
+
+/* GPU observation is a user-triggered diagnostic action; keep the privacy and
+   attribution caveat visible next to its result instead of implying per-process telemetry. */
+.gpu-observation-control { display: grid; gap: .55rem; margin-top: .25rem; padding-top: .9rem; border-top: 1px solid var(--line); }
+.gpu-observation-control p { margin: 0; white-space: pre-line; line-height: 1.5; }
+.gpu-observation-control .button { justify-self: start; }

@@ -121,3 +121,11 @@ This project follows a lightweight Keep a Changelog structure. GitHub Release no
 - Organize the dashboard into task workspaces separate from engine/model catalog items, with planned modalities explicitly labelled as not implemented.
 - Improve Windows launcher behavior when a listener is reported as unresolved PID 0/PID 4: select and persist a safe loopback port instead of misleadingly naming System Idle Process or stopping a process.
 - Reorganize the roadmap around installed desktop UX, hardware evidence, versioned catalog metadata, safe updates and cross-platform parity.
+
+
+## Unreleased — opt-in NVIDIA GPU observation
+
+- Add a dashboard action that runs a fixed local chat request and samples NVIDIA system-wide utilization and memory during the request when `nvidia-smi` is available.
+- Keep system telemetry distinct from current-session startup/offload evidence and disclose that other applications may contribute to GPU measurements.
+- Do not record the fixed prompt or generated response in runtime-owned diagnostics.
+- Add CSV parser coverage and an HTTP guard that requires a running CUDA/GPU-configured engine before allowing the observation.

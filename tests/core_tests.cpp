@@ -5,6 +5,7 @@
 #include "lar/downloads.hpp"
 #include "lar/process.hpp"
 #include "lar/backend_evidence.hpp"
+#include "lar/gpu_monitor.hpp"
 
 #include <algorithm>
 #include <filesystem>
@@ -127,6 +128,22 @@ int main() {
         const auto no_log = lar::parse_gpu_execution_evidence({}, false);
         require(!no_log.engine_log_available && no_log.state == "not-verified",
                 "missing logs must fail closed to not-verified");
+
+        stage("NVIDIA utilization snapshot parser");
+        std::vector<lar::NvidiaGpuSample> nvidia_samples;
+        require(lar::parse_nvidia_smi_snapshot("0, 37, 2048, 8192\n1, N/A, 512, 4096\n", nvidia_samples),
+                "valid nvidia-smi CSV output should parse");
+        require(nvidia_samples.size() == 2 && nvidia_samples[0].index == 0 &&
+                nvidia_samples[0].utilization_percent == 37 && nvidia_samples[0].memory_used_mib == 2048 &&
+                nvidia_samples[0].memory_total_mib == 8192,
+                "NVIDIA usage and memory fields should be parsed correctly");
+        require(nvidia_samples[1].index == 1 && nvidia_samples[1].utilization_percent == -1 &&
+                nvidia_samples[1].memory_used_mib == 512,
+                "unsupported metrics should remain unknown instead of being guessed");
+        require(!lar::parse_nvidia_smi_snapshot("nvidia-smi failed\n", nvidia_samples),
+                "non-CSV diagnostic output must not be accepted as GPU telemetry");
+        require(!lar::parse_nvidia_smi_snapshot("0, N/A, N/A, N/A\n", nvidia_samples),
+                "a CSV row with no usable metrics must not count as a measurement");
 
         stage("local hardware inventory");
         const auto hardware = lar::detect_hardware(std::filesystem::temp_directory_path());

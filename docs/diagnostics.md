@@ -37,3 +37,7 @@ If the job reports a size, SHA-256 or GGUF-header verification failure, the unve
 ## Privacy
 
 The event logger does not record chat prompts or model responses. Export is user-initiated and the report is not sent automatically. Runtime-generated reports redact known user-data/home paths, but no text redaction can be perfect; inspect the report and remove private paths, model names, or sensitive information before posting it publicly. Never attach model weights, API keys, credentials, or private datasets.
+
+## GPU activity observation
+
+On a configured CUDA-enabled chat engine, the dashboard can run a fixed local inference request while sampling NVIDIA system-wide utilization and memory through `nvidia-smi`. The observation records only task status, elapsed time, sample count, peak utilization, and memory-before/peak/after values in the local diagnostic event. The fixed prompt and generated response are not included in runtime-owned logs. Metrics are system-wide and may include other applications; a sampled utilization change is not attributable to Local AI Runtime alone. If `nvidia-smi` is unavailable or the request completes too quickly, the UI reports that measurement was unavailable/insufficient rather than assuming GPU execution. Startup offload logs remain a separate evidence signal.

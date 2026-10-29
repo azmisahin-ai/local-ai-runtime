@@ -350,6 +350,15 @@ def main():
                     "Runtime should distinguish process-running from HTTP-ready: " + engine_status_raw
                 )
                 assert engine_status["backend_target"] == "unspecified"
+                # GPU observation must refuse to run under an unverified/non-GPU
+                # engine configuration; it must not silently change the backend.
+                try:
+                    request(base + "/v1/diagnostics/gpu-observation", method="POST", body={}, timeout=5)
+                    raise AssertionError("GPU observation must require an explicit CUDA/GPU engine configuration")
+                except urllib.error.HTTPError as observation_error:
+                    observation_body = json.loads(observation_error.read().decode("utf-8"))
+                    assert observation_error.code == 409, observation_body
+                    assert "GPU layers to auto" in observation_body.get("error", {}).get("message", ""), observation_body
                 assert engine_status["gpu_execution_evidence"] == "not-verified"
                 assert isinstance(engine_status["gpu_execution_evidence_summary"], str)
                 assert isinstance(engine_status["engine_log_available"], bool)

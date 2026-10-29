@@ -3,6 +3,7 @@
 #include "lar/diagnostics.hpp"
 #include "lar/hardware.hpp"
 #include "lar/backend_evidence.hpp"
+#include "lar/gpu_monitor.hpp"
 
 #ifndef LAR_VERSION
 #define LAR_VERSION "0.1.0-dev"
@@ -20,6 +21,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <mutex>
 #include <regex>
 #include <set>
 #include <cctype>
@@ -574,6 +576,41 @@ http::response<http::string_body> error_response(http::status status, unsigned v
     return json_response(status, version, "{\"error\":{\"message\":" + json_quoted(message) + "}}");
 }
 
+std::string nullable_int_json(int value) {
+    return value >= 0 ? std::to_string(value) : std::string("null");
+}
+
+std::string gpu_observation_json(const NvidiaGpuObservation& observation,
+                                 std::string_view engine_id,
+                                 std::string_view backend_target,
+                                 const GpuExecutionEvidence& evidence) {
+    std::ostringstream out;
+    out << "{\"task_succeeded\":" << (observation.task_succeeded ? "true" : "false")
+        << ",\"telemetry_available\":" << (observation.telemetry_available ? "true" : "false")
+        << ",\"status\":" << json_quoted(observation.status)
+        << ",\"message\":" << json_quoted(observation.message)
+        << ",\"elapsed_ms\":" << observation.elapsed_ms
+        << ",\"samples_during_request\":" << observation.samples_during_request
+        << ",\"engine_id\":" << json_quoted(engine_id)
+        << ",\"backend_target\":" << json_quoted(backend_target)
+        << ",\"startup_evidence\":" << json_quoted(evidence.state)
+        << ",\"startup_evidence_summary\":" << json_quoted(evidence.summary)
+        << ",\"devices\":[";
+    for (std::size_t i = 0; i < observation.devices.size(); ++i) {
+        if (i) out << ',';
+        const auto& device = observation.devices[i];
+        out << "{\"index\":" << device.index
+            << ",\"samples_during_request\":" << device.samples_during_request
+            << ",\"peak_utilization_percent\":" << nullable_int_json(device.peak_utilization_percent)
+            << ",\"memory_before_mib\":" << nullable_int_json(device.memory_before_mib)
+            << ",\"memory_peak_mib\":" << nullable_int_json(device.memory_peak_mib)
+            << ",\"memory_after_mib\":" << nullable_int_json(device.memory_after_mib)
+            << ",\"memory_total_mib\":" << nullable_int_json(device.memory_total_mib) << '}';
+    }
+    out << "]}";
+    return out.str();
+}
+
 std::string engine_id_from_path(const std::string& path, const std::string& action) {
     const std::string prefix = "/v1/engines/";
     const std::string suffix = "/" + action;
@@ -769,6 +806,18 @@ ProxyResult proxy_local_request(const EngineStatus& engine, http::verb method,
 
 ProxyResult proxy_chat(const EngineStatus& engine, const std::string& body) {
     return proxy_local_request(engine, http::verb::post, "/v1/chat/completions", body);
+}
+
+bool has_nonempty_chat_choices(std::string_view response_body) {
+    try {
+        std::istringstream input{std::string(response_body)};
+        boost::property_tree::ptree response;
+        boost::property_tree::read_json(input, response);
+        const auto choices = response.get_child_optional("choices");
+        return choices && !choices->empty();
+    } catch (...) {
+        return false;
+    }
 }
 
 ProxyResult proxy_models(const EngineStatus& engine) {
@@ -986,6 +1035,55 @@ http::response<http::string_body> handle_request(const http::request<http::strin
         }
         log_diagnostic("INFO", "hardware.snapshot", summary.str());
         return json_response(http::status::ok, version, hardware_json(hardware));
+    }
+    if (request.method() == http::verb::post && target == "/v1/diagnostics/gpu-observation") {
+        static std::mutex observation_mutex;
+        std::unique_lock observation_lock(observation_mutex, std::try_to_lock);
+        if (!observation_lock.owns_lock()) {
+            return error_response(http::status::conflict, version, "A GPU observation is already running. Wait for it to finish before starting another.");
+        }
+        if (downloads.has_active_jobs()) {
+            return error_response(http::status::conflict, version, "A component installation is active. Finish or cancel it before measuring GPU activity.");
+        }
+        const auto engine = engines.default_chat_engine();
+        if (!engine) return error_response(http::status::service_unavailable, version, "Configure a local chat engine before running a GPU observation.");
+        const auto backend_target = engine_backend_target(engine->config);
+        if (backend_target != "gpu-requested") {
+            return error_response(http::status::conflict, version, "Select a CUDA-enabled llama.cpp engine and set GPU layers to auto before running this observation. The test will not silently change your engine configuration.");
+        }
+        const auto states = engines.statuses();
+        const auto state = std::find_if(states.begin(), states.end(), [&](const EngineStatus& item) {
+            return item.config.id == engine->config.id;
+        });
+        if (state == states.end() || !upstream_is_ready(*state)) {
+            return error_response(http::status::conflict, version, "Start the selected CUDA-enabled engine and wait until it is ready before running this observation.");
+        }
+
+        log_diagnostic("INFO", "gpu.observation.started", "engine=" + engine->config.id + " backend=" + backend_target);
+        constexpr std::string_view probe_body = R"({"model":"local-model","messages":[{"role":"system","content":"This is a local runtime validation request. Answer the user directly in a helpful way."},{"role":"user","content":"Explain in eight concise sentences how a computer carries out a program. This is a local GPU observation check."}],"temperature":0.2,"max_tokens":192,"stream":false})";
+        const auto observation = observe_nvidia_gpu_during([&] {
+            const auto result = proxy_chat(*engine, std::string(probe_body));
+            return result.status == http::status::ok && has_nonempty_chat_choices(result.body);
+        });
+        const auto evidence = inspect_gpu_execution_evidence(engine->config.id);
+        std::ostringstream detail;
+        detail << "engine=" << engine->config.id << " backend=" << backend_target
+               << " task_succeeded=" << (observation.task_succeeded ? "true" : "false")
+               << " measurement=" << observation.status
+               << " samples=" << observation.samples_during_request
+               << " elapsed_ms=" << observation.elapsed_ms;
+        for (const auto& device : observation.devices) {
+            detail << " gpu_index=" << device.index
+                   << " samples=" << device.samples_during_request
+                   << " peak_utilization_percent=" << device.peak_utilization_percent
+                   << " memory_before_mib=" << device.memory_before_mib
+                   << " memory_peak_mib=" << device.memory_peak_mib
+                   << " memory_after_mib=" << device.memory_after_mib
+                   << " memory_total_mib=" << device.memory_total_mib;
+        }
+        log_diagnostic(observation.task_succeeded ? "INFO" : "WARN", "gpu.observation.finished", detail.str());
+        return json_response(http::status::ok, version,
+            gpu_observation_json(observation, engine->config.id, backend_target, evidence));
     }
     if (request.method() == http::verb::get && target == "/v1/catalog") {
         return json_response(http::status::ok, version, downloads.catalog_json());
