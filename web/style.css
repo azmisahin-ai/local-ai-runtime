@@ -246,3 +246,18 @@ input:focus, select:focus { outline: 2px solid #92b7ff70; border-color: var(--ac
 .hardware-guidance p { margin: .2rem 0 0; color: var(--muted); font-size: .86rem; }
 @media (max-width: 760px) { .hardware-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 420px) { .hardware-facts { grid-template-columns: 1fr 1fr; } }
+
+/* Heuristic setup recommendations are explicit about their evidence level. */
+.hardware-recommendations { display: grid; gap: .65rem; }
+.hardware-recommendations > h3 { margin: .25rem 0 0; font-size: 1.02rem; }
+.hardware-recommendations > .hint { margin: 0; font-size: .82rem; }
+.recommendation-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: .75rem; }
+.recommendation-card { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: .55rem; padding: 1rem; border: 1px solid var(--line); border-radius: .8rem; background: #101319; }
+.recommendation-heading { width: 100%; display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: .5rem; }
+.recommendation-heading h4 { margin: 0; font-size: .98rem; }
+.recommendation-status { display: inline-flex; padding: .2rem .5rem; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: .7rem; font-weight: 750; }
+.status-recommended .recommendation-status, .status-candidate .recommendation-status { color: var(--good); border-color: #3e7d5b; }
+.status-needs-space .recommendation-status, .status-resource-constrained .recommendation-status, .status-review .recommendation-status { color: var(--warning, #e5bd75); border-color: #8b7546; }
+.recommendation-model { margin: 0; font-weight: 700; }
+.recommendation-engine, .recommendation-reason { margin: 0; color: var(--muted); font-size: .84rem; line-height: 1.5; overflow-wrap: anywhere; }
+.recommendation-card .button { margin-top: auto; }

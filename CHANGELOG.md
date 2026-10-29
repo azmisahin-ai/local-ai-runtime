@@ -6,6 +6,8 @@ This project follows a lightweight Keep a Changelog structure. GitHub Release no
 
 ## Unreleased
 
+- Add structured local hardware-aware starting recommendations: a conservative CPU/Qwen2.5 1.5B profile uses observed RAM and free disk; NVIDIA CUDA is shown only as a candidate when an adapter is detected, with an explicit not-verified warning. Add HTTP and dashboard smoke coverage for the recommendation schema.
+
 - Add a local-only device inventory panel and `/v1/system/hardware` endpoint with OS/architecture, logical CPU count, total/available RAM, free space for models, and native GPU adapter inventory where supported. Adapter detection is explicitly not a claim that CUDA or any model/backend works.
 - Add evidence-aware engine status labels that distinguish the installed package (CPU/CUDA 12/CUDA 13), requested execution target, and unverified real GPU execution.
 - Include a bounded `hardware.snapshot` summary in local diagnostics so support reports can show machine resource limits and graphics-adapter identifiers without collecting chat prompts, model responses, or absolute storage paths.

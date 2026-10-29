@@ -652,6 +652,41 @@ function formatBytes(value) {
   return `${amount >= 10 || unit === 0 ? amount.toFixed(0) : amount.toFixed(1)} ${units[unit]}`;
 }
 
+function renderHardwareRecommendations(recommendations) {
+  const section = make('section', 'hardware-recommendations');
+  section.append(make('h3', '', 'Recommended starting points'));
+  section.append(make('p', 'hint', 'These are local hardware-based suggestions, not compatibility guarantees. A package being installed or a GPU being detected does not prove that inference uses the GPU.'));
+  const grid = make('div', 'recommendation-grid');
+  const labels = {
+    recommended: 'Good starting point',
+    caution: 'Check memory headroom',
+    'resource-constrained': 'Limited memory',
+    'needs-space': 'Free disk space first',
+    unknown: 'Needs manual review',
+    candidate: 'GPU candidate · not verified',
+    review: 'GPU needs review',
+    'not-detected': 'NVIDIA adapter not detected',
+  };
+  for (const item of Array.isArray(recommendations) ? recommendations : []) {
+    const card = make('article', `recommendation-card status-${String(item.status || 'unknown')}`);
+    const heading = make('div', 'recommendation-heading');
+    heading.append(make('h4', '', item.title || 'Starting point'));
+    heading.append(make('span', 'recommendation-status', labels[item.status] || 'Needs review'));
+    card.append(heading);
+    if (item.model) card.append(make('p', 'recommendation-model', item.model));
+    if (item.engine) card.append(make('p', 'recommendation-engine', item.engine));
+    if (item.reason) card.append(make('p', 'recommendation-reason', item.reason));
+    const action = document.createElement('a');
+    action.className = 'button secondary';
+    action.href = '#catalog-panel';
+    action.textContent = item.id === 'nvidia-cuda-chat' ? 'Review engine options' : 'Browse starter components';
+    card.append(action);
+    grid.append(card);
+  }
+  section.append(grid);
+  return section;
+}
+
 function renderHardware(info) {
   hardwareSummary.replaceChildren();
   const facts = make('div', 'hardware-facts');
@@ -691,6 +726,7 @@ function renderHardware(info) {
   guidance.append(make('p', '', info.recommendation || 'Start with the CPU baseline and verify each model on this computer.'));
   guidance.append(make('p', '', 'GPU inference is not automatically confirmed by detecting an adapter or installing a CUDA package. Check engine logs and GPU activity during a real request.'));
   hardwareSummary.append(guidance);
+  hardwareSummary.append(renderHardwareRecommendations(info.recommendations));
 }
 
 async function refreshHardware() {

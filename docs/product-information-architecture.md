@@ -57,7 +57,7 @@ No arbitrary catalog URL may be accepted by the runtime API. Model repositories 
 
 The first hardware endpoint is `GET /v1/system/hardware`. It returns OS and architecture, logical CPU count, total/available system RAM, available bytes on the user-data volume, a GPU probe state, and any graphics adapters exposed by the platform probe. Windows uses DXGI; Linux reads the local DRM/sysfs inventory; GPU enumeration on macOS is not implemented in this first slice. The endpoint is loopback-only and does not upload hardware data.
 
-The dashboard uses system memory only for conservative starting guidance. GPU presence and dedicated-memory reports are observations, not inference evidence. Current engine status also reports the installed package family and whether GPU layers were requested, while real GPU execution remains `not-verified` until runtime engine logs or a measured task establish offloaded layers/device activity. Do not automatically mark an engine/model combination compatible from this inventory alone.
+The dashboard now exposes an initial heuristic recommendation for the pinned Qwen2.5 1.5B Q4_K_M CPU starter based on total/available RAM and free disk, and an NVIDIA CUDA candidate only when a local adapter is detected. These recommendations are screening hints, not compatibility claims. GPU presence and dedicated-memory reports are observations, not inference evidence. Current engine status also reports the installed package family and whether GPU layers were requested, while real GPU execution remains `not-verified` until runtime engine logs or a measured task establish offloaded layers/device activity. Do not automatically mark an engine/model combination compatible from this inventory alone.
 
 ## Evidence states
 

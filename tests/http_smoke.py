@@ -195,6 +195,18 @@ def main():
             assert hardware_info["gpu_probe_status"] in ("complete", "partial", "unsupported")
             assert isinstance(hardware_info["gpus"], list)
             assert hardware_info["gpu_use_requires_validation"] is True
+            hardware_recommendations = hardware_info.get("recommendations")
+            assert isinstance(hardware_recommendations, list) and len(hardware_recommendations) >= 2
+            cpu_recommendation = next((item for item in hardware_recommendations if item.get("id") == "starter-chat-cpu"), None)
+            cuda_recommendation = next((item for item in hardware_recommendations if item.get("id") == "nvidia-cuda-chat"), None)
+            assert cpu_recommendation is not None and cpu_recommendation.get("backend") == "CPU"
+            assert cpu_recommendation.get("status") in ("recommended", "caution", "resource-constrained", "needs-space", "unknown")
+            assert cpu_recommendation.get("evidence") == "hardware-heuristic"
+            assert isinstance(cpu_recommendation.get("download_bytes"), int) and cpu_recommendation["download_bytes"] > 0
+            assert cuda_recommendation is not None and cuda_recommendation.get("backend") == "NVIDIA CUDA"
+            assert cuda_recommendation.get("status") in ("candidate", "review", "not-detected", "unknown")
+            assert cuda_recommendation.get("evidence") == "hardware-screen-only"
+            assert "not" in cuda_recommendation.get("reason", "").lower() or "candidate" in cuda_recommendation.get("reason", "").lower() or "adapter" in cuda_recommendation.get("reason", "").lower()
             status, hardware_diagnostics, _ = request(base + "/v1/diagnostics/export")
             assert status == 200 and "hardware.snapshot" in hardware_diagnostics
 

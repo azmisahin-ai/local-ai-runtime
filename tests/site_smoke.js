@@ -119,6 +119,8 @@ async function main() {
   assert(dashboardHtml.includes('id="check-updates"'), 'dashboard should expose a manual update check');
   assert(dashboardHtml.includes('id="device-panel"') && dashboardHtml.includes('Your device &amp; model fit'), 'dashboard should expose a local hardware inventory panel');
   assert(dashboardScript.includes('/v1/system/hardware') && dashboardScript.includes('GPU requested · not verified'), 'dashboard should distinguish detected hardware from verified GPU execution');
+  assert(dashboardScript.includes('renderHardwareRecommendations') && dashboardScript.includes('info.recommendations'), 'dashboard should render structured hardware-aware starter recommendations');
+  assert(dashboardScript.includes('GPU candidate · not verified'), 'dashboard must label GPU recommendations as candidates, not supported profiles');
   assert(dashboardHtml.includes('Chat with your model'), 'dashboard should present chat as a user task, not a developer test');
   assert(dashboardScript.includes('setInterval(() => { if (Date.now() - lastUpdateCheckAt > 6 * 60 * 60 * 1000) checkForUpdates(); }'), 'dashboard should refresh update metadata periodically');
   assert(collectText(grid.afterChildren[0]).includes('SHA256SUMS.txt'));

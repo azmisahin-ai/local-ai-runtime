@@ -123,7 +123,64 @@ std::string hardware_json(const HardwareInfo& info) {
     } else {
         out << json_quoted("System memory headroom detected. This alone does not guarantee a model fits; check available RAM, GPU memory, quantization and context size.");
     }
-    out << ",\"gpu_use_requires_validation\":true}";
+    out << ",\"gpu_use_requires_validation\":true,\"recommendations\":[";
+    const auto mib = 1024ULL * 1024ULL;
+    const auto minimum_setup_disk = 3ULL * gib;
+    std::string cpu_status = "recommended";
+    std::string cpu_reason;
+    if (info.available_disk_bytes == 0) {
+        cpu_status = "unknown";
+        cpu_reason = "Free disk space could not be measured for the model storage volume. Check available space before starting a large download.";
+    } else if (info.available_disk_bytes < minimum_setup_disk) {
+        cpu_status = "needs-space";
+        cpu_reason = "Less than 3 GiB is available on the model storage volume. Free more space before downloading the starter model; keep additional room for temporary files.";
+    } else if (info.total_memory_bytes == 0 || info.available_memory_bytes == 0) {
+        cpu_status = "unknown";
+        cpu_reason = "The operating system did not provide a reliable memory reading. The pinned Qwen2.5 1.5B Q4_K_M file is about 1.12 GB; runtime memory depends on context and other applications.";
+    } else if (info.total_memory_bytes < 4ULL * gib || info.available_memory_bytes < 1536ULL * mib) {
+        cpu_status = "resource-constrained";
+        cpu_reason = "Available memory is tight for the starter model. It may still run with a modest context, but close other applications first; this is a heuristic, not a guarantee.";
+    } else if (info.total_memory_bytes < 8ULL * gib || info.available_memory_bytes < 3ULL * gib) {
+        cpu_status = "caution";
+        cpu_reason = "The starter CPU model is a reasonable first try, but memory headroom is limited. Keep context modest and verify a real chat task on this machine.";
+    } else {
+        cpu_status = "recommended";
+        cpu_reason = "Best conservative starting point in the current catalogue. The model file is about 1.12 GB; runtime memory also depends on context and other applications. This is not a compatibility guarantee.";
+    }
+    out << "{\"id\":\"starter-chat-cpu\",\"title\":\"Start with local chat\","
+        << "\"status\":" << json_quoted(cpu_status)
+        << ",\"backend\":\"CPU\",\"engine\":\"llama.cpp server — CPU\","
+        << "\"model\":\"Qwen2.5 1.5B Instruct · Q4_K_M\","
+        << "\"download_bytes\":1117320736,\"evidence\":\"hardware-heuristic\","
+        << "\"reason\":" << json_quoted(cpu_reason) << "}";
+
+    const GpuAdapterInfo* nvidia = nullptr;
+    for (const auto& gpu : info.gpus) {
+        if (gpu.vendor == "NVIDIA" || gpu.vendor_id == "0x10de" || gpu.vendor_id == "0x10DE") {
+            if (!nvidia || gpu.dedicated_memory_bytes > nvidia->dedicated_memory_bytes) nvidia = &gpu;
+        }
+    }
+    out << ",";
+    std::string cuda_status;
+    std::string cuda_reason;
+    if (info.gpu_probe_status != "complete") {
+        cuda_status = "unknown";
+        cuda_reason = "The operating system did not provide a complete graphics-adapter inventory. Do not infer GPU availability; the CPU setup remains the fallback.";
+    } else if (!nvidia) {
+        cuda_status = "not-detected";
+        cuda_reason = "No NVIDIA adapter was reported by the operating system. Keep using the CPU setup; other GPU backends are not yet available in this catalogue.";
+    } else if (nvidia->dedicated_memory_bytes < 4ULL * gib) {
+        cuda_status = "review";
+        cuda_reason = "An NVIDIA adapter was detected, but dedicated VRAM is below 4 GiB or not reported. Partial offload may work, but model fit and driver compatibility need a real task test.";
+    } else {
+        cuda_status = "candidate";
+        cuda_reason = "An NVIDIA adapter with at least 4 GiB reported dedicated VRAM was detected. This is only a screening candidate: driver compatibility, offloaded layers and a real chat task must still be verified.";
+    }
+    out << "{\"id\":\"nvidia-cuda-chat\",\"title\":\"NVIDIA GPU acceleration\","
+        << "\"status\":" << json_quoted(cuda_status)
+        << ",\"backend\":\"NVIDIA CUDA\",\"engine\":\"llama.cpp server — CUDA 12/13\","
+        << "\"model\":\"Qwen2.5 1.5B Instruct · Q4_K_M\",\"download_bytes\":null,"
+        << "\"evidence\":\"hardware-screen-only\",\"reason\":" << json_quoted(cuda_reason) << "}]}";
     return out.str();
 }
 
