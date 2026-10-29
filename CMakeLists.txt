@@ -38,6 +38,7 @@ add_library(lar_core
     src/downloads.cpp
     src/diagnostics.cpp
     src/hardware.cpp
+    src/backend_evidence.cpp
 )
 target_include_directories(lar_core PUBLIC include ${Boost_INCLUDE_DIRS})
 target_compile_definitions(lar_core PUBLIC BOOST_ERROR_CODE_HEADER_ONLY BOOST_SYSTEM_NO_DEPRECATED)

@@ -760,11 +760,26 @@ function engineCard(engine) {
       : engine.backend_package === 'cuda13-package' ? 'CUDA 13 package' : 'CPU package';
     meta.append(make('span', 'tag', packageLabel));
   }
-  if (engine.backend_target === 'gpu-requested') meta.append(make('span', 'tag loading', 'GPU requested · not verified'));
+  if (engine.backend_target === 'gpu-requested') meta.append(make('span', 'tag loading', 'GPU layers requested'));
   else if (engine.backend_target === 'cpu') meta.append(make('span', 'tag', 'CPU requested'));
+  if (engine.gpu_execution_evidence === 'offload-reported') {
+    const count = Number.isInteger(engine.gpu_offloaded_layers) && Number.isInteger(engine.gpu_total_layers)
+      ? `${engine.gpu_offloaded_layers}/${engine.gpu_total_layers} layers reported` : 'offload reported';
+    meta.append(make('span', 'tag ready', `GPU ${count}`));
+  } else if (engine.gpu_execution_evidence === 'no-layers-offloaded') {
+    meta.append(make('span', 'tag loading', 'No GPU layers reported'));
+  } else if (engine.gpu_execution_evidence === 'cuda-runtime-reported') {
+    meta.append(make('span', 'tag loading', 'CUDA initialized · offload unknown'));
+  } else if (engine.backend_target === 'gpu-requested') {
+    meta.append(make('span', 'tag loading', 'GPU execution not verified'));
+  }
   info.append(meta);
-  if (engine.backend_target === 'gpu-requested') {
-    info.append(make('p', 'engine-loading', 'This engine is configured to request GPU layers. The runtime has not yet confirmed that layers were offloaded; check the engine log and GPU activity during inference.'));
+  if (engine.backend_target === 'gpu-requested' || engine.backend_package === 'cuda12-package' || engine.backend_package === 'cuda13-package') {
+    const evidenceSummary = engine.gpu_execution_evidence_summary || 'GPU execution has not been verified from the current engine log.';
+    info.append(make('p', engine.gpu_execution_evidence === 'offload-reported' ? 'engine-loading' : 'hint', evidenceSummary));
+    if (engine.gpu_execution_evidence === 'offload-reported') {
+      info.append(make('p', 'hint', 'This confirms that the engine reported layer offload at startup. It does not measure live GPU utilization during inference.'));
+    }
   }
   if (engine.last_error) info.append(make('p', 'engine-error', engine.last_error));
   else if (!engine.executable_configured) info.append(make('p', 'engine-error', 'Configure llama.cpp above or set the engine executable path.'));

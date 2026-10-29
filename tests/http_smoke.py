@@ -351,6 +351,10 @@ def main():
                 )
                 assert engine_status["backend_target"] == "unspecified"
                 assert engine_status["gpu_execution_evidence"] == "not-verified"
+                assert isinstance(engine_status["gpu_execution_evidence_summary"], str)
+                assert isinstance(engine_status["engine_log_available"], bool)
+                assert isinstance(engine_status["gpu_evidence_current_session"], bool)
+                assert isinstance(engine_status["cuda_runtime_reported"], bool)
                 try:
                     request(base + "/v1/setup/llama-cpp", method="POST", body={
                         "executable_path": str(setup_binary),
@@ -475,6 +479,7 @@ def main():
             assert llama_status["status"] == "stopped" and llama_status["ready"] is False
             assert llama_status["backend_target"] == "cpu"
             assert llama_status["gpu_execution_evidence"] == "not-verified"
+            assert isinstance(llama_status["gpu_execution_evidence_summary"], str)
 
             # GPU mode must use llama.cpp's automatic placement rather than
             # blindly forcing every layer onto a potentially small GPU.
@@ -492,6 +497,7 @@ def main():
             engine_status = next(item for item in json.loads(engine_status_raw)["data"] if item["id"] == "llama-cpp")
             assert status == 200 and engine_status["backend_target"] == "gpu-requested"
             assert engine_status["gpu_execution_evidence"] == "not-verified", "GPU request must not be mislabeled as verified execution"
+            assert isinstance(engine_status["gpu_evidence_current_session"], bool), "status should expose whether evidence is scoped to the latest managed process session"
             assert configured_llama["args"][configured_llama["args"].index("--cors-origins") + 1] == "localhost"
             assert "--no-cors-credentials" in configured_llama["args"]
             denied_shutdown = urllib.request.Request(

@@ -4,6 +4,7 @@
 #include "lar/hardware.hpp"
 #include "lar/downloads.hpp"
 #include "lar/process.hpp"
+#include "lar/backend_evidence.hpp"
 
 #include <algorithm>
 #include <filesystem>
@@ -95,6 +96,37 @@ int main() {
         require(lar::DownloadManager::sha256_file(digest_path) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
                 "SHA-256 verifier returned incorrect result");
         std::filesystem::remove(digest_path);
+
+        stage("session-scoped GPU execution evidence");
+        const std::string gpu_marker = std::string(lar::engine_log_session_marker) + "\n";
+        const auto offloaded = lar::parse_gpu_execution_evidence(
+            "old run: offloaded 33/33 layers to GPU\n" + gpu_marker +
+            "ggml_cuda_init: found 1 CUDA devices\nllm_load_tensors: offloaded 18/33 layers to GPU\n");
+        require(offloaded.state == "offload-reported", "positive GPU layer offload should be reported");
+        require(offloaded.offload_count_found && offloaded.offloaded_layers == 18 && offloaded.total_layers == 33,
+                "GPU evidence should report the offloaded/total layer counts");
+        require(offloaded.cuda_runtime_reported, "CUDA initialization evidence should be retained");
+        require(offloaded.summary.find("live GPU utilization") != std::string::npos,
+                "GPU evidence must clarify that live utilization was not measured");
+
+        const auto zero_offload = lar::parse_gpu_execution_evidence(
+            gpu_marker + "llm_load_tensors: offloaded 0/33 layers to GPU\n");
+        require(zero_offload.state == "no-layers-offloaded" && zero_offload.offloaded_layers == 0,
+                "zero offloaded layers must not be reported as GPU inference");
+
+        const auto cuda_only = lar::parse_gpu_execution_evidence(
+            gpu_marker + "ggml_cuda_init: found 1 CUDA devices\n");
+        require(cuda_only.state == "cuda-runtime-reported" && !cuda_only.offload_count_found,
+                "CUDA initialization alone must not imply layer offload");
+
+        const auto stale_only = lar::parse_gpu_execution_evidence(
+            "old session: offloaded 33/33 layers to GPU\n" + gpu_marker + "starting new CPU session\n");
+        require(stale_only.state == "not-verified" && !stale_only.offload_count_found,
+                "previous-session GPU evidence must not leak into current status");
+
+        const auto no_log = lar::parse_gpu_execution_evidence({}, false);
+        require(!no_log.engine_log_available && no_log.state == "not-verified",
+                "missing logs must fail closed to not-verified");
 
         stage("local hardware inventory");
         const auto hardware = lar::detect_hardware(std::filesystem::temp_directory_path());

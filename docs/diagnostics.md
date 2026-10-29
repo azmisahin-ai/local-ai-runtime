@@ -10,6 +10,8 @@ Use **Export diagnostics** to save `local-ai-runtime-diagnostics.txt`. The repor
 
 The **Include engine process logs** option is off by default. When selected, the report also includes the recent tail of each configured engine's log. Upstream engines may write prompt fragments, model paths or other implementation-specific details to their own logs, so inspect this optional section before sharing.
 
+The Engines panel reads a small, structured GPU-evidence summary from the current engine log session. `CUDA initialized` means only that the log reported CUDA initialization. `N/M layers reported` means llama.cpp printed a layer-offload message for the current process session. It is stronger evidence than merely installing a CUDA package, but it is **not** a measurement of live GPU utilization during inference. A `0/M` offload report is shown explicitly. Each process start writes a session marker so old CUDA log lines from a previous run cannot be mistaken for current evidence. The raw engine log is not returned by the status API.
+
 You can attach the report to a GitHub issue, send it to a maintainer through another agreed support channel, or paste its relevant sections into a troubleshooting conversation. You do not have to create an issue just to receive help. Without the exported report or copied log text, maintainers cannot inspect data that stays on your computer.
 
 ## Local log locations

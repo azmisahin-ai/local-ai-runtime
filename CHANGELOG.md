@@ -1,3 +1,8 @@
+## Unreleased
+
+- Report session-scoped llama.cpp CUDA initialization and layer-offload evidence in the Engines panel. Previous-session log entries are excluded; a reported offload is clearly distinguished from measured live GPU utilization.
+- Add regression tests for positive/zero layer offload, CUDA initialization without a layer count, missing logs, and stale-session evidence.
+
 # Changelog
 - Fix Windows installer smoke-test race by waiting for Inno Setup post-uninstall cleanup and preserving the uninstall log on failure.
 

@@ -44,7 +44,8 @@ The website can offer the Windows setup executable as an alpha because its tagge
 
 - [x] Add the first local hardware inventory endpoint and dashboard panel for OS/architecture, logical CPU count, total/available RAM and available disk; enumerate GPU adapters using DXGI on Windows and DRM/sysfs on Linux.
 - [ ] Complete hardware discovery on macOS and add CPU-feature, driver-version, GPU-runtime and VRAM probes where platform APIs expose reliable information.
-- [x] Distinguish the installed engine package and configured execution target from actual GPU inference evidence; current GPU execution stays explicitly `not-verified` until logs or a repeatable test prove offloaded layers/device activity.
+- [x] Distinguish the installed engine package and configured execution target from actual GPU inference evidence. Current-session logs are parsed for CUDA initialization and explicit offloaded-layer counts, without treating startup messages as live utilization measurements.
+- [ ] Add a repeatable real-request GPU observation step (such as NVIDIA device/memory/utilization sampling) so startup offload reports can be compared with activity during a local inference request.
 - [x] Add the first structured, conservative recommendation cards: a pinned CPU chat starter informed by available RAM and disk, plus an NVIDIA CUDA candidate only when a local adapter is detected. Both states explicitly say they are heuristics, not support guarantees.
 - [ ] Expose the complete evidence progression `detected`, `available`, `configured`, `installed`, `process-ready`, `task-tested`, and `profile-validated` consistently in the UI and catalogue.
 - [ ] Turn the initial RAM-based guidance into measured engine/backend/model recommendations using free RAM, available disk, dedicated/shared GPU memory, driver and known model runtime needs. Offer a CPU fallback when acceleration is unavailable or not verified; never infer backend support from GPU presence alone.

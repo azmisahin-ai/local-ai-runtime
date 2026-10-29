@@ -1,5 +1,6 @@
 #include "lar/process.hpp"
 #include "lar/diagnostics.hpp"
+#include "lar/backend_evidence.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -194,6 +195,12 @@ bool ManagedProcess::start(const EngineConfig& config, std::string& error) {
             state_ = ProcessState::failed;
             return false;
         }
+        constexpr std::string_view session_marker = "\n=== LAR_ENGINE_SESSION_BEGIN ===\n";
+        DWORD marker_written = 0;
+        if (!WriteFile(log_handle, session_marker.data(), static_cast<DWORD>(session_marker.size()), &marker_written, nullptr) ||
+            marker_written != static_cast<DWORD>(session_marker.size())) {
+            log_diagnostic("WARN", "engine.log_session_marker_failed", "Could not mark current engine log session");
+        }
         HANDLE null_input = CreateFileW(L"NUL", GENERIC_READ,
             FILE_SHARE_READ | FILE_SHARE_WRITE, &security_attributes, OPEN_EXISTING,
             FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -238,6 +245,11 @@ bool ManagedProcess::start(const EngineConfig& config, std::string& error) {
         error = "Cannot open engine log file: " + log_path.string();
         state_ = ProcessState::failed;
         return false;
+    }
+    constexpr std::string_view session_marker = "\n=== LAR_ENGINE_SESSION_BEGIN ===\n";
+    const auto marker_written = ::write(log_fd, session_marker.data(), session_marker.size());
+    if (marker_written != static_cast<ssize_t>(session_marker.size())) {
+        log_diagnostic("WARN", "engine.log_session_marker_failed", "Could not mark current engine log session");
     }
 
     std::vector<std::string> storage;

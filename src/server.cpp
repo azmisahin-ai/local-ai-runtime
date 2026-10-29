@@ -2,6 +2,7 @@
 #include "lar/downloads.hpp"
 #include "lar/diagnostics.hpp"
 #include "lar/hardware.hpp"
+#include "lar/backend_evidence.hpp"
 
 #ifndef LAR_VERSION
 #define LAR_VERSION "0.1.0-dev"
@@ -502,6 +503,18 @@ std::string read_engine_log_tails(const RuntimeConfig& config) {
 bool upstream_is_ready(const EngineStatus& engine);
 
 std::string engine_status_json(const EngineStatus& engine) {
+    auto gpu_evidence = inspect_gpu_execution_evidence(engine.config.id);
+    const auto backend_target = engine_backend_target(engine.config);
+    if (backend_target == "cpu") {
+        // The active config explicitly requests CPU execution. Do not let an old
+        // CUDA session's appended log lines appear as evidence for this config.
+        gpu_evidence.state = "not-verified";
+        gpu_evidence.summary = "The current engine configuration explicitly requests CPU execution. GPU offload evidence from another configuration is not used for this status.";
+        gpu_evidence.cuda_runtime_reported = false;
+        gpu_evidence.offload_count_found = false;
+        gpu_evidence.offloaded_layers = -1;
+        gpu_evidence.total_layers = -1;
+    }
     const bool chat_capable = std::find(engine.config.capabilities.begin(), engine.config.capabilities.end(), "chat") != engine.config.capabilities.end();
     const bool model_missing = chat_capable && engine.config.model_path.empty();
     const bool ready = !model_missing && upstream_is_ready(engine);
@@ -523,10 +536,18 @@ std::string engine_status_json(const EngineStatus& engine) {
         << ",\"ready\":" << (ready ? "true" : "false")
         << ",\"readiness\":" << json_quoted(readiness)
         << ",\"upstream_base_url\":" << json_quoted(engine.config.upstream_base_url)
-        << ",\"backend_target\":" << json_quoted(engine_backend_target(engine.config))
+        << ",\"backend_target\":" << json_quoted(backend_target)
         << ",\"backend_package\":" << json_quoted(backend_package_from_path(engine.config))
-        << ",\"gpu_execution_evidence\":\"not-verified\""
-        << ",\"capabilities\":[";
+        << ",\"gpu_execution_evidence\":" << json_quoted(gpu_evidence.state)
+        << ",\"gpu_execution_evidence_summary\":" << json_quoted(gpu_evidence.summary)
+        << ",\"engine_log_available\":" << (gpu_evidence.engine_log_available ? "true" : "false")
+        << ",\"gpu_evidence_current_session\":" << (gpu_evidence.current_session_found ? "true" : "false")
+        << ",\"cuda_runtime_reported\":" << (gpu_evidence.cuda_runtime_reported ? "true" : "false")
+        << ",\"gpu_offloaded_layers\":";
+    if (gpu_evidence.offloaded_layers >= 0) out << gpu_evidence.offloaded_layers; else out << "null";
+    out << ",\"gpu_total_layers\":";
+    if (gpu_evidence.total_layers >= 0) out << gpu_evidence.total_layers; else out << "null";
+    out << ",\"capabilities\":[";
     for (std::size_t i = 0; i < engine.config.capabilities.size(); ++i) {
         if (i) out << ',';
         out << json_quoted(engine.config.capabilities[i]);

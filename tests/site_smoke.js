@@ -119,7 +119,7 @@ async function main() {
   assert(siteHtml.includes('Moving from the portable archive:'), 'site should explain migration from a portable package to the installed desktop app');
   assert(dashboardHtml.includes('id="check-updates"'), 'dashboard should expose a manual update check');
   assert(dashboardHtml.includes('id="device-panel"') && dashboardHtml.includes('Your device &amp; model fit'), 'dashboard should expose a local hardware inventory panel');
-  assert(dashboardScript.includes('/v1/system/hardware') && dashboardScript.includes('GPU requested · not verified'), 'dashboard should distinguish detected hardware from verified GPU execution');
+  assert(dashboardScript.includes('/v1/system/hardware') && dashboardScript.includes('GPU execution not verified'), 'dashboard should distinguish detected hardware from verified GPU execution');
   assert(dashboardScript.includes('renderHardwareRecommendations') && dashboardScript.includes('info.recommendations'), 'dashboard should render structured hardware-aware starter recommendations');
   assert(dashboardScript.includes('GPU candidate · not verified'), 'dashboard must label GPU recommendations as candidates, not supported profiles');
   assert(dashboardScript.includes('renderHardwareRecommendations') && dashboardScript.includes('info.recommendations'), 'dashboard must render the API recommendation cards');
