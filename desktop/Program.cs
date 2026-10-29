@@ -209,7 +209,7 @@ internal static class Program
             (File.GetAttributes(helperScript) & FileAttributes.ReparsePoint) != 0)
         {
             MessageBox.Show(
-                "An interrupted desktop update needs recovery, but its verified recovery helper is missing. Preserve the update backup under %LOCALAPPDATA%\LocalAIRuntime\updates and reinstall from the official release.",
+                "An interrupted desktop update needs recovery, but its verified recovery helper is missing. Preserve the update backup under %LOCALAPPDATA%\\LocalAIRuntime\\updates and reinstall from the official release.",
                 WindowTitle, MessageBoxButtons.OK, MessageBoxIcon.Error);
             return true;
         }
