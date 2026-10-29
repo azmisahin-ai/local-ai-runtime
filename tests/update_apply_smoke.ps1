@@ -148,6 +148,23 @@ try {
     $installedExe = Join-Path $installRoot 'local-ai-runtime.exe'
     $installedExeHashBefore = (Get-FileHash -LiteralPath $installedExe -Algorithm SHA256).Hash
 
+    # Pass 0: an actual apply still requires a live runtime PID. This guards
+    # against fixing validate-only mode by accidentally relaxing the apply gate.
+    & $helperPath -InstallRoot $installRoot -DataRoot $dataRoot -StageRoot $stageRoot `
+        -PackagePath $packageCopy -ManifestPath $manifestPath -TagName $tagName `
+        -AssetName $assetName -ExpectedSha256 $packageHash -RuntimePid 0 -Port $port `
+        -CurrentVersion $Version
+    $status = Get-Content -LiteralPath $statusPath -Raw | ConvertFrom-Json -ErrorAction Stop
+    if ($status.state -ne 'failed' -or $status.message -notmatch 'Required apply parameters') {
+        throw "An apply without a runtime PID was not rejected: state=$($status.state) message=$($status.message)"
+    }
+    if ((Get-FileHash -LiteralPath $installedExe -Algorithm SHA256).Hash -cne $installedExeHashBefore) {
+        throw 'A rejected apply without a runtime PID changed the installed executable.'
+    }
+    if ((Get-FileHash -LiteralPath $userConfigPath -Algorithm SHA256).Hash -cne $configHashBefore) {
+        throw 'A rejected apply without a runtime PID changed user configuration.'
+    }
+
     # Pass 1: corrupt a package copy and prove that digest mismatch fails closed
     # before any application files or user data are changed.
     $tamperedPackage = Join-Path $stageRoot 'tampered-update.zip'
@@ -301,7 +318,7 @@ try {
     if ((Get-FileHash -LiteralPath $userConfigPath -Algorithm SHA256).Hash -cne $configHashBefore) { throw 'Rollback-failure recovery changed user configuration.' }
     if ((Get-Content -LiteralPath $preservedDataPath -Raw) -cne 'user-data-must-survive-update') { throw 'Rollback-failure recovery modified or removed user data.' }
 
-    Write-Host "Windows update apply smoke test passed: tamper rejection, validate-only, app-file replacement, stop/restart, health checks, user-data preservation, verified rollback, forced helper termination recovery, and retry after rollback failure. Version=$Version Port=$port" -ForegroundColor Green
+    Write-Host "Windows update apply smoke test passed: runtime-PID guard, tamper rejection, validate-only, app-file replacement, stop/restart, health checks, user-data preservation, verified rollback, forced helper termination recovery, and retry after rollback failure. Version=$Version Port=$port" -ForegroundColor Green
     $success = $true
 } catch {
     Write-Host "Windows update apply smoke test failed: $($_.Exception.Message)" -ForegroundColor Red

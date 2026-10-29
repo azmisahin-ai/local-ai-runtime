@@ -464,9 +464,13 @@ if ($RecoverInterrupted) {
 }
 
 try {
+    # Validate-only checks never stop or restart a runtime, so a live PID is
+    # required only for an actual apply attempt. Keeping this distinction lets
+    # CI verify tamper rejection before it starts the isolated test runtime.
+    $runtimePidInvalid = (-not $ValidateOnly.IsPresent) -and ($RuntimePid -lt 1)
     if ([string]::IsNullOrWhiteSpace($PackagePath) -or [string]::IsNullOrWhiteSpace($ManifestPath) -or
         [string]::IsNullOrWhiteSpace($TagName) -or [string]::IsNullOrWhiteSpace($AssetName) -or
-        [string]::IsNullOrWhiteSpace($ExpectedSha256) -or $RuntimePid -lt 1 -or
+        [string]::IsNullOrWhiteSpace($ExpectedSha256) -or $runtimePidInvalid -or
         $Port -lt 1 -or $Port -gt 65535 -or [string]::IsNullOrWhiteSpace($CurrentVersion)) {
         throw 'Required apply parameters are missing or invalid.'
     }

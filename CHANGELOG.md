@@ -4,6 +4,7 @@ This project follows a lightweight Keep a Changelog structure. GitHub Release no
 
 ## Unreleased
 
+- Fix Windows updater parameter validation so `-ValidateOnly` can verify a staged package without a running runtime PID; actual apply operations still require a positive runtime PID. This unblocks the tampered-archive SHA-256 check in the Windows package smoke test.
 - Add a user-confirmed Windows portable-release update apply flow: revalidate the staged SHA-256, reject unsafe ZIP paths/symlinks/oversized archives, check installation-folder write access before shutdown, prepare a same-volume copy and rollback backup, gracefully stop/restart the runtime, and restore the previous application files if the new version fails `/health`.
 - Persist per-file SHA-256 values in the rollback manifest and recover interrupted Windows updates at the next launcher start; recovery validates the backup before restoring, records durable progress states, finalizes an update if its target runtime is already healthy, and retries recovery after an earlier rollback failure.
 - Keep update application disabled in `-dev` previews and stage-only on Linux/macOS; the dashboard exposes apply only when the current tagged Windows package contains the update helper.

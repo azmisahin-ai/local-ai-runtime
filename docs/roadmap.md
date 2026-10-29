@@ -2,6 +2,15 @@
 
 The roadmap distinguishes implemented code from platform/model combinations that have actually been tested. A build passing on GitHub Actions does not prove that CUDA, a particular GPU, or a particular model works.
 
+## Active focus — Windows first
+
+Windows x64 is the release-blocking platform until the packaged update flow passes its full hosted smoke test. Fix regressions in the portable Windows build, archive validation, install/restart, rollback, and interrupted-update recovery before starting equivalent Linux/macOS apply helpers. Do not create a release tag while the canonical pipeline is red.
+
+- [ ] Re-run the Windows x64 CI job after fixing `-ValidateOnly` parameter validation: validation-only mode must reject a tampered archive by SHA-256 without requiring a running-process PID, while real apply mode must still require a positive PID; the smoke test now covers both sides of this gate.
+- [ ] Confirm the complete Windows update smoke test passes: tamper rejection, valid package preflight, successful replacement/restart, user-data preservation, rollback, forced helper termination recovery, and retry after rollback failure.
+- [ ] Confirm the four platform package jobs pass before expecting the Pages deployment. A push to `main` publishes preview artifacts and may deploy Pages after all package jobs pass; it does not create a GitHub Release.
+- [ ] After CI is green, create a new version tag to trigger the gated GitHub Release job. Releases are intentionally tag-driven and require all platform package jobs to succeed.
+
 ## 0.1-alpha — first product foundation
 
 - [x] C++20/CMake project and loopback HTTP API
