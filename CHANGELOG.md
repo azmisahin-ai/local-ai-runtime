@@ -1,5 +1,9 @@
 ## Unreleased
 
+- Make only the newest timestamped update status for the current installation authoritative during launcher recovery; stale rollback failures from older tags can no longer trigger an unwanted old restore.
+- Add Windows PowerShell 5.1 ValidateOnly regression coverage for valid and invalid SHA-256 digests, plus stopping-phase interruption and stale-status recovery tests.
+- Document the remaining installed-desktop self-update limitation, Authenticode/SmartScreen trust work, and the English/Turkish UI localization foundation.
+
 - Enforce one explicit per-user data-root contract across the Windows desktop shell, PowerShell launcher, C++ runtime, catalogue/download state and post-update restarts. Persist an opaque runtime-instance ID and expose it through a loopback identity endpoint so the desktop cannot attach to a healthy but stale/different runtime on the configured port.
 - Extend HTTP and Windows update smoke tests to prove installed catalogue assets and diagnostic logs are read from the explicit data root and that the root identity survives apply, rollback and interrupted-update recovery.
 

@@ -68,28 +68,60 @@ try {
     }
 
     # A forced process exit, Windows restart or power loss can leave the
-    # updater between file replacement and its post-update health check. Use
-    # the isolated helper and checksum-verified pre-update backup to recover
-    # before even trying to launch the runtime executable.
+    # updater between file replacement and its post-update health check. Recover
+    # from the newest status record for THIS installation only. Iterating every
+    # historical tag directory is unsafe: an old rollback_failed record could
+    # otherwise restore stale application files after a newer update succeeded.
     $updatesRoot = Join-Path $dataRoot 'updates'
+    $latestUpdate = $null
     if (Test-Path -LiteralPath $updatesRoot -PathType Container) {
-        foreach ($stageDirectory in @(Get-ChildItem -LiteralPath $updatesRoot -Directory -Force | Sort-Object LastWriteTime -Descending)) {
+        foreach ($stageDirectory in @(Get-ChildItem -LiteralPath $updatesRoot -Directory -Force)) {
             $statusPath = Join-Path $stageDirectory.FullName 'apply-status.json'
             if (-not (Test-Path -LiteralPath $statusPath -PathType Leaf)) { continue }
             try { $status = Get-Content -LiteralPath $statusPath -Raw | ConvertFrom-Json -ErrorAction Stop }
             catch { continue }
-            $state = [string]$status.state
-            if ($state -notin @('applying', 'stopping', 'replacing', 'awaiting_health', 'rollback_failed')) { continue }
-            if (-not $status.install_root -or
-                -not [System.IO.Path]::GetFullPath([string]$status.install_root).Equals($rootFull, [StringComparison]::OrdinalIgnoreCase)) {
-                continue
+            if (-not $status.install_root) { continue }
+            try {
+                if (-not [System.IO.Path]::GetFullPath([string]$status.install_root).Equals($rootFull, [StringComparison]::OrdinalIgnoreCase)) { continue }
+            } catch { continue }
+            # Records without a rollback backup represent validation/preflight
+            # failures (or a still-running preflight). They do not supersede a
+            # previously incomplete file-changing update that still needs repair.
+            if ([string]::IsNullOrWhiteSpace([string]$status.backup_path)) { continue }
+
+            # Use the durable status timestamp, not the directory mtime: writing
+            # an old stage file can make its parent directory look newer.
+            $statusFile = Get-Item -LiteralPath $statusPath -Force
+            try { $statusTime = [DateTimeOffset]::Parse([string]$status.generated_utc).ToUniversalTime() }
+            catch { $statusTime = [DateTimeOffset]::new($statusFile.LastWriteTimeUtc) }
+            $candidate = [pscustomobject]@{
+                StageDirectory = $stageDirectory
+                StatusPath = $statusPath
+                Status = $status
+                State = [string]$status.state
+                StatusTime = $statusTime
+                FileTimeUtc = $statusFile.LastWriteTimeUtc
             }
+            if (-not $latestUpdate -or
+                $candidate.StatusTime -gt $latestUpdate.StatusTime -or
+                ($candidate.StatusTime -eq $latestUpdate.StatusTime -and $candidate.FileTimeUtc -gt $latestUpdate.FileTimeUtc)) {
+                $latestUpdate = $candidate
+            }
+        }
+    }
 
-            $helperIsRunning = Test-UpdateHelperRunning $status $stageDirectory.FullName
-            # Validation happens before the runtime is stopped. If that phase
-            # is still running, allow the normal existing-instance check below.
-            if ($state -eq 'applying' -and $helperIsRunning) { continue }
-
+    # Terminal states on the newest record intentionally suppress older pending
+    # records. The newest attempt is authoritative for this installation.
+    if ($latestUpdate -and $latestUpdate.State -in @('applying', 'stopping', 'replacing', 'awaiting_health', 'rollback_failed')) {
+        $stageDirectory = $latestUpdate.StageDirectory
+        $statusPath = $latestUpdate.StatusPath
+        $status = $latestUpdate.Status
+        $state = $latestUpdate.State
+        $helperIsRunning = Test-UpdateHelperRunning $status $stageDirectory.FullName
+        # Validation happens before the runtime is stopped. If that phase is
+        # still active, let the existing-instance check below handle the runtime;
+        # do NOT fall back to an older status directory.
+        if (-not ($state -eq 'applying' -and $helperIsRunning)) {
             $recoveryHelper = Join-Path $stageDirectory.FullName 'Apply-LocalAIRuntimeUpdate.ps1'
             if (-not (Test-Path -LiteralPath $recoveryHelper -PathType Leaf)) {
                 $recoveryHelper = Join-Path $root 'scripts/Apply-LocalAIRuntimeUpdate.ps1'

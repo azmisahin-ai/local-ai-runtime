@@ -163,7 +163,7 @@ jobs:
       - name: Validate PowerShell maintainer tooling syntax
         shell: pwsh
         run: |
-          foreach ($relativePath in @('Publish-LocalAIRuntime.ps1', 'scripts/Publish-LocalAIRuntime.ps1', 'scripts/Test-LocalAIRuntimeRealEngine.ps1', 'scripts/Start-LocalAIRuntime.ps1', 'scripts/Apply-LocalAIRuntimeUpdate.ps1')) {
+          foreach ($relativePath in @('Publish-LocalAIRuntime.ps1', 'scripts/Publish-LocalAIRuntime.ps1', 'scripts/Test-LocalAIRuntimeRealEngine.ps1', 'scripts/Start-LocalAIRuntime.ps1', 'scripts/Apply-LocalAIRuntimeUpdate.ps1', 'tests/update_apply_powershell51_validateonly.ps1')) {
             $tokens = $null
             $parseErrors = $null
             $path = Join-Path $env:GITHUB_WORKSPACE $relativePath

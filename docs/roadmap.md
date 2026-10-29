@@ -16,7 +16,7 @@ The runtime, engines, and models remain separate versioned components. The catal
 - The dashboard now distinguishes workspaces (tasks) from the component catalog (engines, models and dependencies). See [product information architecture](product-information-architecture.md) for the planned domains and metadata contract.
 - Local hardware inventory and first-pass heuristic recommendations are implemented. Evidence-backed per-device live inference measurements and validated compatibility profiles remain in progress.
 - Hosted CI uses a fake OpenAI-compatible engine and intentionally does not download the real engine or the ~1.12 GB starter model. Real CPU/GPU inference therefore requires a separate maintainer validation run.
-- Windows tagged portable packages support user-confirmed update apply/restart with checksum-verified backup and rollback. Linux/macOS currently verify and stage an update but require manual archive replacement.
+- Windows tagged portable packages support user-confirmed update apply/restart with checksum-verified backup and rollback. The installed desktop installer contains the update helper, but installed-shell self-update is not enabled yet; until a shell/runtime hand-off is implemented and tested, desktop users must install the verified full setup package. Linux/macOS currently verify and stage an update but require manual archive replacement.
 
 The website can offer the Windows setup executable as an alpha because its tagged CI passes install/payload/uninstall checks; the portable ZIP remains a fallback. Clean Windows 10/11 user-session acceptance is still required before calling the desktop experience mature.
 
@@ -33,13 +33,22 @@ The website can offer the Windows setup executable as an alpha because its tagge
 - [ ] Complete clean Windows 10/11 manual acceptance for first-run, WebView2 availability, user-session lifecycle, upgrade, rollback and uninstall before calling the installed app mature.
 - [ ] Validate console-free launcher invocation, single-instance activation, tray reopen/update actions, close-to-tray behavior, explicit graceful exit, and isolated user-data storage in Windows CI/manual acceptance.
 - [ ] Add a clear first-run wizard, progress/error states, repair/retry actions, and a user-readable diagnostics export. Do not ask users to run developer tests.
-- [ ] Update the entire installed desktop application (shell + runtime) atomically, with rollback and interruption recovery, without replacing settings, engine binaries, or model weights. Until that exists, installed builds must use the full setup installer; the portable ZIP apply action is disabled for desktop-shell installs.
+- [ ] Update the entire installed desktop application (shell + runtime) atomically, with rollback and interruption recovery, without replacing settings, engine binaries, or model weights. Until that exists, installed builds must use the full setup installer; the portable ZIP apply action is disabled for desktop-shell installs. The update helper is packaged and payload-checked but does not yet perform an installed-shell update.
+- [ ] Keep the updater's newest status record authoritative per installation. Test interruption in `stopping`, `replacing`, and `awaiting_health`, retry after rollback failure, and suppression of stale `rollback_failed` records from older tags.
+- [ ] Run package validation under inbox Windows PowerShell 5.1 as well as PowerShell 7; validate-only must accept a verified package with PID 0 and reject a bad digest without touching installation or user data.
 - [x] Make the installer/uninstaller keep mutable user data outside the application directory and preserve it by default.
 - [ ] Add a separate explicit option to remove user data during uninstall and verify it safely.
 - [ ] Validate install, launch, close/reopen, upgrade, forced interruption recovery, rollback, and uninstall on clean Windows 10/11 x64 virtual machines. Verify that user data survives an application update.
 - [ ] Use `/v1/system/identity` and a persistent per-user `runtime-instance.id` to verify that the desktop shell, launcher, runtime diagnostics, catalogue, and updater all point at the same user-data root; exercise this contract during Windows install/update/recovery CI and clean Windows 10/11 acceptance.
 
 **Windows milestone acceptance:** a new user downloads one installer from the project site, installs it, launches from Start, sees a desktop window without a console, installs a suitable CPU engine/model through the UI, produces a real chat response, and updates from the UI without manually moving ZIP files or editing JSON.
+
+
+## Priority 1B — release trust and localized UX
+
+- [ ] Decide the Windows distribution trust model. For GitHub-hosted setup downloads, acquire a legitimate Authenticode signing identity, keep signing material in protected CI secrets, sign the installer and app executables, verify signatures/timestamps in CI, and continue publishing SHA-256 checksums. Do not claim this guarantees immediate SmartScreen reputation; unsigned alpha builds remain clearly labelled until signing is actually configured.
+- [ ] Establish UI localization before adding more workspaces: resource-key all user-facing strings and ship English plus Turkish first, with a persisted language preference and localized errors/progress/accessibility labels. Avoid putting translations or UI labels into engine/catalog metadata.
+- [ ] Define a single Activity model for download, verify, install, load, inference, stop and update jobs, with stable state/progress/error schemas shared by the dashboard and future API/MCP clients.
 
 ## Priority 2 — hardware-aware first run and compatibility reporting
 

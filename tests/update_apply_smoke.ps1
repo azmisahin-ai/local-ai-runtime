@@ -160,6 +160,30 @@ try {
     $installedExe = Join-Path $installRoot 'local-ai-runtime.exe'
     $installedExeHashBefore = (Get-FileHash -LiteralPath $installedExe -Algorithm SHA256).Hash
 
+    # Exercise the helper under the inbox Windows PowerShell 5.1 runtime used by
+    # normal users, not only under the PowerShell 7 CI shell.
+    $windowsPowerShell = Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'
+    if (-not (Test-Path -LiteralPath $windowsPowerShell -PathType Leaf)) { throw 'Windows PowerShell 5.1 was not found for update-helper compatibility testing.' }
+    $validationScript = Join-Path $env:GITHUB_WORKSPACE 'tests/update_apply_powershell51_validateonly.ps1'
+    $validationArguments = @(
+        '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+        '-File', $validationScript,
+        '-HelperPath', $helperPath,
+        '-InstallRoot', $installRoot,
+        '-DataRoot', $dataRoot,
+        '-StageRoot', $stageRoot,
+        '-PackagePath', $packageCopy,
+        '-ManifestPath', $manifestPath,
+        '-TagName', $tagName,
+        '-AssetName', $assetName,
+        '-ExpectedSha256', $packageHash,
+        '-Port', [string]$port,
+        '-CurrentVersion', $Version
+    )
+    $validationArgumentLine = ($validationArguments | ForEach-Object { Quote-WindowsArgument ([string]$_) }) -join ' '
+    $validationProcess = Start-Process -FilePath $windowsPowerShell -ArgumentList $validationArgumentLine -PassThru -Wait -WindowStyle Hidden
+    if ($validationProcess.ExitCode -ne 0) { throw "Windows PowerShell 5.1 ValidateOnly smoke failed with exit code $($validationProcess.ExitCode)." }
+
     # Pass 0: an actual apply still requires a live runtime PID. This guards
     # against fixing validate-only mode by accidentally relaxing the apply gate.
     & $helperPath -InstallRoot $installRoot -DataRoot $dataRoot -StageRoot $stageRoot `
@@ -350,7 +374,60 @@ try {
     if ((Get-FileHash -LiteralPath $userConfigPath -Algorithm SHA256).Hash -cne $configHashBefore) { throw 'Rollback-failure recovery changed user configuration.' }
     if ((Get-Content -LiteralPath $preservedDataPath -Raw) -cne 'user-data-must-survive-update') { throw 'Rollback-failure recovery modified or removed user data.' }
 
-    Write-Host "Windows update apply smoke test passed: runtime-PID guard, tamper rejection, validate-only, app-file replacement, stop/restart, health checks, user-data preservation, verified rollback, forced helper termination recovery, and retry after rollback failure. Version=$Version Port=$port" -ForegroundColor Green
+    # Pass 7: interrupt immediately after the runtime has stopped but before
+    # any application file replacement. The same startup must keep the existing
+    # files, start a healthy runtime, and ignore an older rollback_failed status
+    # even when that stale stage directory was touched more recently.
+    Stop-SmokeRuntime
+    $updatesRoot = Join-Path $dataRoot 'updates'
+    $staleStageRoot = Join-Path $updatesRoot 'v0.0.1-alpha'
+    New-Item -ItemType Directory -Force -Path $staleStageRoot | Out-Null
+    $staleStatusPath = Join-Path $staleStageRoot 'apply-status.json'
+    $staleStatus = [ordered]@{
+        generated_utc = [DateTimeOffset]::UtcNow.AddDays(-2).ToString('o')
+        state = 'rollback_failed'
+        tag_name = 'v0.0.1-alpha'
+        previous_version = $Version
+        target_version = '0.0.1-alpha'
+        backup_path = (Join-Path $staleStageRoot 'rollback-20261027T000000Z-0123456789abcdef0123456789abcdef')
+        install_root = $installRoot
+        runtime_port = $port
+        helper_pid = 0
+        message = 'Regression fixture: this old rollback_failed record must be ignored.'
+    }
+    Write-Utf8NoBom $staleStatusPath ($staleStatus | ConvertTo-Json -Depth 4)
+
+    $stoppingStatus = [ordered]@{
+        generated_utc = [DateTimeOffset]::UtcNow.ToString('o')
+        state = 'stopping'
+        tag_name = $tagName
+        previous_version = $Version
+        target_version = $Version
+        backup_path = [string]$retryRecoveredStatus.backup_path
+        install_root = $installRoot
+        runtime_port = $port
+        helper_pid = 0
+        message = 'Regression fixture: runtime stopped, no application files replaced.'
+    }
+    Write-Utf8NoBom $statusPath ($stoppingStatus | ConvertTo-Json -Depth 4)
+    $startedRuntime = & $launcherPath -NoBrowser -PassThru -DataRoot $dataRoot
+    $stoppingRecoveredStatus = Get-Content -LiteralPath $statusPath -Raw | ConvertFrom-Json -ErrorAction Stop
+    if ([string]$stoppingRecoveredStatus.state -ne 'failed') {
+        throw "Stopping-phase recovery did not retain the unchanged install: state=$($stoppingRecoveredStatus.state) message=$($stoppingRecoveredStatus.message)"
+    }
+    $staleStatusAfterLaunch = Get-Content -LiteralPath $staleStatusPath -Raw | ConvertFrom-Json -ErrorAction Stop
+    if ([string]$staleStatusAfterLaunch.state -ne 'rollback_failed') {
+        throw 'A stale rollback status was incorrectly processed while recovering the newer stopping state.'
+    }
+    if (-not (Wait-TestHealth $port $Version 15)) { throw 'Runtime did not become healthy after stopping-phase recovery.' }
+    Assert-TestRuntimeIdentity $port
+    if ((Get-FileHash -LiteralPath $webIndexPath -Algorithm SHA256).Hash -cne $webIndexHashBeforeRollbackRetry) {
+        throw 'Stopping-phase recovery changed application files even though replacement had not started.'
+    }
+    if ((Get-FileHash -LiteralPath $userConfigPath -Algorithm SHA256).Hash -cne $configHashBefore) { throw 'Stopping-phase recovery changed user configuration.' }
+    if ((Get-Content -LiteralPath $preservedDataPath -Raw) -cne 'user-data-must-survive-update') { throw 'Stopping-phase recovery modified or removed user data.' }
+
+    Write-Host "Windows update apply smoke test passed: runtime-PID guard, tamper rejection, ValidateOnly on PowerShell 5.1, app-file replacement, stop/restart, health checks, user-data preservation, verified rollback, forced helper termination recovery, retry after rollback failure, stopping-phase recovery, and stale-status suppression. Version=$Version Port=$port" -ForegroundColor Green
     $success = $true
 } catch {
     Write-Host "Windows update apply smoke test failed: $($_.Exception.Message)" -ForegroundColor Red
