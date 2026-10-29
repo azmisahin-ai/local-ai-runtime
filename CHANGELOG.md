@@ -4,6 +4,8 @@ This project follows a lightweight Keep a Changelog structure. GitHub Release no
 
 ## Unreleased
 
+- Fix the stable publisher and release-gate scripts for Windows PowerShell 5.1: successful Git commands that report diagnostics on stderr no longer abort the publishing flow; actual Git exit codes remain enforced, and missing optional Git identity settings are handled safely.
+- Add a Windows PowerShell 5.1 CI regression test for successful native Git stderr output, non-zero exit-code failures, and optional missing Git identity settings.
 - Add one stable maintainer publishing command that imports the prepared Git bundle with its original commit SHA, pushes `main` without force, waits for the four-platform CI and Pages job, then auto-increments the alpha release tag and waits for release CI.
 - Add platform-native root launchers and a three-step first-run path on the project site; normal users start the packaged app and verify local inference by chatting in the dashboard rather than running developer test scripts.
 - Add a manual dashboard update check, visible update status, and automatic metadata refresh on launch/focus/periodically; make non-applicable update/install limitations explicit.

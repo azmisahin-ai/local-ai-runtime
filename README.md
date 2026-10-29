@@ -129,3 +129,8 @@ Not implemented yet: comprehensive hardware/backend detection and recommendation
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md), [diagnostics and troubleshooting](docs/diagnostics.md), [architecture](docs/architecture.md), [engine/model distribution strategy](docs/engine-distribution.md), [release/update process](docs/release-and-update.md), [MCP plan](docs/mcp-integration.md), and [security policy](SECURITY.md). Update `site/product.json` when user-visible features or their status change. Add regression tests for behavior changes.
+
+
+### Windows PowerShell 5.1 publishing
+
+The stable `Publish-LocalAIRuntime.ps1` script is compatible with Windows PowerShell 5.1. Git commands are checked by their exit codes rather than treating successful stderr diagnostics (such as `git bundle verify` reporting that the bundle is okay) as failures. If an older publisher stops with `NativeCommandError`, replace both `Publish-LocalAIRuntime.ps1` and `local-ai-runtime-update.bundle` with the matching files from the latest publisher kit, then rerun the same command. The bootstrap checks the bundle and will not force-push or overwrite local work.

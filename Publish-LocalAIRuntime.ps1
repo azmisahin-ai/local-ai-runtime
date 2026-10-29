@@ -15,14 +15,31 @@ $ErrorActionPreference = 'Stop'
 $repositoryUrl = 'https://github.com/azmisahin-ai/local-ai-runtime.git'
 
 function Invoke-Git {
-    param([Parameter(Mandatory = $true)][string[]]$GitArgs)
-    $output = & git @GitArgs 2>&1
-    $exitCode = $LASTEXITCODE
+    param(
+        [Parameter(Mandatory = $true)][string[]]$GitArgs,
+        [switch]$AllowNonZeroExit
+    )
+
+    # Windows PowerShell 5.1 can promote native stderr text to a terminating
+    # NativeCommandError when ErrorActionPreference is Stop, even if Git exits
+    # successfully (for example, `git bundle verify` prints "is okay" to stderr).
+    # Temporarily use Continue while capturing both streams, then trust Git's
+    # actual exit code. Restore the caller's strict preference immediately.
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $output = @(& git @GitArgs 2>&1)
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+
+    $details = (@($output) | ForEach-Object { $_.ToString() }) -join [Environment]::NewLine
     if ($exitCode -ne 0) {
-        $details = ($output | Out-String).Trim()
+        if ($AllowNonZeroExit) { return '' }
         throw "git $($GitArgs -join ' ') failed with exit code $exitCode.`n$details"
     }
-    return (($output | Out-String).Trim())
+    return $details.Trim()
 }
 
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) {

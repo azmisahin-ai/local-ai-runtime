@@ -23,14 +23,31 @@ $apiHeaders = @{
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 function Invoke-Git {
-    param([Parameter(Mandatory = $true)][string[]]$GitArgs)
-    $output = & git @GitArgs 2>&1
-    $exitCode = $LASTEXITCODE
+    param(
+        [Parameter(Mandatory = $true)][string[]]$GitArgs,
+        [switch]$AllowNonZeroExit
+    )
+
+    # Windows PowerShell 5.1 can promote native stderr text to a terminating
+    # NativeCommandError when ErrorActionPreference is Stop, even if Git exits
+    # successfully (for example, `git bundle verify` prints "is okay" to stderr).
+    # Temporarily use Continue while capturing both streams, then trust Git's
+    # actual exit code. Restore the caller's strict preference immediately.
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $output = @(& git @GitArgs 2>&1)
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+
+    $details = (@($output) | ForEach-Object { $_.ToString() }) -join [Environment]::NewLine
     if ($exitCode -ne 0) {
-        $details = ($output | Out-String).Trim()
+        if ($AllowNonZeroExit) { return '' }
         throw "git $($GitArgs -join ' ') failed with exit code $exitCode.`n$details"
     }
-    return (($output | Out-String).Trim())
+    return $details.Trim()
 }
 
 function Get-NextAlphaTag {
@@ -154,12 +171,8 @@ try {
             throw "Release tag $nextTag already exists remotely and points elsewhere. It will not be moved or reused."
         }
         Write-Host "3/4 Main CI is green. Creating next alpha tag: $nextTag" -ForegroundColor Cyan
-        $taggerNameOutput = & git config --get user.name 2>$null
-        $taggerNameExit = $LASTEXITCODE
-        $taggerEmailOutput = & git config --get user.email 2>$null
-        $taggerEmailExit = $LASTEXITCODE
-        $taggerName = if ($taggerNameExit -eq 0) { ($taggerNameOutput | Out-String).Trim() } else { '' }
-        $taggerEmail = if ($taggerEmailExit -eq 0) { ($taggerEmailOutput | Out-String).Trim() } else { '' }
+        $taggerName = Invoke-Git -GitArgs @('config', '--get', 'user.name') -AllowNonZeroExit
+        $taggerEmail = Invoke-Git -GitArgs @('config', '--get', 'user.email') -AllowNonZeroExit
         if ([string]::IsNullOrWhiteSpace($taggerName)) { Invoke-Git -GitArgs @('config', 'user.name', 'Local AI Runtime Publisher') | Out-Null }
         if ([string]::IsNullOrWhiteSpace($taggerEmail)) { Invoke-Git -GitArgs @('config', 'user.email', 'local-ai-runtime-publisher@users.noreply.github.com') | Out-Null }
         Invoke-Git -GitArgs @('tag', '-a', $nextTag, $commitSha, '-m', "Local AI Runtime $nextTag") | Out-Null
