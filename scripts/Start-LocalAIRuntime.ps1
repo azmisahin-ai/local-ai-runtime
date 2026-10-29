@@ -224,6 +224,23 @@ try {
         return 0
     }
 
+    function Test-PortCanBind([int]$CandidatePort) {
+        # Get-NetTCPConnection can report a stale or kernel-owned listener entry.
+        # Before moving the user's configured port again, ask Winsock directly
+        # whether this process can bind the loopback endpoint. A successful bind
+        # probe is stronger evidence that the port is currently available.
+        $probe = $null
+        try {
+            $probe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $CandidatePort)
+            $probe.Start()
+            return $true
+        } catch {
+            return $false
+        } finally {
+            if ($probe) { try { $probe.Stop() } catch { } }
+        }
+    }
+
     function Stop-ConfirmedRuntimeOwners($Owners) {
         # Ask the old instance to shut down normally first so EngineManager can
         # stop its llama-server child process before the runtime exits.
@@ -311,26 +328,36 @@ try {
                 # Windows reports one of these owners without a healthy runtime,
                 # choose a free loopback port instead of telling a regular user
                 # to edit JSON or risking termination of a system process.
-                $replacementPort = Find-AvailableRuntimePort $port
-                if ($replacementPort -le 0) {
-                    throw "Port $port is reported as occupied but Windows did not provide a stoppable application owner ($detailsText); $healthMessage. Nothing was terminated and no free port was found in 1024-8999. Restart Windows or ask support to inspect reserved TCP port ranges."
+                if (Test-PortCanBind $port) {
+                    # The Windows listener table may temporarily report PID 0/4
+                    # even though Winsock can bind the configured endpoint. Reuse
+                    # the configured port instead of monotonically changing it on
+                    # every launch. The runtime itself will perform the final bind.
+                    $message = "launcher.port_owner_unresolved_but_bindable port=$port"
+                    try { Add-Content -LiteralPath $diagnosticLogPath -Value ("$(Get-Date -Format o) WARN $message") -Encoding UTF8 } catch { }
+                    Write-Host "Windows could not resolve the listener owner for port $port, but a direct local bind check succeeded. Reusing the configured port; no other process was stopped." -ForegroundColor Yellow
+                } else {
+                    $replacementPort = Find-AvailableRuntimePort $port
+                    if ($replacementPort -le 0) {
+                        throw "Port $port is reported as occupied but Windows did not provide a stoppable application owner ($detailsText); $healthMessage. Nothing was terminated and no free port was found in 1024-8999. Restart Windows or ask support to inspect reserved TCP port ranges."
+                    }
+                    $oldPort = $port
+                    $config.server.port = $replacementPort
+                    $temporaryConfig = "$configPath.port-$PID.tmp"
+                    try {
+                        $serialized = ConvertTo-Json -InputObject $config -Depth 100
+                        [System.IO.File]::WriteAllText($temporaryConfig, $serialized + [Environment]::NewLine, (New-Object System.Text.UTF8Encoding($false)))
+                        Move-Item -LiteralPath $temporaryConfig -Destination $configPath -Force
+                    } catch {
+                        Remove-Item -LiteralPath $temporaryConfig -Force -ErrorAction SilentlyContinue
+                        throw "Windows reported an unresolved owner on port $oldPort, and the runtime could not save a safe replacement port: $($_.Exception.Message). No process was stopped."
+                    }
+                    $port = $replacementPort
+                    $baseUrl = "http://127.0.0.1:$port"
+                    $message = "launcher.port_reassigned old_port=$oldPort new_port=$port reason=unresolved_windows_listener_owner"
+                    try { Add-Content -LiteralPath $diagnosticLogPath -Value ("$(Get-Date -Format o) WARN $message") -Encoding UTF8 } catch { }
+                    Write-Host "Windows did not identify a safe process owner for port $oldPort. Local AI Runtime will use free local port $port instead; no other process was stopped." -ForegroundColor Yellow
                 }
-                $oldPort = $port
-                $config.server.port = $replacementPort
-                $temporaryConfig = "$configPath.port-$PID.tmp"
-                try {
-                    $serializedConfig = ConvertTo-Json -InputObject $config -Depth 100
-                    [System.IO.File]::WriteAllText($temporaryConfig, $serializedConfig + [Environment]::NewLine, (New-Object System.Text.UTF8Encoding($false)))
-                    Move-Item -LiteralPath $temporaryConfig -Destination $configPath -Force
-                } catch {
-                    Remove-Item -LiteralPath $temporaryConfig -Force -ErrorAction SilentlyContinue
-                    throw "Windows reported an unresolved owner on port $oldPort, and the runtime could not save a safe replacement port: $($_.Exception.Message). No process was stopped."
-                }
-                $port = $replacementPort
-                $baseUrl = "http://127.0.0.1:$port"
-                $message = "launcher.port_reassigned old_port=$oldPort new_port=$port reason=unresolved_windows_listener_owner"
-                try { Add-Content -LiteralPath $diagnosticLogPath -Value ("$(Get-Date -Format o) WARN $message") -Encoding UTF8 } catch { }
-                Write-Host "Windows did not identify a safe process owner for port $oldPort. Local AI Runtime will use free local port $port instead; no other process was stopped." -ForegroundColor Yellow
             } else {
                 throw "Port $port is in use and $healthMessage. Owner: $detailsText. Local AI Runtime will not stop another program. Stop that program or change server.port in '$configPath'."
             }
