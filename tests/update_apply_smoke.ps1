@@ -28,6 +28,10 @@ function Write-Utf8NoBom([string]$Path, [string]$Text) {
     [System.IO.File]::WriteAllText($Path, $Text, [System.Text.UTF8Encoding]::new($false))
 }
 
+function Quote-WindowsArgument([string]$Argument) {
+    return '"' + $Argument.Replace('"', '\"') + '"'
+}
+
 function Wait-TestHealth([int]$ExpectedPort, [string]$ExpectedVersion, [int]$Seconds) {
     for ($i = 0; $i -lt ($Seconds * 4); $i++) {
         try {
@@ -226,7 +230,78 @@ try {
         throw 'The rollback attempt did not retain a recovery backup.'
     }
 
-    Write-Host "Windows update apply smoke test passed: tamper rejection, validate-only, app-file replacement, stop/restart, /health, user-data preservation, retained backup and forced-failure rollback. Version=$Version Port=$port" -ForegroundColor Green
+    # Pass 5: terminate the detached update helper after it has replaced files
+    # and persisted the awaiting-health state. The next normal launcher call
+    # must validate the retained backup, restore the previous app bytes, and
+    # start a healthy runtime without manual intervention.
+    $preInterruptedContent = [System.IO.File]::ReadAllText($webIndexPath)
+    Write-Utf8NoBom $webIndexPath ($preInterruptedContent + "`n<!-- interrupted-update-preservation-sentinel -->`n")
+    $webIndexHashBeforeInterruptedUpdate = (Get-FileHash -LiteralPath $webIndexPath -Algorithm SHA256).Hash
+    $runtimePidForInterruptedUpdate = Get-SmokeRuntimePid
+    $windowsPowerShell = Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'
+    if (-not (Test-Path -LiteralPath $windowsPowerShell -PathType Leaf)) { throw 'Windows PowerShell was not found for interrupted-update testing.' }
+    $crashArguments = @(
+        '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+        '-File', $helperPath,
+        '-InstallRoot', $installRoot,
+        '-DataRoot', $dataRoot,
+        '-StageRoot', $stageRoot,
+        '-PackagePath', $packageCopy,
+        '-ManifestPath', $manifestPath,
+        '-TagName', $tagName,
+        '-AssetName', $assetName,
+        '-ExpectedSha256', $packageHash,
+        '-RuntimePid', [string]$runtimePidForInterruptedUpdate,
+        '-Port', [string]$port,
+        '-CurrentVersion', $Version,
+        '-TestCrashAfterReplace'
+    )
+    $crashArgumentLine = ($crashArguments | ForEach-Object { Quote-WindowsArgument ([string]$_) }) -join ' '
+    $crashProcess = Start-Process -FilePath $windowsPowerShell -ArgumentList $crashArgumentLine -PassThru -Wait -WindowStyle Hidden
+    $interruptedStatus = Get-Content -LiteralPath $statusPath -Raw | ConvertFrom-Json -ErrorAction Stop
+    if ($interruptedStatus.state -ne 'awaiting_health' -or $crashProcess.ExitCode -ne 86) {
+        throw "The crash fixture did not stop in the expected recoverable state: state=$($interruptedStatus.state) exit=$($crashProcess.ExitCode) message=$($interruptedStatus.message)"
+    }
+    if (Wait-TestHealth $port $Version 3) { throw 'The runtime unexpectedly remained healthy after the helper was force-terminated before restart.' }
+
+    $launcherPath = Join-Path $installRoot 'scripts/Start-LocalAIRuntime.ps1'
+    $startedRuntime = & $launcherPath -NoBrowser -PassThru -DataRoot $dataRoot
+    $recoveredStatus = Get-Content -LiteralPath $statusPath -Raw | ConvertFrom-Json -ErrorAction Stop
+    if ($recoveredStatus.state -ne 'rolled_back') { throw "Launcher did not recover the interrupted update: state=$($recoveredStatus.state) message=$($recoveredStatus.message)" }
+    if (-not (Wait-TestHealth $port $Version 15)) { throw 'Runtime did not become healthy after interrupted-update recovery.' }
+    if ((Get-FileHash -LiteralPath $webIndexPath -Algorithm SHA256).Hash -cne $webIndexHashBeforeInterruptedUpdate) {
+        throw 'Interrupted-update recovery did not restore the exact pre-update application file bytes.'
+    }
+    if ((Get-FileHash -LiteralPath $userConfigPath -Algorithm SHA256).Hash -cne $configHashBefore) { throw 'Interrupted-update recovery changed user configuration.' }
+    if ((Get-Content -LiteralPath $preservedDataPath -Raw) -cne 'user-data-must-survive-update') { throw 'Interrupted-update recovery modified or removed user data.' }
+
+    # Pass 6: force the normal rollback routine to fail. The launcher must use
+    # the durable rollback manifest to recover on the next start instead of
+    # treating rollback_failed as a terminal, unrecoverable condition.
+    $preRetryContent = [System.IO.File]::ReadAllText($webIndexPath)
+    Write-Utf8NoBom $webIndexPath ($preRetryContent + "`n<!-- rollback-retry-preservation-sentinel -->`n")
+    $webIndexHashBeforeRollbackRetry = (Get-FileHash -LiteralPath $webIndexPath -Algorithm SHA256).Hash
+    $runtimePidForRollbackRetry = Get-SmokeRuntimePid
+    & $helperPath -InstallRoot $installRoot -DataRoot $dataRoot -StageRoot $stageRoot `
+        -PackagePath $packageCopy -ManifestPath $manifestPath -TagName $tagName `
+        -AssetName $assetName -ExpectedSha256 $packageHash -RuntimePid $runtimePidForRollbackRetry -Port $port `
+        -CurrentVersion $Version -TestForceFailureAfterReplace -TestForceRollbackFailure
+    $failedRollbackStatus = Get-Content -LiteralPath $statusPath -Raw | ConvertFrom-Json -ErrorAction Stop
+    if ($failedRollbackStatus.state -ne 'rollback_failed') { throw "Rollback-failure injection did not persist rollback_failed: state=$($failedRollbackStatus.state) message=$($failedRollbackStatus.message)" }
+    if (-not $failedRollbackStatus.backup_path -or -not (Test-Path -LiteralPath (Join-Path $failedRollbackStatus.backup_path 'rollback-manifest.json') -PathType Leaf)) {
+        throw 'A failed rollback did not preserve its recovery manifest.'
+    }
+    $startedRuntime = & $launcherPath -NoBrowser -PassThru -DataRoot $dataRoot
+    $retryRecoveredStatus = Get-Content -LiteralPath $statusPath -Raw | ConvertFrom-Json -ErrorAction Stop
+    if ($retryRecoveredStatus.state -ne 'rolled_back') { throw "Launcher could not retry a failed rollback: state=$($retryRecoveredStatus.state) message=$($retryRecoveredStatus.message)" }
+    if (-not (Wait-TestHealth $port $Version 15)) { throw 'Runtime did not become healthy after rollback-failure recovery.' }
+    if ((Get-FileHash -LiteralPath $webIndexPath -Algorithm SHA256).Hash -cne $webIndexHashBeforeRollbackRetry) {
+        throw 'Rollback-failure recovery did not restore the exact pre-update application file bytes.'
+    }
+    if ((Get-FileHash -LiteralPath $userConfigPath -Algorithm SHA256).Hash -cne $configHashBefore) { throw 'Rollback-failure recovery changed user configuration.' }
+    if ((Get-Content -LiteralPath $preservedDataPath -Raw) -cne 'user-data-must-survive-update') { throw 'Rollback-failure recovery modified or removed user data.' }
+
+    Write-Host "Windows update apply smoke test passed: tamper rejection, validate-only, app-file replacement, stop/restart, health checks, user-data preservation, verified rollback, forced helper termination recovery, and retry after rollback failure. Version=$Version Port=$port" -ForegroundColor Green
     $success = $true
 } catch {
     Write-Host "Windows update apply smoke test failed: $($_.Exception.Message)" -ForegroundColor Red

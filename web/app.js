@@ -191,9 +191,12 @@ function showStagedUpdateStatus(status, currentVersion) {
   const tagName = status.tag_name || availableRuntimeUpdate?.tag_name || 'the selected release';
   updateCopy.textContent = `Verified package ${tagName} is staged (${formatBytes(status.size_bytes)}). Its size and SHA-256 were checked again on this device. Your running application, settings, engines and models have not been changed.`;
   const state = String(status.apply_state || '');
-  if (state === 'applying') {
+  if (['applying', 'stopping', 'replacing', 'awaiting_health'].includes(state)) {
     updateTitle.textContent = `Applying update ${tagName}`;
-    updateCopy.textContent = 'The update helper is applying the verified package. The runtime will restart; keep this folder and the user-data folder in place.';
+    updateApplyButton.hidden = true;
+    updateCopy.textContent = state === 'awaiting_health'
+      ? 'Application files were replaced and the new runtime is being checked. If the update helper stops unexpectedly, the launcher will restore the verified backup before starting the app.'
+      : 'The update helper is applying the verified package. The runtime will restart; keep this folder and the user-data folder in place. If the operation is interrupted, the launcher will attempt verified backup recovery.';
     return;
   }
   if (state === 'rolled_back') {

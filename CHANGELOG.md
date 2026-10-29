@@ -5,9 +5,11 @@ This project follows a lightweight Keep a Changelog structure. GitHub Release no
 ## Unreleased
 
 - Add a user-confirmed Windows portable-release update apply flow: revalidate the staged SHA-256, reject unsafe ZIP paths/symlinks/oversized archives, check installation-folder write access before shutdown, prepare a same-volume copy and rollback backup, gracefully stop/restart the runtime, and restore the previous application files if the new version fails `/health`.
+- Persist per-file SHA-256 values in the rollback manifest and recover interrupted Windows updates at the next launcher start; recovery validates the backup before restoring, records durable progress states, finalizes an update if its target runtime is already healthy, and retries recovery after an earlier rollback failure.
 - Keep update application disabled in `-dev` previews and stage-only on Linux/macOS; the dashboard exposes apply only when the current tagged Windows package contains the update helper.
 - Add staged-update status revalidation and an explicit Apply update & restart action with a confirmation dialog; user configuration, engines and model weights remain outside the replaced app directory.
 - Add a Windows CI update-helper smoke test that rejects a modified archive, validates the packaged archive, updates a temporary installation, checks `/health`, confirms user-data preservation, and injects a post-replacement failure to verify automatic rollback/restart.
+- Extend the Windows update smoke test to forcibly terminate the detached helper after replacement and to inject a rollback failure, then verify the next launcher restores the exact prior app files and starts a healthy runtime without touching user data.
 - Add HTTP smoke coverage for staged-update status, apply capability gates, platform asset metadata, and fail-closed update URL/digest validation.
 - Add per-platform CI performance summaries for dependency install/configure, build, tests, package smoke checks and runner-side elapsed time; include Windows vcpkg cache hit identity, matched key, file counts and cache sizes to distinguish cache misses from runner queue delays.
 

@@ -66,7 +66,7 @@
     },
     {
       "name": "Verified runtime updates",
-      "description": "The dashboard downloads the matching official platform release, verifies size and SHA-256, and stages it under local user data. Tagged portable Windows releases add explicit apply/restart, a backup, post-update health checks, and automatic rollback on failure. Development previews and Linux/macOS are staging-only; no telemetry is sent.",
+      "description": "The dashboard downloads the matching official platform release, verifies size and SHA-256, and stages it under local user data. Tagged portable Windows releases add explicit apply/restart, a per-file SHA-256-verified backup, post-update health checks, automatic rollback, and next-launch recovery after an interrupted update. Development previews and Linux/macOS are staging-only; no telemetry is sent.",
       "status": "preview"
     },
     {
@@ -89,7 +89,7 @@
     "Only localhost/loopback is supported by default.",
     "The built-in component downloader accepts only reviewed catalog IDs, uses HTTPS-only transfer, validates expected size and SHA-256, checks the GGUF header, and rejects archive traversal/link/special-file entries. It does not accept arbitrary URLs.",
     "Engine release SHA-256 metadata is fetched from the official upstream GitHub API; this verifies integrity against that metadata but is not a cryptographic signature or independent publisher attestation.",
-    "No usage telemetry or silent binary replacement is enabled; opening the dashboard can request public release metadata from GitHub. Update packages are staged only after user action and SHA-256 verification; installation/rollback is not implemented yet.",
+    "No usage telemetry or silent binary replacement is enabled; opening the dashboard can request public release metadata from GitHub. Windows portable-release updates require user confirmation and use SHA-256 checks against release metadata plus a verified local rollback copy; these checks do not replace signed release provenance or publisher attestation.",
     "The API has no authentication. Do not expose the runtime or setup API to a LAN or public internet."
   ]
 }

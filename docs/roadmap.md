@@ -35,7 +35,8 @@ The roadmap distinguishes implemented code from platform/model combinations that
 - [ ] Configuration schema/version migration and stricter JSON parsing
 - [ ] Installer-quality package tests on a clean Windows VM and a clean Linux container/VM
 - [ ] Release artifact provenance/signing plan
-- [x] Verified in-app update package staging with exact release asset allowlist, size bound and SHA-256 check (application/rollback remains unimplemented)
+- [x] Verified in-app update staging and tagged Windows portable apply/restart with checksum-verified rollback backup
+- [x] Recover interrupted Windows file replacement on the next launcher start; re-verify backup SHA-256 values and retry recovery after a rollback failure
 
 ## 0.3 — hardware capability reporting
 
@@ -68,6 +69,8 @@ The proposed separation and catalog fields are documented in [engine distributio
 
 - [ ] OpenAI-compatible streaming endpoints and more task-specific APIs
 - [ ] Optional MCP adapter with a narrow, audited tool allowlist
+- [ ] Equivalent platform-native apply/recovery helpers and tests for Linux and macOS
+- [ ] Release artifact provenance/signing plan; SHA-256 checks against release metadata are integrity checks, not publisher signatures
 - [ ] Optional signed updater with staged download, signature/provenance verification, restart orchestration and rollback
 - [ ] Linux/macOS distributable releases only after packaging and clean-machine smoke tests
 

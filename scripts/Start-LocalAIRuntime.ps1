@@ -1,13 +1,90 @@
 [CmdletBinding()]
 param(
     [switch]$NoBrowser,
-    [switch]$PassThru
+    [switch]$PassThru,
+    [string]$DataRoot = ''
 )
 
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 Push-Location $root
 try {
+    # Keep config, model/engine downloads and logs outside the program directory
+    # so upgrades work even when the runtime folder is read-only (e.g. Program Files).
+    # DataRoot is an optional explicit override for isolated installs and tests.
+    if ([string]::IsNullOrWhiteSpace($DataRoot)) {
+        if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
+            $DataRoot = Join-Path $env:LOCALAPPDATA 'LocalAIRuntime'
+        } else {
+            $DataRoot = Join-Path $env:TEMP 'LocalAIRuntime'
+        }
+    }
+    $dataRoot = [System.IO.Path]::GetFullPath($DataRoot).TrimEnd('\')
+    $rootFull = [System.IO.Path]::GetFullPath($root).TrimEnd('\')
+    if ($rootFull.Equals($dataRoot, [StringComparison]::OrdinalIgnoreCase) -or
+        $rootFull.StartsWith($dataRoot + '\', [StringComparison]::OrdinalIgnoreCase) -or
+        $dataRoot.StartsWith($rootFull + '\', [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'The application folder and user-data folder must be separate.'
+    }
+
+    function Test-UpdateHelperRunning($Status, [string]$StageRootFull) {
+        $helperPid = 0
+        try { $helperPid = [int]$Status.helper_pid } catch { return $false }
+        if ($helperPid -le 0) { return $false }
+        try {
+            $processInfo = Get-CimInstance Win32_Process -Filter "ProcessId = $helperPid" -ErrorAction Stop
+        } catch {
+            throw "Could not determine whether update helper PID $helperPid is still running. Start-up is paused to avoid racing an active update."
+        }
+        if (-not $processInfo -or [string]$processInfo.Name -notmatch '^(?i:powershell|pwsh)\.exe$') { return $false }
+        $expectedHelper = [System.IO.Path]::GetFullPath((Join-Path $StageRootFull 'Apply-LocalAIRuntimeUpdate.ps1'))
+        return ([string]$processInfo.CommandLine).IndexOf($expectedHelper, [StringComparison]::OrdinalIgnoreCase) -ge 0
+    }
+
+    # A forced process exit, Windows restart or power loss can leave the
+    # updater between file replacement and its post-update health check. Use
+    # the isolated helper and checksum-verified pre-update backup to recover
+    # before even trying to launch the runtime executable.
+    $updatesRoot = Join-Path $dataRoot 'updates'
+    if (Test-Path -LiteralPath $updatesRoot -PathType Container) {
+        foreach ($stageDirectory in @(Get-ChildItem -LiteralPath $updatesRoot -Directory -Force | Sort-Object LastWriteTime -Descending)) {
+            $statusPath = Join-Path $stageDirectory.FullName 'apply-status.json'
+            if (-not (Test-Path -LiteralPath $statusPath -PathType Leaf)) { continue }
+            try { $status = Get-Content -LiteralPath $statusPath -Raw | ConvertFrom-Json -ErrorAction Stop }
+            catch { continue }
+            $state = [string]$status.state
+            if ($state -notin @('applying', 'stopping', 'replacing', 'awaiting_health', 'rollback_failed')) { continue }
+            if (-not $status.install_root -or
+                -not [System.IO.Path]::GetFullPath([string]$status.install_root).Equals($rootFull, [StringComparison]::OrdinalIgnoreCase)) {
+                continue
+            }
+
+            $helperIsRunning = Test-UpdateHelperRunning $status $stageDirectory.FullName
+            # Validation happens before the runtime is stopped. If that phase
+            # is still running, allow the normal existing-instance check below.
+            if ($state -eq 'applying' -and $helperIsRunning) { continue }
+
+            $recoveryHelper = Join-Path $stageDirectory.FullName 'Apply-LocalAIRuntimeUpdate.ps1'
+            if (-not (Test-Path -LiteralPath $recoveryHelper -PathType Leaf)) {
+                $recoveryHelper = Join-Path $root 'scripts/Apply-LocalAIRuntimeUpdate.ps1'
+            }
+            if (-not (Test-Path -LiteralPath $recoveryHelper -PathType Leaf)) {
+                throw "An interrupted update ($($status.tag_name)) needs recovery, but the recovery helper is missing. Preserve '$($status.backup_path)' and restore files manually before starting."
+            }
+
+            & $recoveryHelper -InstallRoot $rootFull -DataRoot $dataRoot -StageRoot $stageDirectory.FullName -RecoverInterrupted
+            $recovered = Get-Content -LiteralPath $statusPath -Raw | ConvertFrom-Json -ErrorAction Stop
+            if ([string]$recovered.state -eq 'rollback_failed') {
+                throw "Automatic update recovery failed. Preserve '$($recovered.backup_path)' and inspect '$dataRoot\logs\update-apply.log'. $($recovered.message)"
+            }
+            if ([string]$recovered.state -eq 'rolled_back') {
+                Write-Host "Recovered an interrupted update and restored version $($recovered.previous_version)." -ForegroundColor Yellow
+            } elseif ([string]$recovered.state -eq 'failed') {
+                Write-Host 'An interrupted update was detected before application files changed. The existing installation was retained.' -ForegroundColor Yellow
+            }
+        }
+    }
+
     # Release packages place the executable beside this script. Developer
     # builds place it under build/Release (Visual Studio) or build/ (Ninja).
     $candidateExecutables = @(
@@ -21,13 +98,6 @@ try {
         throw "Runtime executable not found. Run .\scripts\build.ps1 first, or extract a release package. Checked: $($candidateExecutables -join '; ')"
     }
 
-    # Keep config, model/engine downloads and logs outside the program directory
-    # so upgrades work even when the runtime folder is read-only (e.g. Program Files).
-    if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
-        $dataRoot = Join-Path $env:LOCALAPPDATA 'LocalAIRuntime'
-    } else {
-        $dataRoot = Join-Path $env:TEMP 'LocalAIRuntime'
-    }
     $configDir = Join-Path $dataRoot 'config'
     $configPath = Join-Path $configDir 'engines.json'
     $examplePath = Join-Path $root 'config/engines.example.json'
