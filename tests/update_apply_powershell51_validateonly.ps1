@@ -61,24 +61,28 @@ $configPath = Join-Path $DataRoot 'config/engines.json'
 $runtimeHashBefore = (Get-FileSha256Hex -LiteralPath $runtimePath)
 $configHashBefore = (Get-FileSha256Hex -LiteralPath $configPath)
 $statusPath = Join-Path $StageRoot 'apply-status.json'
-$baseArgs = @(
-    '-InstallRoot', $InstallRoot,
-    '-DataRoot', $DataRoot,
-    '-StageRoot', $StageRoot,
-    '-PackagePath', $PackagePath,
-    '-ManifestPath', $ManifestPath,
-    '-TagName', $TagName,
-    '-AssetName', $AssetName,
-    '-ExpectedSha256', $ExpectedSha256,
-    '-RuntimePid', '0',
-    '-Port', [string]$Port,
-    '-CurrentVersion', $CurrentVersion,
-    '-ValidateOnly'
-)
+# Use named-parameter hashtable splatting for script invocation. Array
+# splatting passes each string as a positional argument; tokens such as
+# '-ManifestPath' are not parsed as named parameters in that form and can
+# shift into typed parameters such as RuntimePid under Windows PowerShell 5.1.
+$baseParameters = @{
+    InstallRoot = $InstallRoot
+    DataRoot = $DataRoot
+    StageRoot = $StageRoot
+    PackagePath = $PackagePath
+    ManifestPath = $ManifestPath
+    TagName = $TagName
+    AssetName = $AssetName
+    ExpectedSha256 = $ExpectedSha256
+    RuntimePid = 0
+    Port = $Port
+    CurrentVersion = $CurrentVersion
+    ValidateOnly = $true
+}
 
 # A valid archive must pass validation even with RuntimePid=0, and must not
 # stop a process or change application/user data in Windows PowerShell 5.1.
-& $HelperPath @baseArgs
+& $HelperPath @baseParameters
 $status = Get-Content -LiteralPath $statusPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
 if ([string]$status.state -ne 'validated') {
     throw "Windows PowerShell 5.1 did not accept the valid validate-only package: state=$($status.state) message=$($status.message)"
@@ -99,18 +103,16 @@ $manifestObject.sha256 = $tamperedDigest
 $manifestText = $manifestObject | ConvertTo-Json -Depth 4
 $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 [System.IO.File]::WriteAllText($ManifestPath, $manifestText, $utf8NoBom)
-$tamperedArgs = @($baseArgs)
-$digestIndex = [Array]::IndexOf([object[]]$tamperedArgs, '-ExpectedSha256')
-if ($digestIndex -lt 0) {
-    [System.IO.File]::WriteAllText($ManifestPath, $manifestOriginalText, $utf8NoBom)
-    throw 'The ValidateOnly test arguments do not contain ExpectedSha256.'
+$tamperedParameters = @{}
+foreach ($parameterName in $baseParameters.Keys) {
+    $tamperedParameters[$parameterName] = $baseParameters[$parameterName]
 }
-$tamperedArgs[$digestIndex + 1] = $tamperedDigest
+$tamperedParameters['ExpectedSha256'] = $tamperedDigest
 try {
     # The helper intentionally serializes expected validation failures into its
     # durable status record instead of throwing to callers. Assert that contract
     # directly; some unexpected PowerShell/runtime failures may still throw.
-    & $HelperPath @tamperedArgs
+    & $HelperPath @tamperedParameters
 } finally {
     [System.IO.File]::WriteAllText($ManifestPath, $manifestOriginalText, $utf8NoBom)
 }
