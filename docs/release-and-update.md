@@ -39,14 +39,16 @@ The expected URL is `https://azmisahin-ai.github.io/local-ai-runtime/` after Pag
 
 ## In-app update behavior in this alpha
 
-On launch, the local dashboard calls the runtime's `/version` endpoint and checks the public GitHub Releases API for a newer stable version. If one exists, it shows a download/release-notes link. Offline operation continues if GitHub is unreachable.
+On launch, the local dashboard calls the runtime's `/version` endpoint and checks the public GitHub Releases API for a newer version appropriate to the current release channel. If one exists, it offers release notes and a **Download & verify package** action for the exact current OS/architecture. Offline operation continues if GitHub is unreachable.
 
-This is deliberately **notify + user-confirmed download**, not silent self-installation. A safe unattended updater needs platform-specific staging, cryptographic signing/verification, a rollback path, and tests for interrupted downloads and a running executable being replaced. SHA-256 alone proves only that a file matches a published checksum; it does not prove who published the checksum. Do not call auto-install secure until signed releases/attestations and key trust are implemented.
+The stage action downloads only the matching asset from the exact official GitHub release URL, requires a SHA-256 digest exposed by the GitHub Releases API, caps the package at 256 MiB, checks the advertised size and digest, and stores the verified archive under the per-user `updates/<tag>/` directory. A same-sized file or cached filename is never treated as verified without hashing it again. Malformed tags, older releases, unsupported asset names, non-official URLs, missing digests, and oversized assets fail closed. A staged package is not extracted, executed, or installed by this alpha. This avoids replacing a working runtime before the platform-specific apply/rollback path has passed tests.
+
+This is **user-confirmed download + verification**, not self-installation. SHA-256 fetched from the public release API detects corruption and mismatches but does not independently prove publisher identity if the repository/release account or transport trust is compromised. Do not call auto-install secure until signed provenance/attestation and key trust are implemented.
 
 ## Update stages
 
-1. **Current foundation:** semantic version embedded in runtime, release API, website asset discovery, dashboard update notification, checksums.
-2. **Next:** download to a staging directory, verify signed provenance, verify hash, ask the user to install, preserve configuration/models, and support rollback.
-3. **Later, opt-in only:** background download and restart/install orchestration per OS after signing, rollback, and threat-model tests are in place.
+1. **Implemented:** embedded version, release API, matching per-platform asset selection, in-app staged download, size/SHA-256 verification, local progress/cancellation, and persistence under the user-data directory. The running binary and user settings/models are not modified.
+2. **Next:** verified package application through platform-specific helpers, with a same-volume backup, post-update `/health`/version check, rollback on failure, and explicit user confirmation. Do not start this step until the staged download is tested on Windows/Linux/macOS.
+3. **Later, opt-in only:** optional background download and one-click restart/install after signed release provenance, rollback, interrupted-update, and threat-model tests are in place.
 
 Never auto-update from arbitrary branches or execute updater scripts included inside a model package.

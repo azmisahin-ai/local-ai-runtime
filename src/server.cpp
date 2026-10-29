@@ -421,7 +421,37 @@ http::response<http::string_body> handle_request(const http::request<http::strin
             "{\"version\":" + json_quoted(LAR_VERSION) +
             ",\"repository\":\"https://github.com/azmisahin-ai/local-ai-runtime\"" +
             ",\"releases_api_url\":\"https://api.github.com/repos/azmisahin-ai/local-ai-runtime/releases?per_page=10\"" +
-            ",\"releases_url\":\"https://github.com/azmisahin-ai/local-ai-runtime/releases\"}");
+            ",\"releases_url\":\"https://github.com/azmisahin-ai/local-ai-runtime/releases\"" +
+            ",\"update_asset_name\":" + json_quoted(DownloadManager::runtime_update_asset_name()) + "}");
+    }
+    if (request.method() == http::verb::post && target == "/v1/updates/stage") {
+        try {
+            std::istringstream input(request.body());
+            boost::property_tree::ptree body;
+            boost::property_tree::read_json(input, body);
+            const auto tag_name = body.get<std::string>("tag_name", "");
+            const auto asset_name = body.get<std::string>("asset_name", "");
+            const auto download_url = body.get<std::string>("browser_download_url", "");
+            const auto digest = body.get<std::string>("digest", "");
+            const auto expected_size = body.get<std::uint64_t>("size", 0);
+            std::string job_id;
+            std::string error;
+            if (!downloads.start_update(LAR_VERSION, tag_name, asset_name, download_url, digest,
+                                        expected_size, job_id, error)) {
+                const auto status = error.find("active in job") != std::string::npos
+                    ? http::status::conflict : http::status::unprocessable_entity;
+                return error_response(status, version, error);
+            }
+            return json_response(http::status::accepted, version,
+                "{\"job_id\":" + json_quoted(job_id) + ",\"tag_name\":" +
+                json_quoted(tag_name) + ",\"status\":\"queued\"}");
+        } catch (const boost::property_tree::json_parser_error& ex) {
+            return error_response(http::status::bad_request, version,
+                                  std::string("Invalid runtime update request JSON: ") + ex.what());
+        } catch (const boost::property_tree::ptree_bad_data&) {
+            return error_response(http::status::bad_request, version,
+                                  "Runtime update request fields have invalid types.");
+        }
     }
     if (request.method() == http::verb::get && target == "/v1/diagnostics/export") {
         log_diagnostic("INFO", "diagnostics.export_requested", std::string("source=dashboard engine_logs=") + (include_engine_logs ? "included" : "omitted"));

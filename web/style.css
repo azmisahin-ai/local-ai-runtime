@@ -57,10 +57,12 @@ footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: .5
 .update-notice[hidden] { display: none; }
 .update-notice h2 { margin: .15rem 0 .35rem; font-size: 1.12rem; }
 .update-notice .hint { margin: 0; }
-.update-notice a { flex: 0 0 auto; text-decoration: none; }
+.update-actions { display: flex; flex: 0 0 auto; flex-wrap: wrap; align-items: center; gap: .6rem; }
+.update-notice a { text-decoration: none; }
 @media (max-width: 680px) {
   .update-notice { align-items: stretch; flex-direction: column; }
-  .update-notice a { text-align: center; }
+  .update-actions { flex-direction: column; align-items: stretch; }
+  .update-actions a, .update-actions button { text-align: center; }
 }
 
 input, select {

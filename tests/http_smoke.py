@@ -162,6 +162,7 @@ def main():
             assert status == 200 and "text/html" in content_type and "Local AI Runtime" in page
             assert 'id="diagnostics-export"' in page and 'id="downloads-refresh"' in page
             assert 'id="include-engine-logs"' in page
+            assert 'id="update-download"' in page
 
             status, diagnostics_raw, diagnostics_type = request(base + "/v1/diagnostics/export")
             assert status == 200 and "text/plain" in diagnostics_type
@@ -181,6 +182,49 @@ def main():
             assert status == 200 and "application/json" in content_type
             assert version_info["version"] and version_info["repository"].endswith("/local-ai-runtime")
             assert "releases_api_url" in version_info and "api.github.com" in version_info["releases_api_url"]
+            if sys.platform == "win32":
+                expected_update_asset = "local-ai-runtime-windows-x64.zip"
+            elif sys.platform == "darwin":
+                machine = os.uname().machine.lower()
+                expected_update_asset = "local-ai-runtime-macos-arm64.tar.gz" if machine in ("arm64", "aarch64") else "local-ai-runtime-macos-x64.tar.gz"
+            elif sys.platform.startswith("linux"):
+                expected_update_asset = "local-ai-runtime-linux-x64.tar.gz" if os.uname().machine.lower() in ("x86_64", "amd64") else ""
+            else:
+                expected_update_asset = ""
+            assert version_info.get("update_asset_name", "") == expected_update_asset, version_info
+
+            # The updater must fail closed on a release URL outside the exact
+            # official asset path and on absent/invalid checksums. These tests do
+            # not access the network or create staged packages.
+            update_payload = {
+                "tag_name": "v9.0.0",
+                "asset_name": expected_update_asset,
+                "browser_download_url": "https://example.invalid/runtime-package.zip",
+                "digest": "sha256:" + ("a" * 64),
+                "size": 4000000,
+            }
+            try:
+                request(base + "/v1/updates/stage", method="POST", body=update_payload)
+                raise AssertionError("Runtime update staging must reject a non-official URL")
+            except urllib.error.HTTPError as exc:
+                assert exc.code == 422, f"Expected 422 for non-official update URL, got {exc.code}"
+            update_payload["browser_download_url"] = f"https://github.com/azmisahin-ai/local-ai-runtime/releases/download/v9.0.0/{expected_update_asset}"
+            update_payload["digest"] = "sha256:not-a-valid-sha256"
+            try:
+                request(base + "/v1/updates/stage", method="POST", body=update_payload)
+                raise AssertionError("Runtime update staging must reject invalid digests")
+            except urllib.error.HTTPError as exc:
+                assert exc.code == 422, f"Expected 422 for invalid update digest, got {exc.code}"
+            update_payload["tag_name"] = "v0.0.1"
+            update_payload["browser_download_url"] = f"https://github.com/azmisahin-ai/local-ai-runtime/releases/download/v0.0.1/{expected_update_asset}"
+            update_payload["digest"] = "sha256:" + ("a" * 64)
+            try:
+                request(base + "/v1/updates/stage", method="POST", body=update_payload)
+                raise AssertionError("Runtime update staging must reject older release tags")
+            except urllib.error.HTTPError as exc:
+                assert exc.code == 422, f"Expected 422 for older update tag, got {exc.code}"
+            status, jobs_raw, _ = request(base + "/v1/downloads")
+            assert status == 200 and json.loads(jobs_raw)["data"] == [], "Rejected update requests must not start a job"
 
             # Managed catalog and download job endpoints must be safe to inspect
             # without network side effects. Downloads require explicit license
@@ -388,7 +432,7 @@ def main():
             assert status == 202 and json.loads(shutdown_raw)["status"] == "shutting-down"
             wait_until(lambda: process.poll() is not None, 5, "graceful runtime shutdown")
             assert process.returncode == 0, f"Runtime exited with {process.returncode} after graceful shutdown"
-            print("HTTP smoke test passed: dashboard, health/version, duplicate-startup diagnostics, security guards, readiness probe, engine lifecycle, chat/models proxy, GGUF validation, quoted paths, restricted engine CORS, CPU/GPU setup persistence, graceful shutdown.")
+            print("HTTP smoke test passed: dashboard, health/version/platform-update metadata, update URL/digest guards, duplicate-startup diagnostics, security guards, readiness probe, engine lifecycle, chat/models proxy, GGUF validation, quoted paths, restricted engine CORS, CPU/GPU setup persistence, graceful shutdown.")
         except Exception:
             runtime_log.flush()
             print(

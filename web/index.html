@@ -27,7 +27,10 @@
 
     <section id="update-notice" class="update-notice" role="status" aria-live="polite" hidden>
       <div><p class="eyebrow">SOFTWARE UPDATE</p><h2 id="update-title">Checking for updates…</h2><p id="update-copy" class="hint"></p></div>
-      <a id="update-link" class="button primary" href="https://github.com/azmisahin-ai/local-ai-runtime/releases" target="_blank" rel="noopener noreferrer">View releases</a>
+      <div class="update-actions">
+        <a id="update-link" class="button secondary" href="https://github.com/azmisahin-ai/local-ai-runtime/releases" target="_blank" rel="noopener noreferrer">Release notes</a>
+        <button id="update-download" class="button primary" type="button" hidden>Download &amp; verify package</button>
+      </div>
     </section>
 
     <section id="catalog-panel" class="panel catalog-panel">

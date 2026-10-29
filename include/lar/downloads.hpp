@@ -48,6 +48,11 @@ public:
     std::optional<std::string> job_json(const std::string& id) const;
     bool start(const std::string& item_id, bool accept_license,
                std::string& job_id, std::string& error);
+    bool start_update(const std::string& current_version, const std::string& tag_name,
+                      const std::string& asset_name, const std::string& download_url,
+                      const std::string& digest, std::uint64_t expected_size,
+                      std::string& job_id, std::string& error);
+    static std::string runtime_update_asset_name();
     bool cancel(const std::string& job_id, std::string& error);
     bool has_active_jobs() const;
 
@@ -60,6 +65,7 @@ private:
     void reap_finished_workers_locked();
     void download_model(const std::shared_ptr<Job>& job);
     void download_engine(const std::shared_ptr<Job>& job, const std::string& variant);
+    void download_runtime_update(const std::shared_ptr<Job>& job);
     void configure_llama_engine(const std::filesystem::path& executable,
                                 const std::filesystem::path& model,
                                 const std::string& variant);

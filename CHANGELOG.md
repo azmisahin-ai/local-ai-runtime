@@ -4,6 +4,8 @@ This project follows a lightweight Keep a Changelog structure. GitHub Release no
 
 ## Unreleased
 
+- Add a user-confirmed in-app runtime update staging flow for the current OS/architecture. Downloads are restricted to the exact official GitHub release asset, size-bounded, and SHA-256 verified before being kept under the per-user update directory. This step does not replace or execute application files.
+- Add HTTP smoke coverage for platform asset metadata and fail-closed update URL/digest validation.
 - Add per-platform CI performance summaries for dependency install/configure, build, tests, package smoke checks and runner-side elapsed time; include Windows vcpkg cache hit identity, matched key, file counts and cache sizes to distinguish cache misses from runner queue delays.
 
 - Refresh the published-release website view: show download links for Windows, Linux, macOS Intel and Apple Silicon assets, update the displayed product version to `0.1.0-alpha`, and remove stale copy saying the first version tag has not been published.

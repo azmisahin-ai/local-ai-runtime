@@ -9,6 +9,7 @@ const updateNotice = document.querySelector('#update-notice');
 const updateTitle = document.querySelector('#update-title');
 const updateCopy = document.querySelector('#update-copy');
 const updateLink = document.querySelector('#update-link');
+const updateDownloadButton = document.querySelector('#update-download');
 const runtimeVersion = document.querySelector('#runtime-version');
 const chatReadiness = document.querySelector('#chat-readiness');
 const chatSendButton = document.querySelector('#send');
@@ -28,6 +29,8 @@ const includeEngineLogsCheckbox = document.querySelector('#include-engine-logs')
 const completedDownloadJobs = new Set();
 let catalogItems = [];
 let activeCatalogFilter = 'all';
+let availableRuntimeUpdate = null;
+let updateStageJobId = null;
 
 const REPOSITORY_RELEASES = 'https://github.com/azmisahin-ai/local-ai-runtime/releases';
 const FALLBACK_RELEASE_API = 'https://api.github.com/repos/azmisahin-ai/local-ai-runtime/releases?per_page=10';
@@ -125,17 +128,92 @@ async function checkForUpdates() {
       .filter((release) => !release.draft && parseVersion(release.tag_name) &&
         (installedIsPrerelease || !release.prerelease))
       .sort((left, right) => compareVersions(right.tag_name, left.tag_name))[0];
-    if (!latest) return;
-    if (compareVersions(latest.tag_name, current) > 0) {
-      updateTitle.textContent = `Version ${latest.tag_name} is available`;
-      updateCopy.textContent = `You are using ${current}. Review the release notes and download the package for your operating system. Updates are never installed silently.`;
-      updateLink.href = latest.html_url || REPOSITORY_RELEASES;
-      updateLink.textContent = 'Download update';
-      updateNotice.hidden = false;
+    if (!latest || compareVersions(latest.tag_name, current) <= 0) return;
+
+    updateTitle.textContent = `Version ${latest.tag_name} is available`;
+    updateLink.href = safeHttpsUrl(latest.html_url) || REPOSITORY_RELEASES;
+    updateLink.textContent = 'Release notes';
+    availableRuntimeUpdate = null;
+    updateDownloadButton.hidden = true;
+    updateDownloadButton.disabled = true;
+
+    const asset = Array.isArray(latest.assets)
+      ? latest.assets.find((candidate) => candidate.name === local.update_asset_name)
+      : null;
+    const digest = String(asset?.digest || '').toLowerCase();
+    const size = Number(asset?.size);
+    const assetUrl = safeHttpsUrl(asset?.browser_download_url);
+    const canStage = Boolean(asset && asset.name && assetUrl &&
+      /^sha256:[a-f0-9]{64}$/.test(digest) && Number.isSafeInteger(size) && size >= 1024 && size <= 256 * 1024 * 1024 &&
+      assetUrl === `https://github.com/azmisahin-ai/local-ai-runtime/releases/download/${latest.tag_name}/${asset.name}` &&
+      asset.name === local.update_asset_name);
+    if (canStage) {
+      availableRuntimeUpdate = {
+        tag_name: latest.tag_name,
+        asset_name: asset.name,
+        browser_download_url: assetUrl,
+        digest,
+        size,
+      };
+      updateDownloadButton.textContent = 'Download & verify package';
+      updateDownloadButton.hidden = false;
+      updateDownloadButton.disabled = false;
+      updateCopy.textContent = `You are using ${current}. This update is for this computer's platform. Downloading stores the package under your Local AI Runtime user-data folder and verifies GitHub's SHA-256 digest. This alpha will not replace running application files automatically.`;
+    } else {
+      updateCopy.textContent = `You are using ${current}. A newer release exists, but GitHub did not provide a supported platform package with a SHA-256 digest. Open the release notes to inspect available downloads; automatic staging is disabled.`;
     }
+    updateNotice.hidden = false;
   } catch (error) {
     // Offline use is expected. Keep local inference usable when GitHub is unreachable.
     console.info('Update check skipped:', error.message);
+  }
+}
+
+async function stageRuntimeUpdate() {
+  if (!availableRuntimeUpdate || updateStageJobId) return;
+  updateDownloadButton.disabled = true;
+  updateDownloadButton.textContent = 'Starting download…';
+  updateTitle.textContent = `Preparing ${availableRuntimeUpdate.tag_name}`;
+  updateCopy.textContent = 'Requesting the official platform package. No running files will be changed.';
+  reportDiagnosticEvent('ui.update.stage_started', `version=${availableRuntimeUpdate.tag_name}; asset=${availableRuntimeUpdate.asset_name}`);
+  try {
+    const started = await api('/v1/updates/stage', {
+      method: 'POST',
+      body: JSON.stringify(availableRuntimeUpdate),
+    });
+    updateStageJobId = started.job_id;
+    while (updateStageJobId) {
+      const job = await api(`/v1/downloads/${encodeURIComponent(updateStageJobId)}`);
+      const progress = Math.max(0, Math.min(100, Number(job.progress_percent || 0)));
+      const downloaded = Number(job.downloaded_bytes || 0);
+      const total = Number(job.total_bytes || 0);
+      updateCopy.textContent = total > 0
+        ? `${job.phase || job.state} · ${formatBytes(downloaded)} of ${formatBytes(total)} (${progress}%). Your current installation and user data are unchanged.`
+        : `${job.phase || job.state}. Your current installation and user data are unchanged.`;
+      if (job.state === 'succeeded') {
+        updateTitle.textContent = `Verified update ${job.version} is ready`;
+        updateCopy.textContent = `The ${job.version} package was downloaded and its SHA-256 digest matched GitHub release metadata. It is staged in the Local AI Runtime user-data folder. This alpha does not install or replace the running application yet; nothing has been changed.`;
+        reportDiagnosticEvent('ui.update.stage_succeeded', `version=${job.version}; bytes=${downloaded}; sha256_verified=true; install=not_performed`);
+        break;
+      }
+      if (job.state === 'failed' || job.state === 'canceled') {
+        const message = job.error || job.phase || job.state;
+        updateTitle.textContent = job.state === 'canceled' ? 'Update download canceled' : 'Update download failed';
+        updateCopy.textContent = `${message} Your current installation and user data are unchanged.`;
+        reportDiagnosticEvent(`ui.update.stage_${job.state}`, `version=${availableRuntimeUpdate.tag_name}; http_status=0`);
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 450));
+    }
+  } catch (error) {
+    updateTitle.textContent = 'Update could not be staged';
+    updateCopy.textContent = `${error.message} Your current installation and user data are unchanged.`;
+    reportDiagnosticEvent('ui.update.stage_failed', `http_status=${Number.isInteger(error?.httpStatus) ? error.httpStatus : 0}; error_type=${String(error?.name || 'Error').slice(0, 40)}`);
+  } finally {
+    updateStageJobId = null;
+    updateDownloadButton.disabled = !availableRuntimeUpdate;
+    updateDownloadButton.textContent = 'Download & verify package';
+    await refreshDownloads();
   }
 }
 
@@ -304,7 +382,8 @@ async function refreshCatalog() {
 function downloadJobCard(job) {
   const card = make('article', 'download-card');
   const header = make('div', 'download-job-header');
-  header.append(make('h3', '', `${job.item_id} · ${job.state}`));
+  const jobTitle = job.item_id === 'runtime-update' ? 'Local AI Runtime update' : job.item_id;
+  header.append(make('h3', '', `${jobTitle} · ${job.state}`));
   header.append(make('span', 'tag', job.kind || 'component'));
   card.append(header);
   card.append(make('p', '', job.phase || job.state));
@@ -317,7 +396,7 @@ function downloadJobCard(job) {
   const downloaded = Number(job.downloaded_bytes || 0);
   card.append(make('p', 'hint', total > 0 ? `${formatBytes(downloaded)} of ${formatBytes(total)} (${progress.value}%)` : `${formatBytes(downloaded)} downloaded`));
   if (job.version) card.append(make('p', 'hint', `Upstream version: ${job.version}`));
-  if (job.installed_path) card.append(make('p', 'hint', `Installed at: ${job.installed_path}`));
+  if (job.installed_path) card.append(make('p', 'hint', job.kind === 'update' ? `Verified package staged at: ${job.installed_path}` : `Installed at: ${job.installed_path}`));
   if (job.error) {
     card.append(make('p', 'engine-error', job.error));
     if (String(job.error).includes('verified staging file was kept')) {
@@ -353,22 +432,23 @@ async function refreshDownloads() {
       return;
     }
     let hasActive = false;
-    let changedTerminalState = false;
-    let completedSuccessfully = false;
+    let changedComponentTerminalState = false;
+    let completedComponentSuccessfully = false;
     for (const job of result.data) {
       downloadList.append(downloadJobCard(job));
       if (['queued', 'downloading', 'verifying', 'extracting', 'configuring'].includes(job.state)) hasActive = true;
       if (['succeeded', 'failed', 'canceled'].includes(job.state) && !completedDownloadJobs.has(job.id)) {
         completedDownloadJobs.add(job.id);
-        changedTerminalState = true;
-        completedSuccessfully = completedSuccessfully || job.state === 'succeeded';
+        if (job.kind !== 'update') {
+          changedComponentTerminalState = true;
+          completedComponentSuccessfully = completedComponentSuccessfully || job.state === 'succeeded';
+        }
       }
     }
-    // Rebuild catalog cards on every terminal result so failed/canceled downloads
-    // re-enable their install button. Refresh engines only after a successful install.
-    if (changedTerminalState) {
+    // Runtime update staging never changes installed components or engine state.
+    if (changedComponentTerminalState) {
       await refreshCatalog();
-      if (completedSuccessfully) await refreshEngines();
+      if (completedComponentSuccessfully) await refreshEngines();
     }
     return hasActive;
   } catch (error) {
@@ -592,6 +672,8 @@ document.querySelector('#chat-form').addEventListener('submit', async (event) =>
     send.textContent = 'Send message';
   }
 });
+
+updateDownloadButton.addEventListener('click', stageRuntimeUpdate);
 
 chatSendButton.disabled = true;
 refreshHealth();

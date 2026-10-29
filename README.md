@@ -40,7 +40,7 @@ Advanced users can still use **Configure llama.cpp** to register an engine and m
 
 - **Offline use:** once the app, engine and model are installed, local inference does not need GitHub. Catalog downloads and update checks require network access. The dashboard does not upload prompts, model paths or usage events; the source hosts may receive ordinary network metadata such as the request IP address.
 
-The local dashboard checks for a newer **stable** release on startup and links to release notes/downloads. This alpha does **not** install or replace binaries silently. Review the package and release notes before updating.
+The local dashboard checks GitHub Releases at startup and offers release notes plus a **Download & verify package** action when a newer version for this platform is available. The runtime restricts the request to the exact official release asset, checks the reported size and SHA-256 digest, and stages the verified archive under the per-user update directory. This alpha does **not** apply the staged package or replace binaries automatically yet; review the release notes and retain the existing app folder until platform-specific apply/rollback is implemented.
 
 ### Security warning
 
@@ -116,7 +116,7 @@ GitHub Actions is the source for repeatable cross-platform build/test results. L
 - `POST /v1/setup/llama-cpp` to validate and save local `llama-server`/GGUF paths, backend mode, context size and engine port.
 - `/v1/engines` reports process state and API readiness separately; the dashboard does not enable chat until the default engine is ready.
 - `POST /v1/runtime/shutdown` is a loopback-only graceful shutdown used by the Windows launcher when replacing an older runtime instance; managed engine processes are stopped as the runtime exits.
-- `/version` and `/health` endpoints; dashboard checks the public release feed for stable update notices.
+- `/version` and `/health` endpoints; dashboard offers official per-platform runtime update staging with size and SHA-256 verification, but does not apply staged packages yet.
 - Built-in managed component catalog for the official llama.cpp release (CPU/CUDA variants) and a pinned Qwen2.5 1.5B GGUF starter model. Downloads are cancellable, size-bounded, HTTPS-only, SHA-256 checked, and safely extracted; model license confirmation is required.
 - `/v1/catalog`, `/v1/downloads`, per-job progress/cancel routes and dashboard installation progress.
 - Local-only rotating runtime event log, user-initiated diagnostic export (download jobs and engine status), and optional user-consented engine log excerpts.

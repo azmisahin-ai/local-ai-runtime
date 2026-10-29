@@ -47,6 +47,10 @@ struct DownloadManager::Job {
     std::string version;
     std::string installed_path;
     std::string error;
+    std::string source_url;
+    std::string expected_sha256;
+    std::string asset_name;
+    std::uint64_t expected_size{0};
     std::uint64_t downloaded_bytes{0};
     std::uint64_t total_bytes{0};
     std::atomic<bool> cancel_requested{false};
@@ -64,6 +68,7 @@ constexpr std::uint64_t kModelSize = 1117320736ULL;
 constexpr char kModelFileName[] = "qwen2.5-1.5b-instruct-q4_k_m.gguf";
 constexpr std::uint64_t kMaximumArchiveExpandedBytes = 3ULL * 1024ULL * 1024ULL * 1024ULL;
 constexpr std::uint64_t kMaximumReleaseAssetBytes = 2ULL * 1024ULL * 1024ULL * 1024ULL;
+constexpr std::uint64_t kMaximumRuntimeUpdateBytes = 256ULL * 1024ULL * 1024ULL;
 
 std::once_flag curl_init_flag;
 CURLcode curl_init_result = CURLE_FAILED_INIT;
@@ -112,6 +117,55 @@ std::string lower_ascii(std::string value) {
         return static_cast<char>(std::tolower(c));
     });
     return value;
+}
+
+struct ParsedVersion {
+    std::uint64_t major{0};
+    std::uint64_t minor{0};
+    std::uint64_t patch{0};
+    std::string prerelease;
+};
+
+std::optional<ParsedVersion> parse_version(std::string value) {
+    if (!value.empty() && value.front() == 'v') value.erase(value.begin());
+    static const std::regex pattern(R"(^([0-9]+)\.([0-9]+)\.([0-9]+)(?:-([0-9A-Za-z.-]+))?$)");
+    std::smatch match;
+    if (!std::regex_match(value, match, pattern)) return std::nullopt;
+    try {
+        return ParsedVersion{std::stoull(match[1].str()), std::stoull(match[2].str()),
+                             std::stoull(match[3].str()), match[4].matched ? match[4].str() : std::string{}};
+    } catch (...) { return std::nullopt; }
+}
+
+int prerelease_channel_rank(const std::string& value) {
+    const auto channel = lower_ascii(value.substr(0, value.find('.')));
+    if (channel == "dev" || channel.rfind("dev-", 0) == 0) return 0;
+    if (channel == "alpha" || channel.rfind("alpha-", 0) == 0) return 1;
+    if (channel == "beta" || channel.rfind("beta-", 0) == 0) return 2;
+    if (channel == "rc" || channel.rfind("rc-", 0) == 0) return 3;
+    return 0;
+}
+
+bool is_newer_version(const std::string& candidate_text, const std::string& current_text) {
+    const auto candidate = parse_version(candidate_text);
+    const auto current = parse_version(current_text);
+    if (!candidate || !current) return false;
+    if (candidate->major != current->major) return candidate->major > current->major;
+    if (candidate->minor != current->minor) return candidate->minor > current->minor;
+    if (candidate->patch != current->patch) return candidate->patch > current->patch;
+    if (candidate->prerelease.empty()) return !current->prerelease.empty();
+    if (current->prerelease.empty()) return false;
+    const int candidate_rank = prerelease_channel_rank(candidate->prerelease);
+    const int current_rank = prerelease_channel_rank(current->prerelease);
+    if (candidate_rank != current_rank) return candidate_rank > current_rank;
+    return candidate->prerelease != current->prerelease &&
+           candidate->prerelease.compare(current->prerelease) > 0;
+}
+
+bool is_sha256_digest(std::string_view value) {
+    return value.size() == 64 && std::all_of(value.begin(), value.end(), [](unsigned char ch) {
+        return std::isxdigit(ch) != 0;
+    });
 }
 
 bool contains(const std::string& value, std::string_view token) {
@@ -630,6 +684,16 @@ std::filesystem::path DownloadManager::user_data_directory() {
 #endif
 }
 
+std::string DownloadManager::runtime_update_asset_name() {
+    const auto os = host_os();
+    const auto arch = host_architecture();
+    if (os == "windows" && arch == "x64") return "local-ai-runtime-windows-x64.zip";
+    if (os == "linux" && arch == "x64") return "local-ai-runtime-linux-x64.tar.gz";
+    if (os == "macos" && arch == "x64") return "local-ai-runtime-macos-x64.tar.gz";
+    if (os == "macos" && arch == "arm64") return "local-ai-runtime-macos-arm64.tar.gz";
+    return {};
+}
+
 bool DownloadManager::is_safe_archive_entry_path(const std::string& entry_path) {
     if (entry_path.empty() || entry_path.size() > 4096 || entry_path.front() == '/' || entry_path.front() == '\\') return false;
     if (entry_path.find('\\') != std::string::npos || entry_path.find(':') != std::string::npos) return false;
@@ -861,6 +925,89 @@ bool DownloadManager::start(const std::string& item_id, bool accept_license,
     return true;
 }
 
+bool DownloadManager::start_update(const std::string& current_version, const std::string& tag_name,
+                                   const std::string& asset_name, const std::string& download_url,
+                                   const std::string& digest, std::uint64_t expected_size,
+                                   std::string& job_id, std::string& error) {
+    const auto expected_asset = runtime_update_asset_name();
+    if (expected_asset.empty()) {
+        error = "Automatic update staging is not supported for this OS/architecture.";
+        return false;
+    }
+    if (asset_name != expected_asset) {
+        error = "The release asset does not match this runtime's OS and architecture.";
+        return false;
+    }
+    static const std::regex valid_tag(R"(^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$)");
+    if (!std::regex_match(tag_name, valid_tag) || !is_newer_version(tag_name, current_version)) {
+        error = "The requested release tag is invalid or is not newer than the installed runtime.";
+        return false;
+    }
+    const std::string expected_url = "https://github.com/azmisahin-ai/local-ai-runtime/releases/download/" +
+                                     tag_name + "/" + expected_asset;
+    if (download_url != expected_url) {
+        error = "Refusing a runtime update URL outside the exact official release asset path.";
+        return false;
+    }
+    std::string normalized_digest = digest;
+    if (normalized_digest.rfind("sha256:", 0) == 0) normalized_digest.erase(0, 7);
+    normalized_digest = lower_ascii(std::move(normalized_digest));
+    if (!is_sha256_digest(normalized_digest)) {
+        error = "The GitHub release asset did not provide a valid SHA-256 digest. Update staging is disabled.";
+        return false;
+    }
+    if (expected_size < 1024 || expected_size > kMaximumRuntimeUpdateBytes) {
+        error = "The release asset size is missing or exceeds the 256 MiB safety limit.";
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    reap_finished_workers_locked();
+    for (const auto& existing : jobs_) {
+        const auto view = snapshot_job(existing);
+        const bool active = view.state == "queued" || view.state == "downloading" || view.state == "verifying" ||
+                            view.state == "extracting" || view.state == "configuring";
+        if (!active) continue;
+        error = "Another download is active in job " + view.id + ". Finish or cancel it before staging a runtime update.";
+        return false;
+    }
+    constexpr std::size_t max_job_history = 64;
+    while (jobs_.size() >= max_job_history) {
+        const auto terminal = std::find_if(jobs_.begin(), jobs_.end(), [](const auto& candidate) {
+            const auto state = snapshot_job(candidate).state;
+            return state == "succeeded" || state == "failed" || state == "canceled";
+        });
+        if (terminal == jobs_.end()) {
+            error = "Download job history is full and no completed job can be removed yet.";
+            return false;
+        }
+        jobs_.erase(terminal);
+    }
+    auto job = std::make_shared<Job>();
+    job->id = "download-" + std::to_string(next_job_number_++);
+    job->item_id = "runtime-update";
+    job->kind = "update";
+    job->version = tag_name;
+    job->source_url = download_url;
+    job->expected_sha256 = normalized_digest;
+    job->asset_name = asset_name;
+    job->expected_size = expected_size;
+    job->total_bytes = expected_size;
+    job_id = job->id;
+    try {
+        workers_.reserve(workers_.size() + 1);
+        jobs_.push_back(job);
+        workers_.push_back(Worker{job->id, std::thread([this, job] { run_job(job); })});
+    } catch (const std::exception& ex) {
+        const auto found = std::find(jobs_.begin(), jobs_.end(), job);
+        if (found != jobs_.end()) jobs_.erase(found);
+        error = std::string("Could not start update download worker: ") + ex.what();
+        return false;
+    }
+    log_diagnostic("INFO", "update.download_queued", "job=" + job_id + " version=" + tag_name + " asset=" + asset_name);
+    return true;
+}
+
 void DownloadManager::reap_finished_workers_locked() {
     for (auto it = workers_.begin(); it != workers_.end();) {
         const auto job_it = std::find_if(jobs_.begin(), jobs_.end(), [&](const auto& job) {
@@ -916,14 +1063,15 @@ void DownloadManager::run_job(const std::shared_ptr<Job>& job) {
     log_diagnostic("INFO", "download.started", "job=" + job->id + " item=" + job->item_id);
     try {
         if (job->cancel_requested.load()) throw std::runtime_error("Download canceled by the user.");
-        if (job->item_id == "qwen2.5-1.5b-q4km") download_model(job);
+        if (job->item_id == "runtime-update") download_runtime_update(job);
+        else if (job->item_id == "qwen2.5-1.5b-q4km") download_model(job);
         else if (job->item_id == "llama.cpp-cpu") download_engine(job, "cpu");
         else if (job->item_id == "llama.cpp-cuda12") download_engine(job, "cuda12");
         else if (job->item_id == "llama.cpp-cuda13") download_engine(job, "cuda13");
         else throw std::runtime_error("Unknown catalog item.");
         mutate_job(job, [](DownloadManager::Job& current) {
             current.state = "succeeded";
-            current.phase = "Installed and configured";
+            if (current.item_id != "runtime-update") current.phase = "Installed and configured";
             current.downloaded_bytes = current.total_bytes > 0 ? current.total_bytes : current.downloaded_bytes;
         });
         const auto finished = snapshot_job(job);
@@ -952,6 +1100,90 @@ void DownloadManager::run_job(const std::shared_ptr<Job>& job) {
             std::filesystem::remove(root / "models" / (std::string(kModelFileName) + ".part.part"), ignored);
         }
     }
+}
+
+void DownloadManager::download_runtime_update(const std::shared_ptr<Job>& job) {
+    const auto root = user_data_directory() / "updates" / job->version;
+    std::error_code fs_error;
+    std::filesystem::create_directories(root, fs_error);
+    if (fs_error) throw std::runtime_error("Could not create the runtime update staging directory: " + fs_error.message());
+    const auto destination = root / job->asset_name;
+
+    // A previously verified package can be reused; never silently accept a file
+    // merely because its name or size looks correct.
+    if (std::filesystem::is_regular_file(destination, fs_error) && !fs_error) {
+        try {
+            if (std::filesystem::file_size(destination, fs_error) == job->expected_size && !fs_error &&
+                sha256_file(destination) == job->expected_sha256) {
+                mutate_job(job, [&](DownloadManager::Job& current) {
+                    current.state = "verifying";
+                    current.phase = "Reusing and re-verifying the staged release package";
+                    current.downloaded_bytes = job->expected_size;
+                    current.total_bytes = job->expected_size;
+                });
+            } else {
+                std::filesystem::remove(destination, fs_error);
+                fs_error.clear();
+            }
+        } catch (...) {
+            std::filesystem::remove(destination, fs_error);
+            fs_error.clear();
+        }
+    }
+
+    if (!(std::filesystem::is_regular_file(destination, fs_error) && !fs_error &&
+          std::filesystem::file_size(destination, fs_error) == job->expected_size && !fs_error &&
+          sha256_file(destination) == job->expected_sha256)) {
+        mutate_job(job, [](DownloadManager::Job& current) {
+            current.state = "downloading";
+            current.phase = "Downloading the official platform package";
+        });
+        download_to_file(job->source_url, destination, job->expected_size, job);
+        mutate_job(job, [](DownloadManager::Job& current) {
+            current.state = "verifying";
+            current.phase = "Verifying downloaded package SHA-256 against GitHub release metadata";
+        });
+        if (sha256_file(destination) != job->expected_sha256) {
+            std::filesystem::remove(destination, fs_error);
+            throw std::runtime_error("The downloaded runtime update SHA-256 does not match GitHub's release asset digest. The package was discarded.");
+        }
+    }
+
+    const auto manifest_path = root / "staged-update.json";
+    auto temporary_manifest = manifest_path;
+    temporary_manifest += ".part";
+    {
+        std::ofstream output(temporary_manifest, std::ios::binary | std::ios::trunc);
+        if (!output) throw std::runtime_error("Could not write the verified update metadata.");
+        output << "{\"tag_name\":" << json_quote(job->version)
+               << ",\"asset_name\":" << json_quote(job->asset_name)
+               << ",\"sha256\":" << json_quote(job->expected_sha256)
+               << ",\"size_bytes\":" << job->expected_size
+               << ",\"verified\":true,\"apply_supported\":false}\n";
+        output.flush();
+        if (!output) throw std::runtime_error("Could not flush the verified update metadata.");
+    }
+    // std::filesystem::rename does not replace an existing target on Windows.
+    // Metadata is reproducible from the verified job; remove the old small file
+    // before renaming so re-verifying an already-staged package is idempotent.
+    std::filesystem::remove(manifest_path, fs_error);
+    fs_error.clear();
+    std::filesystem::rename(temporary_manifest, manifest_path, fs_error);
+    if (fs_error) {
+        const auto detail = fs_error.message();
+        std::error_code cleanup_error;
+        std::filesystem::remove(temporary_manifest, cleanup_error);
+        throw std::runtime_error("Could not finalize verified update metadata: " + detail);
+    }
+    mutate_job(job, [&](DownloadManager::Job& current) {
+        current.state = "succeeded";
+        current.phase = "Package downloaded and SHA-256 verified; not installed";
+        current.downloaded_bytes = job->expected_size;
+        current.total_bytes = job->expected_size;
+        current.installed_path = path_to_utf8(destination);
+    });
+    log_diagnostic("INFO", "update.package_staged", "job=" + job->id + " version=" + job->version +
+                   " bytes=" + std::to_string(job->expected_size) + " sha256_verified=true install=not_performed");
 }
 
 void DownloadManager::download_model(const std::shared_ptr<Job>& job) {

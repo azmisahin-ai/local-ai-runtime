@@ -11,12 +11,13 @@ The roadmap distinguishes implemented code from platform/model combinations that
 - [x] Windows/Linux build helper and fake-engine core/HTTP tests
 - [x] Fix WinSock 1/2 header ordering for MSVC
 - [x] `/version` endpoint and stable-release update notification in dashboard
+- [x] In-app platform update package staging with official-release URL allowlist, size bound, and SHA-256 verification (does not install packages)
 - [x] one canonical pipeline validates pull requests, builds/tests/packages Windows x64, Linux x64, macOS Intel and macOS Apple Silicon on `main`, then deploys Pages as its final job only after all four target jobs pass; the weekly scheduled run executes only the macOS compatibility matrix
 - [x] Project Pages site and feature manifest
 - [x] Tag-based Windows/Linux/macOS-x64/macOS-arm64 release workflow with a SHA-256 manifest
 - [x] Confirm hosted Windows/MSVC CI on the public repository (green at commit `1f020c4`)
 - [x] Confirmed macOS CI passed on the native Intel runner; the canonical workflow now checks Intel and Apple Silicon in parallel and requires both before Pages/Release
-- [ ] Publish the first prerelease tag after the user-facing llama.cpp setup is ready; current workflow dry-run/package rehearsal is green
+- [x] Publish the first prerelease tag after user-facing llama.cpp setup and four-platform package CI passed
 - [ ] Real `llama-server` + GGUF smoke test on Windows and one CPU-only environment; CI currently uses a fake engine and intentionally does not fetch external components
 - [x] Dashboard setup form for an existing local `llama-server` and GGUF file; persists the engine configuration without hand-editing JSON
 - [x] Runtime readiness state from the local `/health` endpoint (fallback to `/v1/models`) and chat gating in the dashboard
@@ -33,7 +34,8 @@ The roadmap distinguishes implemented code from platform/model combinations that
 - [x] Basic engine readiness probe and dashboard chat gating; [ ] richer startup timeout/remediation and retry policy
 - [ ] Configuration schema/version migration and stricter JSON parsing
 - [ ] Installer-quality package tests on a clean Windows VM and a clean Linux container/VM
-- [ ] Release artifact provenance/signing plan and verified update download staging
+- [ ] Release artifact provenance/signing plan
+- [x] Verified in-app update package staging with exact release asset allowlist, size bound and SHA-256 check (application/rollback remains unimplemented)
 
 ## 0.3 — hardware capability reporting
 
