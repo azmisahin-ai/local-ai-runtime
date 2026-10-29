@@ -2,14 +2,18 @@
 
 The roadmap distinguishes implemented code from platform/model combinations that have actually been tested. A build passing on GitHub Actions does not prove that CUDA, a particular GPU, or a particular model works.
 
-## Active focus — Windows first
+## Active focus — Windows real-engine validation
 
-Windows x64 is the release-blocking platform until the packaged update flow passes its full hosted smoke test. Fix regressions in the portable Windows build, archive validation, install/restart, rollback, and interrupted-update recovery before starting equivalent Linux/macOS apply helpers. Do not create a release tag while the canonical pipeline is red.
+The tagged Windows portable update flow and canonical four-platform package gate passed at commit `b764554`; `v0.1.0-alpha` was published successfully. Keep Windows as the primary user-facing platform while moving from fake-engine CI coverage to a repeatable, device-level real-inference check. The hosted CI intentionally does not download the engine or model weights.
 
-- [ ] Re-run the Windows x64 CI job after fixing `-ValidateOnly` parameter validation: validation-only mode must reject a tampered archive by SHA-256 without requiring a running-process PID, while real apply mode must still require a positive PID; the smoke test now covers both sides of this gate.
-- [ ] Confirm the complete Windows update smoke test passes: tamper rejection, valid package preflight, successful replacement/restart, user-data preservation, rollback, forced helper termination recovery, and retry after rollback failure.
-- [ ] Confirm the four platform package jobs pass before expecting the Pages deployment. A push to `main` publishes preview artifacts and may deploy Pages after all package jobs pass; it does not create a GitHub Release.
-- [ ] After CI is green, create a new version tag to trigger the gated GitHub Release job. Releases are intentionally tag-driven and require all platform package jobs to succeed.
+- [x] Re-run Windows x64 CI after the `-ValidateOnly` parameter fix; validation mode checks a tampered archive without a runtime PID while actual apply mode still requires a positive PID.
+- [x] Confirm the complete hosted Windows update smoke test passes: tamper rejection, package preflight, replacement/restart, user-data preservation, rollback, forced helper termination recovery, and retry after rollback failure.
+- [x] Confirm all four platform package jobs pass and Pages deploys only after those jobs pass.
+- [x] Publish the tag-gated `v0.1.0-alpha` prerelease with Windows/Linux/macOS Intel/macOS ARM64 archives and `SHA256SUMS.txt`.
+- [x] Add a source-distributed Windows PowerShell real-engine smoke test that checks the configured `llama-server.exe`, GGUF header, model readiness, `/v1/models`, and a real non-streaming chat completion without downloading components or editing user config.
+- [ ] Run `scripts\Test-LocalAIRuntimeRealEngine.ps1` on a real Windows 10/11 x64 machine with the starter model in CPU mode; preserve the local report and confirm user-data/configuration remain unchanged.
+- [ ] Run a separate CUDA smoke test and record the GPU model, driver, VRAM, GGUF quantization, llama.cpp package/tag, and engine log evidence. A configured `--n-gpu-layers auto` value alone is not proof that CUDA is used.
+
 
 ## 0.1-alpha — first product foundation
 
@@ -27,7 +31,7 @@ Windows x64 is the release-blocking platform until the packaged update flow pass
 - [x] Confirm hosted Windows/MSVC CI on the public repository (green at commit `1f020c4`)
 - [x] Confirmed macOS CI passed on the native Intel runner; the canonical workflow now checks Intel and Apple Silicon in parallel and requires both before Pages/Release
 - [x] Publish the first prerelease tag after user-facing llama.cpp setup and four-platform package CI passed
-- [ ] Real `llama-server` + GGUF smoke test on Windows and one CPU-only environment; CI currently uses a fake engine and intentionally does not fetch external components
+- [ ] Real `llama-server` + GGUF smoke test on Windows and one CPU-only environment; the source PowerShell validation script is available at [real-engine validation](real-engine-validation.md), but a real device run is still required
 - [x] Dashboard setup form for an existing local `llama-server` and GGUF file; persists the engine configuration without hand-editing JSON
 - [x] Runtime readiness state from the local `/health` endpoint (fallback to `/v1/models`) and chat gating in the dashboard
 - [ ] Real CUDA smoke test with GPU model, VRAM, driver, model quantization and backend recorded
@@ -43,6 +47,7 @@ Windows x64 is the release-blocking platform until the packaged update flow pass
 - [x] Basic engine readiness probe and dashboard chat gating; [ ] richer startup timeout/remediation and retry policy
 - [ ] Configuration schema/version migration and stricter JSON parsing
 - [ ] Installer-quality package tests on a clean Windows VM and a clean Linux container/VM
+- [x] Add a source-only local real-engine smoke-test script for Windows; user-device inference and CUDA validation remain separate checklist items
 - [ ] Release artifact provenance/signing plan
 - [x] Verified in-app update staging and tagged Windows portable apply/restart with checksum-verified rollback backup
 - [x] Recover interrupted Windows file replacement on the next launcher start; re-verify backup SHA-256 values and retry recovery after a rollback failure

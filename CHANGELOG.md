@@ -4,6 +4,8 @@ This project follows a lightweight Keep a Changelog structure. GitHub Release no
 
 ## Unreleased
 
+- Add a Windows PowerShell real-engine smoke test in the source tools for the configured `llama-server.exe` and GGUF model. It validates the GGUF header, waits for engine readiness, checks `/v1/models`, sends a non-streaming chat request, records a local report without generated response text, and cleans up only processes it started.
+- Document the Windows real-engine validation process and update the roadmap to reflect the successful `v0.1.0-alpha` release and the remaining device-level CPU/CUDA checks.
 - Fix Windows updater parameter validation so `-ValidateOnly` can verify a staged package without a running runtime PID; actual apply operations still require a positive runtime PID. This unblocks the tampered-archive SHA-256 check in the Windows package smoke test.
 - Add a user-confirmed Windows portable-release update apply flow: revalidate the staged SHA-256, reject unsafe ZIP paths/symlinks/oversized archives, check installation-folder write access before shutdown, prepare a same-volume copy and rollback backup, gracefully stop/restart the runtime, and restore the previous application files if the new version fails `/health`.
 - Persist per-file SHA-256 values in the rollback manifest and recover interrupted Windows updates at the next launcher start; recovery validates the backup before restoring, records durable progress states, finalizes an update if its target runtime is already healthy, and retries recovery after an earlier rollback failure.
