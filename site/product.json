@@ -64,14 +64,19 @@
       "status": "preview"
     },
     {
-      "name": "Simple first launch",
-      "description": "Published packages include a platform launcher that opens the local dashboard: double-click on Windows and macOS, or run the Linux launcher. Normal users can install a reviewed engine/model and verify it by chatting in the dashboard; no source checkout or maintainer smoke-test command is required.",
-      "status": "preview"
+      "name": "Windows desktop installer",
+      "description": "Planned per-user installer with Start menu launch, a dedicated desktop window hosting the existing HTML dashboard, console-free runtime lifecycle, clear close/exit controls, safe updates and an uninstall path that preserves model data by default.",
+      "status": "planned"
     },
     {
       "name": "Hardware-aware model setup",
-      "description": "Detect CPU/GPU and recommend tested engine backends and model sizes.",
+      "description": "Planned local detection of CPU features, system RAM, GPU/driver/VRAM and disk, followed by evidence-backed engine/model recommendations and safe CPU fallbacks. Hardware presence alone will not be treated as proof of backend support.",
       "status": "planned"
+    },
+    {
+      "name": "Portable package launch (alpha)",
+      "description": "The current alpha ships portable archives and opens a local browser dashboard using a platform launcher. It is not yet a conventional installed desktop application; a Windows per-user installer, dedicated window and console-free lifecycle are the next product milestone.",
+      "status": "preview"
     },
     {
       "name": "Audio, vision and embeddings",
@@ -85,7 +90,7 @@
     },
     {
       "name": "Verified runtime updates",
-      "description": "The dashboard checks for updates on launch, provides a manual check and refreshes periodically while open. Matching official release packages are size/SHA-256 verified before use. Tagged portable Windows releases support user-confirmed apply/restart, backup verification, health checks, rollback and interrupted-update recovery; Linux/macOS still require manual archive replacement after verification.",
+      "description": "The current dashboard checks official GitHub Releases and verifies matching packages before staging. Tagged portable Windows releases support user-confirmed apply/restart, backup validation, health checks, rollback and interrupted-update recovery. Windows installed-app integration and equivalent Linux/macOS apply/recovery remain planned; no silent executable replacement is enabled.",
       "status": "preview"
     }
   ],

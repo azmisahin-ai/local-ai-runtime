@@ -105,8 +105,10 @@ async function main() {
   assert.equal(elements.get('#latest-version').textContent, 'v0.1.0-alpha');
   assert.equal(elements.get('#site-updated').textContent, 'Project data · live');
   assert.equal(grid.afterChildren.length, 1, 'checksum link should be rendered below the platform downloads');
-  assert(product.features.some((feature) => feature.name === 'Simple first launch'), 'product manifest should describe the user launch flow');
+  assert(product.features.some((feature) => feature.name === 'Portable package launch (alpha)' && feature.status === 'preview'), 'product manifest should accurately describe the current portable launch flow');
+  assert(product.features.some((feature) => feature.name === 'Windows desktop installer' && feature.status === 'planned'), 'product manifest should expose the installed desktop app as the next milestone');
   assert(siteHtml.includes('From download to a local answer.'), 'site should explain a user-first first-run path');
+  assert(siteHtml.includes('current alpha is a portable archive, not a conventional installer'), 'site should be honest about the current delivery format');
   assert(siteHtml.includes('Start-LocalAIRuntime.cmd') && siteHtml.includes('Start-LocalAIRuntime.command'), 'site should explain the platform launchers');
   assert(siteHtml.includes('One-time note for v0.1.0-alpha'), 'site should explain the one-time migration from the first alpha archive');
   assert(dashboardHtml.includes('id="check-updates"'), 'dashboard should expose a manual update check');

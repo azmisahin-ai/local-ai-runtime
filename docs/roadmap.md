@@ -1,108 +1,83 @@
 # Roadmap
 
-The roadmap distinguishes implemented code from platform/model combinations that have actually been tested. A build passing on GitHub Actions does not prove that CUDA, a particular GPU, or a particular model works.
+This roadmap distinguishes code that exists from combinations that have been tested on real hardware. A green CI build is necessary, but it does not prove a real model, GPU backend, or installer works on a user's computer.
 
-## Active focus — user-first delivery and updates
+## Product promise
 
-The four-platform package gate and the `v0.1.0-alpha` release passed. The next user-facing step is to make first launch and publishing predictable: one launcher per platform, one reusable maintainer publish command, and clear in-app update status. Windows remains the first platform for safe in-place apply/rollback. Linux/macOS must gain equivalent tested apply/recovery helpers before their updates can be described as one-click. Hosted CI intentionally does not download engine binaries or model weights.
+Local AI Runtime should feel like an installed desktop application, not a developer script. A user downloads it from the project website, installs it once, opens it from the Start menu or desktop, receives a hardware-informed engine/model recommendation, chats locally, and updates from within the app. Users must not need Git, PowerShell, a terminal, JSON editing, or maintainer smoke-test scripts.
 
-- [x] Re-run Windows x64 CI after the `-ValidateOnly` parameter fix; validation mode checks a tampered archive without a runtime PID while actual apply mode still requires a positive PID.
-- [x] Confirm the complete hosted Windows update smoke test passes: tamper rejection, package preflight, replacement/restart, user-data preservation, rollback, forced helper termination recovery, and retry after rollback failure.
-- [x] Confirm all four platform package jobs pass and Pages deploys only after those jobs pass.
-- [x] Publish the tag-gated `v0.1.0-alpha` prerelease with Windows/Linux/macOS Intel/macOS ARM64 archives and `SHA256SUMS.txt`.
-- [x] Add a source-distributed Windows PowerShell real-engine smoke test that checks the configured `llama-server.exe`, GGUF header, model readiness, `/v1/models`, and a real non-streaming chat completion without downloading components or editing user config.
-- [ ] Maintainer release gate: run the real-engine smoke test on a Windows 10/11 x64 machine with the starter model in CPU mode; preserve the local report and confirm user-data/configuration remain unchanged. This is not a user setup step; users validate their setup by chatting in the dashboard.
-- [ ] Run a separate CUDA smoke test and record the GPU model, driver, VRAM, GGUF quantization, llama.cpp package/tag, and engine log evidence. A configured `--n-gpu-layers auto` value alone is not proof that CUDA is used.
+The runtime, engines, and models remain separate versioned components. The catalogue must be honest about licenses, supported hardware, memory requirements, and evidence. “Detected” does not mean “supported”; “starts” does not mean “inference tested.”
 
+## Current reality — `v0.1.0-alpha`
 
-## 0.1-alpha — first product foundation
+- The published packages are **portable archives**, not conventional OS installers.
+- The dashboard is served locally and opens in the default browser. Windows launch currently uses a `.cmd`/PowerShell launcher; a native desktop window and fully managed application lifecycle are not implemented yet.
+- The managed catalogue currently starts with official `llama.cpp` CPU/CUDA assets and one pinned Qwen2.5 1.5B GGUF model. It is not yet a catalogue of every relevant C/C++ engine or model.
+- Hardware detection and evidence-backed model recommendations are not implemented yet.
+- Hosted CI uses a fake OpenAI-compatible engine and intentionally does not download the real engine or the ~1.12 GB starter model. Real CPU/GPU inference therefore requires a separate maintainer validation run.
+- Windows tagged portable packages support user-confirmed update apply/restart with checksum-verified backup and rollback. Linux/macOS currently verify and stage an update but require manual archive replacement.
 
-- [x] C++20/CMake project and loopback HTTP API
-- [x] JSON engine manifest and process start/stop/logging
-- [x] Non-streaming chat proxy and `/v1/models` forwarding
-- [x] Same-origin browser dashboard
-- [x] Windows/Linux build helper and fake-engine core/HTTP tests
-- [x] Fix WinSock 1/2 header ordering for MSVC
-- [x] `/version` endpoint and stable-release update notification in dashboard
-- [x] In-app platform update package staging with official-release URL allowlist, size bound, and SHA-256 verification (does not install packages)
-- [x] one canonical pipeline validates pull requests, builds/tests/packages Windows x64, Linux x64, macOS Intel and macOS Apple Silicon on `main`, then deploys Pages as its final job only after all four target jobs pass; the weekly scheduled run executes only the macOS compatibility matrix
-- [x] Project Pages site and feature manifest
-- [x] Tag-based Windows/Linux/macOS-x64/macOS-arm64 release workflow with a SHA-256 manifest
-- [x] Confirm hosted Windows/MSVC CI on the public repository (green at commit `1f020c4`)
-- [x] Confirmed macOS CI passed on the native Intel runner; the canonical workflow now checks Intel and Apple Silicon in parallel and requires both before Pages/Release
-- [x] Publish the first prerelease tag after user-facing llama.cpp setup and four-platform package CI passed
-- [ ] Real `llama-server` + GGUF smoke test on Windows and one CPU-only environment; the source PowerShell validation script is available at [real-engine validation](real-engine-validation.md), but a real device run is still required
-- [x] Dashboard setup form for an existing local `llama-server` and GGUF file; persists the engine configuration without hand-editing JSON
-- [x] Runtime readiness state from the local `/health` endpoint (fallback to `/v1/models`) and chat gating in the dashboard
-- [ ] Real CUDA smoke test with GPU model, VRAM, driver, model quantization and backend recorded
-- [x] Startup readiness probe separated from process-running state (runtime health signal; real model loading still needs a real-engine smoke test)
-- [x] Add extracted Windows/Linux/macOS archive checks for version, dashboard/launcher files, and a live `/health` response in the release workflow
-- [x] Auto-build Windows/Linux/macOS x64 and arm64 preview artifacts on each `main` push; public releases remain tag-gated
-- [x] Surface preview builds from the website while no public release exists
+The alpha is useful for previewing the runtime, but it is not yet the promised one-time-installed desktop experience. Do not describe console/script launchers as the finished UI.
 
-## 0.2-alpha — product reliability
+## Priority 0 — restore and keep the release pipeline green
 
-- [ ] Bounded request concurrency, graceful HTTP shutdown and cancellation-safe child cleanup
-- [ ] Windows Job Object process cleanup and graceful stop policy
-- [x] Basic engine readiness probe and dashboard chat gating; [ ] richer startup timeout/remediation and retry policy
-- [ ] Configuration schema/version migration and stricter JSON parsing
-- [ ] Installer-quality package tests on a clean Windows VM and a clean Linux container/VM
-- [x] Add a source-only local real-engine smoke-test script for Windows; user-device inference and CUDA validation remain separate checklist items
-- [ ] Release artifact provenance/signing plan
-- [x] Verified in-app update staging and tagged Windows portable apply/restart with checksum-verified rollback backup
-- [x] Recover interrupted Windows file replacement on the next launcher start; re-verify backup SHA-256 values and retry recovery after a rollback failure
+- [ ] Fix the Windows PowerShell 5.1 publisher smoke-test regression: the test intentionally runs a fake native command with a non-zero exit code, but must clear that expected status after all assertions pass so GitHub Actions does not mark a successful test as failed.
+- [ ] Confirm the whole four-target `main` pipeline passes: Windows x64, Linux x64, macOS Intel x64, and macOS Apple Silicon arm64. Pages must deploy only after all package jobs pass.
+- [ ] Keep one maintainer command and one stable bundle filename (`local-ai-runtime-update.bundle`). A push must use a normal fast-forward, never force-push, and stop on any failed CI gate.
+- [ ] Only after `main` CI passes, create the next alpha tag and let the tag pipeline publish the four packages and `SHA256SUMS.txt`. A failed main build must never create a release tag.
 
-## 0.3 — hardware capability reporting
+## Priority 1 — real Windows desktop installation (first product milestone)
 
-- [ ] Detect OS, architecture, CPU features, GPU vendor/device and driver version
-- [ ] Report backend states as `detected`, `available`, `configured`, and `tested`
-- [ ] CPU baseline and explicit fallback choices; never assume that a GPU is supported just because it exists
-- [ ] Evidence-backed compatibility matrix from repeatable smoke tests
-- [ ] RTX 3060 6 GB / 16 GB RAM test notes (the user's local test environment)
+- [ ] Produce a per-user Windows installer (`.exe`) from the successful CI package. Default install must not require administrator elevation; include Start menu entry and optional desktop shortcut.
+- [ ] Provide a dedicated desktop window using the existing HTML dashboard in an embedded WebView2 shell. Normal use must not expose CMD/PowerShell windows or require the user to keep a terminal open.
+- [ ] Own the runtime and engine process lifecycle: single application instance; reopen focuses the existing window; the app can be closed/reopened safely; provide clear **Keep running** and **Exit and stop local engines** behavior (for example via a system-tray menu) so inference never stops unexpectedly or runs invisibly without user choice.
+- [ ] Add a clear first-run wizard, progress/error states, repair/retry actions, and a user-readable diagnostics export. Do not ask users to run developer tests.
+- [ ] Update and rollback the installed application atomically without replacing settings, engine binaries, or model weights. Protect against interruption and provide a safe recovery path.
+- [ ] Uninstall application binaries and shortcuts cleanly; preserve settings, downloaded engines, and models by default, with a separate explicit option to remove user data.
+- [ ] Validate install, launch, close/reopen, upgrade, forced interruption recovery, rollback, and uninstall on clean Windows 10/11 x64 virtual machines. Verify that user data survives an application update.
 
-## 0.4 — engine/model catalog
+**Windows milestone acceptance:** a new user downloads one installer from the project site, installs it, launches from Start, sees a desktop window without a console, installs a suitable CPU engine/model through the UI, produces a real chat response, and updates from the UI without manually moving ZIP files or editing JSON.
 
-The proposed separation and catalog fields are documented in [engine distribution strategy](engine-distribution.md).
+## Priority 2 — hardware-aware first run and compatibility reporting
 
-- [x] Built-in catalog for official llama.cpp CPU/CUDA release assets and a pinned Qwen2.5 1.5B Q4_K_M GGUF starter model
-- [x] License acknowledgement, HTTPS-only download, expected-size caps, SHA-256 validation, GGUF magic check and safe archive extraction
-- [x] Download progress, cancellation, job status and user-data installation paths
-- [ ] Resume interrupted downloads (current behavior cancels and discards partial files)
-- [ ] Preserve user model/config directories across application updates (separate update installer not implemented)
-- [x] First manual llama.cpp setup form, without silently executing downloaded scripts
-- [ ] Probe newly installed engine binary and run a real local model health/chat test before marking it fully tested
-- [ ] Automated hardware/backend detection and tested engine/model recommendations
+- [ ] Detect OS/architecture, CPU features, system RAM, available disk, GPU vendor/device, driver version, and VRAM where available. Keep detection local; do not upload machine data.
+- [ ] Expose evidence states as `detected`, `available`, `configured`, and `tested`.
+- [ ] Recommend an engine/backend/model based on explicit memory and runtime constraints. Offer a CPU fallback when acceleration is unavailable or not verified; never infer backend support from GPU presence alone.
+- [ ] Explain estimated download size, model memory needs, context-size tradeoffs, license, and the reason a recommendation is or is not suitable.
+- [ ] Record repeatable baseline profiles, including the project's low-hardware target and the referenced RTX 3060 6 GB / 16 GB RAM profile. A profile is a test record, not a universal guarantee.
 
-## 0.5 — audio and multimodal adapters
+## Priority 3 — extensible engine and model catalogue
 
-- [ ] Add `audio.cpp` as a separate process adapter; begin with ASR, then TTS
-- [ ] Evaluate `stable-diffusion.cpp`, ONNX Runtime, OpenCV/OCR and embedding/vector search
-- [ ] Add each adapter only with its own test fixtures, capability manifest, license record and hardware notes
+The metadata contract and distribution boundaries live in [engine distribution strategy](engine-distribution.md).
 
-## Later — integrations and unattended updates
+- [x] Separate runtime release, engine packages, and model weights; keep large models out of the runtime installer.
+- [x] Starter catalogue: official `llama.cpp` CPU/CUDA assets and a pinned Qwen2.5 1.5B Q4_K_M GGUF model, with license acknowledgement, size limits, HTTPS, SHA-256, safe extraction, progress, cancellation, and user-data installation paths.
+- [ ] Formalize a versioned engine adapter/catalogue schema with OS, architecture, backend, source/version, licence, hash/signature, dependencies, required RAM/VRAM, capabilities, known limits, and test evidence.
+- [ ] Run a real `llama-server` + GGUF CPU inference smoke test on Windows and one additional CPU environment; record the exact package/model and local report.
+- [ ] Run CUDA validation with GPU, driver, VRAM, model quantization, context and backend evidence. `--n-gpu-layers auto` alone is not proof of GPU inference.
+- [ ] Expand model choices with size/quantization and hardware guidance; recommend only combinations with evidence and keep “unverified” combinations clearly labelled.
+- [ ] Add engine families incrementally under the adapter contract: consider `stable-diffusion.cpp`, `audio.cpp`, ONNX Runtime, OpenCV/OCR and embeddings/vector search. Each needs its own licence review, catalogue entry, process/lifecycle tests, platform builds, real task smoke test, and documented hardware requirements before being marked supported.
+- [ ] Resume interrupted downloads and probe a newly installed engine/model before marking the combination tested.
 
-- [ ] OpenAI-compatible streaming endpoints and more task-specific APIs
-- [ ] Optional MCP adapter with a narrow, audited tool allowlist
-- [ ] Equivalent platform-native apply/recovery helpers and tests for Linux and macOS
-- [ ] Release artifact provenance/signing plan; SHA-256 checks against release metadata are integrity checks, not publisher signatures
-- [ ] Optional signed updater with staged download, signature/provenance verification, restart orchestration and rollback; no silent executable replacement before trust and recovery are independently verified
-- [ ] Linux/macOS distributable releases only after packaging and clean-machine smoke tests
+## Priority 4 — safe, understandable updates
 
+- [x] A successful `main` push builds/tests all four targets and updates the project website after package gates pass.
+- [x] The maintainer publishing flow waits for green `main` CI before creating an alpha tag; the tag workflow then gates GitHub Release publication on the same platform jobs.
+- [x] The dashboard checks release metadata at startup, offers a manual check, and verifies matching official release archives by size and SHA-256 before staging.
+- [x] Tagged portable Windows releases require explicit user confirmation and have backup, health-check, rollback, and interrupted-update recovery.
+- [ ] Move the Windows update flow to the installed-app location and provide a clear “Download update / Restart to update” experience with visible progress and a recovery message.
+- [ ] Add verified apply/recovery for Linux and macOS before showing one-click installation controls there.
+- [ ] Plan signed installers and release provenance/attestation. SHA-256 is an integrity check, not publisher authentication. Do not silently replace executables until trust, recovery, and update threat models are independently tested.
 
-### Platform CI policy
+## Priority 5 — cross-platform desktop parity
 
-Windows x64, Linux x64, macOS Intel x64 and macOS Apple Silicon arm64 are coordinated by one `pipeline.yml`. Pull requests build and test each target without packaging. On `main`, the four platform/architecture targets build, test and package in parallel; the Pages deployment is the final job and runs only after all four extracted package smoke tests pass. A `v*` tag publishes all four assets with a SHA-256 manifest after the same gates pass. The weekly scheduled run executes only the macOS compatibility matrix, avoiding repeated Windows dependency compilation when no source push occurred.
+- [ ] After the Windows installed application and update lifecycle pass clean-machine tests, provide native installation and app lifecycle for Linux and macOS.
+- [ ] Keep the same first-run, hardware guidance, engine/model catalogue, update status, and user-data preservation semantics across platforms.
+- [ ] Add audio, vision, embeddings, streaming chat, and optional MCP only after the desktop install, engine lifecycle, compatibility evidence and security boundaries remain stable.
 
+## Definition of done for user-facing claims
 
-## User-first delivery policy
-
-- [x] Provide a double-click/one-command launcher in each platform package and describe the user path on the project site.
-- [x] Give maintainers one stable root-level publishing command: import the prepared Git bundle preserving its exact commit SHA, push `main` without force, then delegate to the versioned release gate inside that commit to wait for the four-platform workflow, create the next alpha tag, and wait for the release workflow.
-- [x] Add an in-dashboard **Check for updates** action, visible status, startup check, and periodic/focus refresh.
-- [ ] Add tested platform-native apply/recovery helpers for Linux and macOS; until these pass, the UI must be explicit that those platforms require manual archive replacement.
-- [ ] After signed provenance/attestation and rollback threat-model tests, evaluate optional automatic download and one-click restart/install. Do not silently replace executables.
-
-- End users download versioned packages from the project site and start them with a platform launcher; they should not need Git, build tools or maintainer test scripts.
-- The dashboard checks for updates on launch, offers a manual **Check for updates** action, and refreshes while the dashboard is open. Downloads are size/SHA-256 verified before any installation action.
-- Main pushes are automatically built/tested and update the project site after all four package gates pass. The public binary download remains the latest versioned Release until a new `v*` tag passes the same gates; this prevents unreviewed commits from silently becoming end-user updates.
-- Windows tagged portable packages support user-confirmed apply/restart and rollback. Linux/macOS still require manual package replacement after in-app verification; equivalent apply/recovery is a product priority, not a user-side test command.
+- “Installer” means a tested installer on a clean supported OS, not just a ZIP archive.
+- “Desktop app” means a window users can open/close from the OS, with predictable runtime/process behavior and no required terminal.
+- “Supported engine/model/backend” means a repeatable real task test exists for the declared platform/hardware profile.
+- “Automatic update” means verified download, explicit or policy-defined user consent, safe apply/restart, rollback, and preserved user data; a release notification alone is not an updater.

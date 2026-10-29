@@ -8,6 +8,8 @@ Project site: **https://azmisahin-ai.github.io/local-ai-runtime/** (available af
 
 This is an early C++20 alpha. It orchestrates existing model engines; it does not implement inference itself. The product name and API are still evolving.
 
+> **Product status:** `v0.1.0-alpha` is currently a portable archive with a local browser dashboard, not a conventional installed desktop application. The native Windows app window, per-user installer, console-free lifecycle, hardware-aware first-run wizard, and real-hardware compatibility guidance are prioritized in the [roadmap](docs/roadmap.md). Do not ask normal users to run developer smoke-test scripts.
+
 ## For users
 
 ### Downloads
@@ -16,7 +18,7 @@ Use the project site or [GitHub Releases](https://github.com/azmisahin-ai/local-
 
 The package includes the runtime, the web dashboard, an example configuration, a starter script, and the project license. It deliberately does not bundle inference engines, CUDA runtimes, or multi-gigabyte model weights. After launching the runtime, use **Managed Components** in the dashboard to download reviewed components on demand; each engine/model remains separate so versions and licenses can be tracked independently.
 
-- **Windows 10/11 x64:** extract the ZIP and double-click `Start-LocalAIRuntime.cmd`. The dashboard opens in your browser. If startup fails, the console stays open so you can read the message.
+- **Windows 10/11 x64 (portable alpha):** the current release is a ZIP, not an installer. Extract it and double-click `Start-LocalAIRuntime.cmd`; the dashboard opens in your browser. The launcher may expose a console during startup. A conventional installer and dedicated desktop window are not available yet; this is the highest-priority product milestone.
 - **Linux x64:** extract the TAR.GZ and run `./Start-LocalAIRuntime.sh`. A desktop session opens the dashboard automatically; on a headless/server session, open `http://127.0.0.1:8000` yourself. Press Ctrl+C in the terminal to stop the runtime.
 - **macOS Intel / Apple Silicon:** extract the matching architecture archive and double-click `Start-LocalAIRuntime.command`. The terminal stays open and the dashboard opens in your browser. This early CLI preview is not Developer ID signed or notarized, so Gatekeeper/security prompts may occur. Only open software obtained from the official project release.
 

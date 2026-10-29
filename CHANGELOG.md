@@ -4,6 +4,10 @@ This project follows a lightweight Keep a Changelog structure. GitHub Release no
 
 ## Unreleased
 
+- Fix the Windows PowerShell 5.1 publisher regression smoke test so the expected non-zero exit from its fake Git command does not leak into the GitHub Actions step result after every assertion passes.
+- Reorder the product roadmap around an actual installed desktop app: Windows installer/app shell and predictable process lifecycle first, then local hardware detection and evidence-backed engine/model recommendations, then expansion of engine families and cross-platform installer parity.
+- Make the website and README explicit that `v0.1.0-alpha` is a portable archive/browser-dashboard preview, not yet a conventional installed desktop application.
+
 - Fix the stable publisher and release-gate scripts for Windows PowerShell 5.1: successful Git commands that report diagnostics on stderr no longer abort the publishing flow; actual Git exit codes remain enforced, and missing optional Git identity settings are handled safely.
 - Add a Windows PowerShell 5.1 CI regression test for successful native Git stderr output, non-zero exit-code failures, and optional missing Git identity settings.
 - Add one stable maintainer publishing command that imports the prepared Git bundle with its original commit SHA, pushes `main` without force, waits for the four-platform CI and Pages job, then auto-increments the alpha release tag and waits for release CI.

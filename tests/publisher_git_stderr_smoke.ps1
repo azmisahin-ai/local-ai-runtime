@@ -67,3 +67,9 @@ exit /b 17
     if ($null -eq $originalFakeExit) { Remove-Item Env:\LAR_FAKE_GIT_EXIT -ErrorAction SilentlyContinue } else { $env:LAR_FAKE_GIT_EXIT = $originalFakeExit }
     if (Test-Path -LiteralPath $temporaryRoot) { Remove-Item -LiteralPath $temporaryRoot -Recurse -Force -ErrorAction SilentlyContinue }
 }
+
+# The smoke test intentionally invokes a fake native command that exits 17 to
+# verify error handling. GitHub Actions' Windows PowerShell wrapper checks the
+# automatic LASTEXITCODE variable after the script returns, so clear that
+# expected fixture exit only after every assertion and cleanup succeeded.
+$global:LASTEXITCODE = 0
