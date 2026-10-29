@@ -1,4 +1,5 @@
 #include "lar/config.hpp"
+#include "lar/catalog.hpp"
 #include "lar/diagnostics.hpp"
 #include "lar/downloads.hpp"
 #include "lar/process.hpp"
@@ -38,6 +39,41 @@ int main() {
                 "older staged release must not be applied");
         require(!lar::DownloadManager::is_newer_release_tag("latest", "0.1.0-alpha"),
                 "malformed release tag must be rejected");
+
+        stage("official CUDA catalog asset pairing");
+        require(lar::catalog::is_supported_engine_archive(
+                    "llama-b11982-bin-win-cuda-12.4-x64.zip", "cuda12", "windows", "x64"),
+                "the official Windows CUDA 12 llama-server archive should match");
+        require(!lar::catalog::is_supported_engine_archive(
+                    "cudart-llama-bin-win-cuda-12.4-x64.zip", "cuda12", "windows", "x64"),
+                "the CUDA dependency DLL archive must not be mistaken for the server binary");
+        require(lar::catalog::is_supported_cuda_runtime_archive(
+                    "cudart-llama-bin-win-cuda-12.4-x64.zip", "cuda12", "windows", "x64"),
+                "the official Windows CUDA 12 runtime DLL archive should match as a dependency");
+        require(!lar::catalog::is_supported_cuda_runtime_archive(
+                    "cudart-llama-bin-win-cuda-13.4-x64.zip", "cuda12", "windows", "x64"),
+                "CUDA 13 runtime DLLs must not be paired with a CUDA 12 server");
+        require(lar::catalog::is_supported_engine_archive(
+                    "llama-b11982-bin-win-cuda-13.4-x64.zip", "cuda13", "windows", "x64"),
+                "the official Windows CUDA 13 llama-server archive should match");
+        require(lar::catalog::is_supported_cuda_runtime_archive(
+                    "cudart-llama-bin-win-cuda-13.4-x64.zip", "cuda13", "windows", "x64"),
+                "the official Windows CUDA 13 runtime DLL archive should match");
+        require(lar::catalog::is_supported_engine_archive(
+                    "llama-b11962-bin-ubuntu-cuda-12.8-x64.tar.gz", "cuda12", "linux", "x64"),
+                "the official Linux CUDA 12 server archive should match");
+        require(lar::catalog::is_supported_cuda_runtime_archive(
+                    "cudart-llama-b11962-bin-ubuntu-cuda-12.8-x64.tar.gz", "cuda12", "linux", "x64"),
+                "the matching Linux CUDA 12 runtime archive should match");
+        require(lar::catalog::is_supported_engine_archive(
+                    "llama-b11962-bin-ubuntu-cuda-13.4-x64.tar.gz", "cuda13", "linux", "x64"),
+                "the official Linux CUDA 13 server archive should match");
+        require(lar::catalog::is_supported_cuda_runtime_archive(
+                    "cudart-llama-b11962-bin-ubuntu-cuda-13.4-x64.tar.gz", "cuda13", "linux", "x64"),
+                "the matching Linux CUDA 13 runtime archive should match");
+        require(!lar::catalog::is_supported_engine_archive(
+                    "llama-b11982-bin-win-cuda-12.4-x64.zip", "cuda12", "windows", "arm64"),
+                "an x64 CUDA package must not be offered to ARM64");
 
         stage("archive path safety");
         // Engine archives are untrusted inputs; extraction must reject paths that

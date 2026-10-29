@@ -25,7 +25,7 @@
     },
     {
       "name": "Managed engine and model downloads",
-      "description": "The dashboard offers a built-in reviewed catalog for official llama.cpp CPU/CUDA release assets and a pinned Qwen2.5 1.5B GGUF starter model. Downloads require upstream license acknowledgement, HTTPS, size limits, SHA-256 verification, safe archive extraction, progress and cancellation. Real network installation is not exercised in CI.",
+      "description": "The reviewed starter catalog contains the official llama.cpp CPU package, CUDA 12/13 server packages with their matching official CUDA runtime/DLL dependencies, and a pinned Qwen2.5 1.5B GGUF starter model. Each asset is SHA-256 verified and safely extracted before activation; real GPU task validation remains a separate evidence gate.",
       "status": "preview"
     },
     {
@@ -65,7 +65,7 @@
     },
     {
       "name": "Windows desktop installer",
-      "description": "Preview per-user Windows setup (.exe) with a dedicated desktop window hosting the existing HTML dashboard, Start menu and optional desktop shortcuts, a tray menu, console-free runtime startup, and uninstall that preserves user data. The alpha installer is not code-signed; installed-app updates currently use the complete setup installer rather than applying the portable ZIP.",
+      "description": "Published in the v0.1.2-alpha preview: per-user Windows setup (.exe), dedicated WebView2 desktop window, Start menu and optional desktop shortcuts, tray controls, console-free runtime startup, and uninstall that preserves user data. The installer is not code-signed yet, so Windows may show an unknown-publisher/SmartScreen warning. Installed-app updates currently use the complete setup installer; in-app atomic updating is planned.",
       "status": "preview"
     },
     {
@@ -75,7 +75,7 @@
     },
     {
       "name": "Portable package launch (alpha)",
-      "description": "The current alpha ships portable archives and opens a local browser dashboard using a platform launcher. It is not yet a conventional installed desktop application; a Windows per-user installer, dedicated window and console-free lifecycle are the next product milestone.",
+      "description": "Portable archives remain available as a fallback and for Linux/macOS preview builds. Windows also has a per-user desktop setup installer in the v0.1.2-alpha release. Portable launchers are compatibility paths, not the preferred Windows user experience.",
       "status": "preview"
     },
     {
@@ -99,6 +99,7 @@
     "The built-in component downloader accepts only reviewed catalog IDs, uses HTTPS-only transfer, validates expected size and SHA-256, checks the GGUF header, and rejects archive traversal/link/special-file entries. It does not accept arbitrary URLs.",
     "Engine release SHA-256 metadata is fetched from the official upstream GitHub API; this verifies integrity against that metadata but is not a cryptographic signature or independent publisher attestation.",
     "No usage telemetry or silent executable replacement is enabled. Update checks request public release metadata from GitHub. Windows portable-release updates require user confirmation and a verified local rollback copy; Linux/macOS currently require manual application archive replacement after verification. SHA-256 checks do not replace publisher signatures or provenance attestation.",
-    "The API has no authentication. Do not expose the runtime or setup API to a LAN or public internet."
+    "The API has no authentication. Do not expose the runtime or setup API to a LAN or public internet.",
+    "The Windows alpha installer is not code-signed and may trigger an unknown-publisher/SmartScreen warning. Do not bypass Windows protection to disguise this; release signing requires a real publisher certificate, secure CI key custody and timestamping."
   ]
 }

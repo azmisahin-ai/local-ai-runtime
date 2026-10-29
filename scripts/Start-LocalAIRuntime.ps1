@@ -151,6 +151,19 @@ try {
     }
 
     function Get-ProcessDetails([int]$ProcessId) {
+        # TCP owner lookups can occasionally return PID 0 or the Windows System
+        # process for kernel-managed/reserved listeners. These values are not
+        # actionable user processes and must never be presented as "System Idle
+        # Process" or sent to taskkill. Preserve them as explicit diagnostic data.
+        if ($ProcessId -eq 0) {
+            return [pscustomobject]@{ Id = 0; Name = 'Windows reported no user-process owner (PID 0)'; ExecutablePath = '' }
+        }
+        if ($ProcessId -eq 4) {
+            return [pscustomobject]@{ Id = 4; Name = 'Windows System (kernel-owned listener)'; ExecutablePath = '' }
+        }
+        if ($ProcessId -lt 0) {
+            return [pscustomobject]@{ Id = $ProcessId; Name = 'Unknown Windows listener owner'; ExecutablePath = '' }
+        }
         try {
             $processInfo = Get-CimInstance Win32_Process -Filter "ProcessId = $ProcessId" -ErrorAction Stop
             if ($processInfo) {
@@ -174,6 +187,41 @@ try {
             Start-Sleep -Milliseconds 250
         }
         return $false
+    }
+
+    function Find-AvailableRuntimePort([int]$StartingPort) {
+        $enginePorts = @()
+        foreach ($engine in @($config.engines)) {
+            $engineArgs = @($engine.args)
+            for ($index = 0; $index -lt ($engineArgs.Count - 1); $index++) {
+                if ([string]$engineArgs[$index] -eq '--port') {
+                    $enginePort = 0
+                    if ([int]::TryParse([string]$engineArgs[$index + 1], [ref]$enginePort)) {
+                        $enginePorts += $enginePort
+                    }
+                }
+            }
+        }
+
+        # Keep the familiar 8000-series when the configured port is unavailable.
+        # Start just above the configured port when possible, then wrap to 8000.
+        # Exclude known engine ports and prove a candidate can bind before saving it.
+        $firstCandidate = if ($StartingPort -ge 8000 -and $StartingPort -lt 8999) { $StartingPort + 1 } else { 8000 }
+        $candidatePorts = @()
+        for ($candidate = $firstCandidate; $candidate -le 8999; $candidate++) { $candidatePorts += $candidate }
+        for ($candidate = 8000; $candidate -lt $firstCandidate; $candidate++) { $candidatePorts += $candidate }
+        foreach ($candidate in $candidatePorts) {
+            if ($enginePorts -contains $candidate) { continue }
+            try {
+                if (@(Get-NetTCPConnection -LocalPort $candidate -State Listen -ErrorAction SilentlyContinue).Count -gt 0) { continue }
+                $probe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $candidate)
+                try { $probe.Start(); return $candidate }
+                finally { try { $probe.Stop() } catch { } }
+            } catch {
+                # Continue scanning when the candidate is reserved or unavailable.
+            }
+        }
+        return 0
     }
 
     function Stop-ConfirmedRuntimeOwners($Owners) {
@@ -257,7 +305,35 @@ try {
                 "PID $($_.Id): $($_.Name) ($location)"
             }) -join '; '
             $healthMessage = if ($health) { 'the port responds to /health but the owner is not the Local AI Runtime executable' } else { "$baseUrl/health is not responding" }
-            throw "Port $port is in use and $healthMessage. Owner: $detailsText. Local AI Runtime will not stop another program. Stop that program or change server.port in '$configPath'."
+            $unresolvedOwner = @($listenerDetails | Where-Object { $_.Id -le 0 -or $_.Id -eq 4 }).Count -gt 0
+            if ($unresolvedOwner) {
+                # PID 0 and PID 4 are not stoppable application processes. When
+                # Windows reports one of these owners without a healthy runtime,
+                # choose a free loopback port instead of telling a regular user
+                # to edit JSON or risking termination of a system process.
+                $replacementPort = Find-AvailableRuntimePort $port
+                if ($replacementPort -le 0) {
+                    throw "Port $port is reported as occupied but Windows did not provide a stoppable application owner ($detailsText); $healthMessage. Nothing was terminated and no free port was found in 1024-8999. Restart Windows or ask support to inspect reserved TCP port ranges."
+                }
+                $oldPort = $port
+                $config.server.port = $replacementPort
+                $temporaryConfig = "$configPath.port-$PID.tmp"
+                try {
+                    $serializedConfig = ConvertTo-Json -InputObject $config -Depth 100
+                    [System.IO.File]::WriteAllText($temporaryConfig, $serializedConfig + [Environment]::NewLine, (New-Object System.Text.UTF8Encoding($false)))
+                    Move-Item -LiteralPath $temporaryConfig -Destination $configPath -Force
+                } catch {
+                    Remove-Item -LiteralPath $temporaryConfig -Force -ErrorAction SilentlyContinue
+                    throw "Windows reported an unresolved owner on port $oldPort, and the runtime could not save a safe replacement port: $($_.Exception.Message). No process was stopped."
+                }
+                $port = $replacementPort
+                $baseUrl = "http://127.0.0.1:$port"
+                $message = "launcher.port_reassigned old_port=$oldPort new_port=$port reason=unresolved_windows_listener_owner"
+                try { Add-Content -LiteralPath $diagnosticLogPath -Value ("$(Get-Date -Format o) WARN $message") -Encoding UTF8 } catch { }
+                Write-Host "Windows did not identify a safe process owner for port $oldPort. Local AI Runtime will use free local port $port instead; no other process was stopped." -ForegroundColor Yellow
+            } else {
+                throw "Port $port is in use and $healthMessage. Owner: $detailsText. Local AI Runtime will not stop another program. Stop that program or change server.port in '$configPath'."
+            }
         }
     }
 

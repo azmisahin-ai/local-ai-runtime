@@ -96,3 +96,14 @@ This project follows a lightweight Keep a Changelog structure. GitHub Release no
 ### Security
 - Keep the runtime API bound to loopback by default.
 - Release binaries are never replaced silently. Tagged portable Windows releases require explicit confirmation and perform a backup plus health-checked rollback; development builds and Linux/macOS remain stage-only. SHA-256 integrity checks are not a substitute for signed release provenance.
+- Separate task workspaces from installable engines/models/dependencies in the dashboard; planned vision, image, speech/audio, music/SFX, video, knowledge/search and automation areas are clearly marked as not yet available.
+- Fix llama.cpp CUDA catalog matching: don't mistake `cudart` runtime archives for server binaries; resolve the matching server and official CUDA runtime archive from the same release, verify both SHA-256 digests, safely extract and merge them as one engine install, and show aggregate progress.
+- Add catalog regression tests for official Windows/Linux CUDA server/runtime filename pairs and reject mismatched CUDA generations/architectures.
+- When Windows reports an occupied runtime port with unresolved PID 0 or kernel-owned PID 4, do not label it System Idle Process or stop a process; persist a verified free replacement port and explain the automatic change to the user.
+- Update catalog architecture and roadmap for task workspaces, dependencies, hardware-aware compatibility evidence, real CUDA validation, signed installer requirements, and a later atomic in-app installer update.
+
+- Pair official llama.cpp CUDA server packages with their matching runtime/DLL archives and verify both SHA-256 digests before activation.
+- Report both CUDA asset names, sizes and SHA-256 values in local diagnostics; use combined download progress and conservative disk-space estimates.
+- Organize the dashboard into task workspaces separate from engine/model catalog items, with planned modalities explicitly labelled as not implemented.
+- Improve Windows launcher behavior when a listener is reported as unresolved PID 0/PID 4: select and persist a safe loopback port instead of misleadingly naming System Idle Process or stopping a process.
+- Reorganize the roadmap around installed desktop UX, hardware evidence, versioned catalog metadata, safe updates and cross-platform parity.

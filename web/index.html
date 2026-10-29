@@ -29,6 +29,23 @@
       <a href="#chat-panel">Chat with your model</a>
     </nav>
 
+    <section id="workspace-panel" class="workspace-panel" aria-labelledby="workspace-title">
+      <div class="workspace-heading"><div><p class="eyebrow">AI WORKSPACES</p><h2 id="workspace-title">Choose what you want to create</h2></div><p class="hint">Workspaces describe tasks. The component library below supplies the engines and models that power them.</p></div>
+      <div class="workspace-grid">
+        <a class="workspace-card available" href="#chat-panel" aria-label="Language and chat, available">
+          <span class="workspace-icon" aria-hidden="true">Aa</span><span class="workspace-copy"><strong>Language &amp; chat</strong><small>Local chat and text tasks</small></span><span class="workspace-state available-state">Available</span>
+        </a>
+        <article class="workspace-card planned"><span class="workspace-icon" aria-hidden="true">◈</span><span class="workspace-copy"><strong>Image generation</strong><small>Text-to-image and image editing</small></span><span class="workspace-state">Planned</span></article>
+        <article class="workspace-card planned"><span class="workspace-icon" aria-hidden="true">▧</span><span class="workspace-copy"><strong>Vision &amp; OCR</strong><small>Image understanding and text extraction</small></span><span class="workspace-state">Planned</span></article>
+        <article class="workspace-card planned"><span class="workspace-icon" aria-hidden="true">≋</span><span class="workspace-copy"><strong>Speech &amp; audio</strong><small>Transcription, speech recognition and voice</small></span><span class="workspace-state">Planned</span></article>
+        <article class="workspace-card planned"><span class="workspace-icon" aria-hidden="true">♫</span><span class="workspace-copy"><strong>Music &amp; SFX</strong><small>Music, loops and sound effects</small></span><span class="workspace-state">Planned</span></article>
+        <article class="workspace-card planned"><span class="workspace-icon" aria-hidden="true">▤</span><span class="workspace-copy"><strong>Video</strong><small>Video understanding and generation</small></span><span class="workspace-state">Planned</span></article>
+        <article class="workspace-card planned"><span class="workspace-icon" aria-hidden="true">⌕</span><span class="workspace-copy"><strong>Knowledge &amp; search</strong><small>Embeddings, reranking and local retrieval</small></span><span class="workspace-state">Planned</span></article>
+        <article class="workspace-card planned"><span class="workspace-icon" aria-hidden="true">⌘</span><span class="workspace-copy"><strong>Automation &amp; tools</strong><small>Workflows and local integrations</small></span><span class="workspace-state">Planned</span></article>
+      </div>
+      <p class="hint workspace-footnote">Only Language &amp; chat is implemented in this alpha. Planned areas are shown to explain the product structure, not to imply that those features are already supported.</p>
+    </section>
+
     <section id="update-notice" class="update-notice" role="status" aria-live="polite" hidden>
       <div><p class="eyebrow">SOFTWARE UPDATE</p><h2 id="update-title">Checking for updates…</h2><p id="update-copy" class="hint"></p></div>
       <div class="update-actions">

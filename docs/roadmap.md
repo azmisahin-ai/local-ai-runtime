@@ -10,26 +10,28 @@ The runtime, engines, and models remain separate versioned components. The catal
 
 ## Distribution status
 
-- The earlier `v0.1.1-alpha` release contains **portable archives**. This source revision adds a Windows per-user setup installer; it is considered published only when a tagged CI run succeeds and the release includes `local-ai-runtime-windows-x64-setup.exe`. The [live Releases page](https://github.com/azmisahin-ai/local-ai-runtime/releases) is authoritative for the current download assets.
-- The new Windows shell hosts the existing dashboard in WebView2, starts the C++ runtime without a console window, and uses a tray menu for reopen, update check, and explicit graceful exit. The installer/payload must still pass tagged Windows CI and a clean Windows 10/11 manual acceptance run before the site calls it ready for general users.
-- The managed catalogue currently starts with official `llama.cpp` CPU/CUDA assets and one pinned Qwen2.5 1.5B GGUF model. It is not yet a catalogue of every relevant C/C++ engine or model.
+- The `v0.1.2-alpha` milestone introduced the Windows per-user setup installer `local-ai-runtime-windows-x64-setup.exe`; tagged CI passed the install/payload/uninstall checks. A clean Windows 10/11 user-session acceptance test, publisher signing, and installed-app update flow remain outstanding. Always check the [live Releases page](https://github.com/azmisahin-ai/local-ai-runtime/releases) for the current assets.
+- The new Windows shell hosts the existing dashboard in WebView2, starts the C++ runtime without a console window, and uses a tray menu for reopen, update check, and explicit graceful exit. The installer/payload passed tagged Windows CI; the site may offer it as an alpha, but it must not be described as a mature general-availability product until clean Windows 10/11 manual acceptance is complete.
+- The managed catalogue currently starts with official `llama.cpp` CPU/CUDA packages and one pinned Qwen2.5 1.5B GGUF model. The catalog pairs the CUDA server archive with its official companion runtime/DLL archive, verifies both, and records their hashes; physical GPU inference remains unverified until a real hardware run. It is not yet a catalogue of every relevant C/C++ engine or model.
+- The dashboard now distinguishes workspaces (tasks) from the component catalog (engines, models and dependencies). See [product information architecture](product-information-architecture.md) for the planned domains and metadata contract.
 - Hardware detection and evidence-backed model recommendations are not implemented yet.
 - Hosted CI uses a fake OpenAI-compatible engine and intentionally does not download the real engine or the ~1.12 GB starter model. Real CPU/GPU inference therefore requires a separate maintainer validation run.
 - Windows tagged portable packages support user-confirmed update apply/restart with checksum-verified backup and rollback. Linux/macOS currently verify and stage an update but require manual archive replacement.
 
-A release is a user-ready desktop install only when its tagged CI includes the setup executable and has passed install/payload checks. Until then, the website must continue to offer the portable fallback and must not describe the WinForms shell as publicly available. Clean Windows 10/11 user-session acceptance is still required before calling the desktop experience mature.
+The website can offer the Windows setup executable as an alpha because its tagged CI passes install/payload/uninstall checks; the portable ZIP remains a fallback. Clean Windows 10/11 user-session acceptance is still required before calling the desktop experience mature.
 
 ## Priority 0 — keep the release pipeline green
 
-- [x] Fix the Windows PowerShell 5.1 publisher smoke-test regression and confirm the canonical four-target pipeline passes. `d97b8ee` is the last confirmed green publisher/roadmap baseline.
+- [x] Fix the Windows PowerShell 5.1 publisher smoke-test regression and confirm the canonical four-target pipeline passes. `f841c80` was the confirmed green publisher/installer baseline when this roadmap update began (`v0.1.2-alpha`).
 - [x] Keep one maintainer command and one stable bundle filename (`local-ai-runtime-update.bundle`). A push uses a normal fast-forward, never force-pushes, and stops at a failed CI gate.
-- [ ] Validate the new desktop shell and per-user setup installer on Windows CI before creating its next alpha tag. A failed main build must never create a release tag.
+- [x] Validate the desktop shell and per-user setup installer on Windows CI, including silent install, payload verification and uninstall. `v0.1.2-alpha` is published from the first green installer pipeline.
+- [ ] Keep publisher/installer tests green on every main push. A failed main build must never create a release tag.
 
 ## Priority 1 — real Windows desktop installation (first product milestone)
 
-- [ ] Validate the new self-contained WebView2/WinForms desktop host and Inno Setup per-user installer through Windows CI; include Start menu entry and optional desktop shortcut. The workflow is prepared to package, install, verify, and uninstall it, but this checkbox stays open until the new workflow run succeeds.
+- [x] Build the self-contained WebView2/WinForms desktop host and Inno Setup per-user installer; Windows CI packages, installs, verifies and uninstalls it, including the Start menu entry and optional desktop shortcut.
+- [ ] Complete clean Windows 10/11 manual acceptance for first-run, WebView2 availability, user-session lifecycle, upgrade, rollback and uninstall before calling the installed app mature.
 - [ ] Validate console-free launcher invocation, single-instance activation, tray reopen/update actions, close-to-tray behavior, explicit graceful exit, and isolated user-data storage in Windows CI/manual acceptance.
-- [ ] Finish a dedicated Windows desktop launch smoke test and manual clean-machine acceptance on Windows 10/11. Confirm tray lifetime, upgrade, rollback, and uninstall behavior on actual user sessions.
 - [ ] Add a clear first-run wizard, progress/error states, repair/retry actions, and a user-readable diagnostics export. Do not ask users to run developer tests.
 - [ ] Update the entire installed desktop application (shell + runtime) atomically, with rollback and interruption recovery, without replacing settings, engine binaries, or model weights. Until that exists, installed builds must use the full setup installer; the portable ZIP apply action is disabled for desktop-shell installs.
 - [x] Make the installer/uninstaller keep mutable user data outside the application directory and preserve it by default.
@@ -52,11 +54,12 @@ The metadata contract and distribution boundaries live in [engine distribution s
 
 - [x] Separate runtime release, engine packages, and model weights; keep large models out of the runtime installer.
 - [x] Starter catalogue: official `llama.cpp` CPU/CUDA assets and a pinned Qwen2.5 1.5B Q4_K_M GGUF model, with license acknowledgement, size limits, HTTPS, SHA-256, safe extraction, progress, cancellation, and user-data installation paths.
-- [ ] Formalize a versioned engine adapter/catalogue schema with OS, architecture, backend, source/version, licence, hash/signature, dependencies, required RAM/VRAM, capabilities, known limits, and test evidence.
+- [ ] Formalize a versioned engine adapter/catalogue schema with OS, architecture, backend, source/version, licence, hash/signature, dependencies, required RAM/VRAM, capabilities, known limits, and test evidence. Use [product information architecture](product-information-architecture.md) as the contract.
 - [ ] Run a real `llama-server` + GGUF CPU inference smoke test on Windows and one additional CPU environment; record the exact package/model and local report.
-- [ ] Run CUDA validation with GPU, driver, VRAM, model quantization, context and backend evidence. `--n-gpu-layers auto` alone is not proof of GPU inference.
+- [x] Implement exact official CUDA server + companion runtime asset selection, SHA-256 verification, safe extraction/merge, aggregate progress, conservative free-space checks, diagnostic asset hashes, and regression coverage for Windows/Linux x64 asset naming. The real GPU task test remains a separate gate.
+- [ ] Run CUDA validation with a real NVIDIA GPU, driver, VRAM, model quantization, context and backend evidence. `--n-gpu-layers auto` alone is not proof of GPU inference.
 - [ ] Expand model choices with size/quantization and hardware guidance; recommend only combinations with evidence and keep “unverified” combinations clearly labelled.
-- [ ] Add engine families incrementally under the adapter contract: consider `stable-diffusion.cpp`, `audio.cpp`, ONNX Runtime, OpenCV/OCR and embeddings/vector search. Each needs its own licence review, catalogue entry, process/lifecycle tests, platform builds, real task smoke test, and documented hardware requirements before being marked supported.
+- [ ] Add engine families incrementally under the adapter contract: consider `stable-diffusion.cpp` for image generation, `whisper.cpp`/`sherpa-onnx` for speech, OpenCV/OCR and embeddings/reranking for knowledge workflows. Evaluate music/SFX and video runtimes separately. Each needs its own licence review, catalog metadata, process/lifecycle tests, platform builds, real task smoke test, and documented hardware requirements before being marked supported.
 - [ ] Resume interrupted downloads and probe a newly installed engine/model before marking the combination tested.
 
 ## Priority 4 — safe, understandable updates
@@ -67,7 +70,8 @@ The metadata contract and distribution boundaries live in [engine distribution s
 - [x] Tagged portable Windows releases require explicit user confirmation and have backup, health-check, rollback, and interrupted-update recovery.
 - [ ] Move the Windows update flow to the installed-app location and provide a clear “Download update / Restart to update” experience with visible progress and a recovery message.
 - [ ] Add verified apply/recovery for Linux and macOS before showing one-click installation controls there.
-- [ ] Plan signed installers and release provenance/attestation. SHA-256 is an integrity check, not publisher authentication. Do not silently replace executables until trust, recovery, and update threat models are independently tested.
+- [ ] Sign the Windows setup executable with a real publisher certificate and timestamp it; configure secure CI signing and key custody. An unsigned alpha may trigger Windows SmartScreen/unknown-publisher warnings; no code change can honestly remove that warning.
+- [ ] Plan release provenance/attestation. SHA-256 is an integrity check, not publisher authentication. Do not silently replace executables until trust, recovery, and update threat models are independently tested.
 
 ## Priority 5 — cross-platform desktop parity
 

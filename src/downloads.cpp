@@ -1,4 +1,5 @@
 #include "lar/downloads.hpp"
+#include "lar/catalog.hpp"
 #include "lar/diagnostics.hpp"
 
 #include <archive.h>
@@ -311,10 +312,15 @@ bool archive_asset_extension(const std::string& name) {
         (name.size() >= 4 && name.substr(name.size() - 4) == ".tgz"));
 }
 
-bool is_supported_engine_asset_name(const std::string& raw_name, const std::string& variant) {
+bool is_supported_engine_asset_name_for_host(const std::string& raw_name, const std::string& variant,
+                                             const std::string& os, const std::string& architecture) {
     const auto name = lower_ascii(raw_name);
-    if (!archive_asset_extension(name) || contains(name, "debug") || contains(name, "source")) return false;
-    const auto architecture = host_architecture();
+    // The upstream CUDA runtime/DLL archives intentionally share architecture
+    // and backend tokens with the server binaries. Never treat those as a
+    // standalone llama-server package.
+    if (name.rfind("cudart-", 0) == 0 || !archive_asset_extension(name) ||
+        contains(name, "debug") || contains(name, "source")) return false;
+
     if (architecture == "x64") {
         if (!contains(name, "x64") || contains(name, "arm64") || contains(name, "aarch64") || contains(name, "s390x")) return false;
     } else if (architecture == "arm64") {
@@ -322,12 +328,13 @@ bool is_supported_engine_asset_name(const std::string& raw_name, const std::stri
     } else {
         return false;
     }
-    const auto os = host_os();
+
     if (os == "windows") {
         if (!contains(name, "win")) return false;
         if (variant == "cpu") return contains(name, "cpu") && !contains(name, "cuda") && !contains(name, "vulkan") && !contains(name, "rocm");
-        if (variant == "cuda12") return contains(name, "cuda") && (contains(name, "12.4") || contains(name, "cuda-12") || contains(name, "cuda12"));
-        if (variant == "cuda13") return contains(name, "cuda") && (contains(name, "13.4") || contains(name, "cuda-13") || contains(name, "cuda13"));
+        if (architecture != "x64") return false;
+        if (variant == "cuda12") return contains(name, "-bin-win-cuda-12.4-x64.zip");
+        if (variant == "cuda13") return contains(name, "-bin-win-cuda-13.4-x64.zip");
         return false;
     }
     if (os == "linux") {
@@ -336,8 +343,9 @@ bool is_supported_engine_asset_name(const std::string& raw_name, const std::stri
             return !contains(name, "cuda") && !contains(name, "vulkan") && !contains(name, "rocm") &&
                    !contains(name, "openvino") && !contains(name, "sycl") && !contains(name, "metal");
         }
-        if (variant == "cuda12") return contains(name, "cuda") && (contains(name, "12.8") || contains(name, "cuda-12") || contains(name, "cuda12"));
-        if (variant == "cuda13") return contains(name, "cuda") && (contains(name, "13.4") || contains(name, "cuda-13") || contains(name, "cuda13"));
+        if (architecture != "x64") return false;
+        if (variant == "cuda12") return contains(name, "-cuda-12.8-x64.tar.gz");
+        if (variant == "cuda13") return contains(name, "-cuda-13.4-x64.tar.gz");
         return false;
     }
     if (os == "macos") {
@@ -349,12 +357,70 @@ bool is_supported_engine_asset_name(const std::string& raw_name, const std::stri
     return false;
 }
 
-ReleaseAsset resolve_engine_asset(const std::string& variant) {
-    // GitHub's /releases/latest endpoint intentionally skips prereleases. Some
-    // llama.cpp stable tags publish source archives only, while the matching
-    // prebuilt Windows/Linux packages are attached to official bNNNNN builds.
-    // Scan recent releases, prefer the newest stable asset, and fall back to an
-    // official prerelease only when no stable release has a compatible binary.
+bool is_supported_cuda_runtime_asset_name_for_host(const std::string& raw_name, const std::string& variant,
+                                                  const std::string& os, const std::string& architecture) {
+    const auto name = lower_ascii(raw_name);
+    if (architecture != "x64" || name.rfind("cudart-llama-", 0) != 0 ||
+        !archive_asset_extension(name) || contains(name, "debug") || contains(name, "source")) return false;
+    if (os == "windows") {
+        if (variant == "cuda12") return contains(name, "-bin-win-cuda-12.4-x64.zip");
+        if (variant == "cuda13") return contains(name, "-bin-win-cuda-13.4-x64.zip");
+    } else if (os == "linux") {
+        if (variant == "cuda12") return contains(name, "-bin-ubuntu-cuda-12.8-x64.tar.gz") || contains(name, "-bin-linux-cuda-12.8-x64.tar.gz");
+        if (variant == "cuda13") return contains(name, "-bin-ubuntu-cuda-13.4-x64.tar.gz") || contains(name, "-bin-linux-cuda-13.4-x64.tar.gz");
+    }
+    return false;
+}
+
+struct ResolvedEngineAssets {
+    ReleaseAsset engine;
+    std::optional<ReleaseAsset> cuda_runtime;
+    std::uint64_t total_size() const noexcept {
+        return engine.size + (cuda_runtime ? cuda_runtime->size : 0U);
+    }
+};
+
+std::optional<ReleaseAsset> verified_release_asset(const pt::ptree& node, const std::string& tag, bool prerelease) {
+    const auto name = node.get<std::string>("name", "");
+    const auto url = node.get<std::string>("browser_download_url", "");
+    if (url.rfind(kGitHubAssetPrefix, 0) != 0) {
+        throw std::runtime_error("The selected llama.cpp asset URL is outside the official GitHub release namespace.");
+    }
+    auto digest = node.get<std::string>("digest", "");
+    if (digest.rfind("sha256:", 0) == 0) digest = digest.substr(7);
+    if (!is_hex_digest(digest)) return std::nullopt;
+    const auto size = node.get<std::uint64_t>("size", 0);
+    if (size == 0 || size > kMaximumReleaseAssetBytes) return std::nullopt;
+    return ReleaseAsset{tag, name, url, lower_ascii(digest), size, prerelease};
+}
+
+std::optional<ReleaseAsset> choose_cuda_runtime_asset(std::vector<ReleaseAsset> candidates,
+                                                      const std::string& tag,
+                                                      const std::string& variant,
+                                                      const std::string& os) {
+    if (candidates.empty()) return std::nullopt;
+    // Windows publishes a stable, untagged companion filename. Linux companions
+    // are tied to the same bNNNNN release as the matching server archive.
+    const auto expected_suffix = os == "windows"
+        ? (variant == "cuda12" ? std::string("cudart-llama-bin-win-cuda-12.4-x64.zip")
+                                : std::string("cudart-llama-bin-win-cuda-13.4-x64.zip"))
+        : std::string("cudart-llama-") + tag + (variant == "cuda12"
+              ? "-bin-ubuntu-cuda-12.8-x64.tar.gz" : "-bin-ubuntu-cuda-13.4-x64.tar.gz");
+    const auto exact = std::find_if(candidates.begin(), candidates.end(), [&](const ReleaseAsset& asset) {
+        return lower_ascii(asset.name) == expected_suffix;
+    });
+    if (exact != candidates.end()) return *exact;
+
+    // Some upstream release workflows may switch between tagged/untagged naming.
+    // Accept a unique verified candidate only; ambiguity must still fail closed.
+    if (candidates.size() == 1) return candidates.front();
+    throw std::runtime_error("More than one verified CUDA runtime archive matched release " + tag + "; refusing an ambiguous dependency selection.");
+}
+
+ResolvedEngineAssets resolve_engine_assets(const std::string& variant) {
+    // CUDA releases ship two distinct files: the llama-server binary and an
+    // official companion archive containing CUDA runtime DLLs/libraries. Both
+    // must be pinned to official release metadata and verified before activation.
     const auto body = fetch_https_text(kGitHubReleasesUrl, 12U * 1024U * 1024U);
     std::istringstream input(body);
     pt::ptree releases;
@@ -362,8 +428,11 @@ ReleaseAsset resolve_engine_asset(const std::string& variant) {
     catch (const std::exception& ex) { throw std::runtime_error(std::string("Could not parse the official llama.cpp releases metadata: ") + ex.what()); }
     if (releases.empty()) throw std::runtime_error("The official llama.cpp releases endpoint returned no releases.");
 
-    std::optional<ReleaseAsset> stable_match;
-    std::optional<ReleaseAsset> prerelease_match;
+    const auto os = host_os();
+    const auto architecture = host_architecture();
+    std::optional<ResolvedEngineAssets> stable_match;
+    std::optional<ResolvedEngineAssets> prerelease_match;
+    bool saw_engine_without_cuda_runtime = false;
     for (const auto& release_entry : releases) {
         const auto& release = release_entry.second;
         if (release.get<bool>("draft", false)) continue;
@@ -372,44 +441,44 @@ ReleaseAsset resolve_engine_asset(const std::string& variant) {
         if (tag.empty() || tag.size() > 64 ||
             !std::all_of(tag.begin(), tag.end(), [](unsigned char c) {
                 return std::isalnum(c) != 0 || c == '.' || c == '-' || c == 'v';
-            })) {
-            continue;
-        }
+            })) continue;
         const auto assets = release.get_child_optional("assets");
         if (!assets) continue;
 
-        std::optional<ReleaseAsset> release_match;
+        std::vector<ReleaseAsset> engine_candidates;
+        std::vector<ReleaseAsset> cuda_runtime_candidates;
         for (const auto& entry : *assets) {
             const auto& node = entry.second;
             const auto name = node.get<std::string>("name", "");
-            if (!is_supported_engine_asset_name(name, variant)) continue;
-            const auto url = node.get<std::string>("browser_download_url", "");
-            if (url.rfind(kGitHubAssetPrefix, 0) != 0) {
-                throw std::runtime_error("The selected llama.cpp asset URL is outside the official GitHub release namespace.");
+            if (catalog::is_supported_engine_archive(name, variant, os, architecture)) {
+                if (auto verified = verified_release_asset(node, tag, prerelease)) engine_candidates.push_back(std::move(*verified));
             }
-            auto digest = node.get<std::string>("digest", "");
-            if (digest.rfind("sha256:", 0) == 0) digest = digest.substr(7);
-            if (!is_hex_digest(digest)) {
-                // Do not downgrade verification: a matching but unchecksummed
-                // asset is not eligible for installation.
-                continue;
+            if (catalog::is_supported_cuda_runtime_archive(name, variant, os, architecture)) {
+                if (auto verified = verified_release_asset(node, tag, prerelease)) cuda_runtime_candidates.push_back(std::move(*verified));
             }
-            const auto size = node.get<std::uint64_t>("size", 0);
-            if (size == 0 || size > kMaximumReleaseAssetBytes) continue;
-            if (release_match) {
-                throw std::runtime_error("More than one verified upstream asset matched this platform/backend in release " + tag + "; refusing an ambiguous package selection.");
-            }
-            release_match = ReleaseAsset{tag, name, url, lower_ascii(digest), size, prerelease};
         }
-        if (!release_match) continue;
+        if (engine_candidates.empty()) continue;
+        if (engine_candidates.size() > 1) {
+            throw std::runtime_error("More than one verified llama-server archive matched this platform/backend in release " + tag + "; refusing an ambiguous package selection.");
+        }
+
+        ResolvedEngineAssets candidate{engine_candidates.front(), std::nullopt};
+        if (variant == "cuda12" || variant == "cuda13") {
+            candidate.cuda_runtime = choose_cuda_runtime_asset(std::move(cuda_runtime_candidates), tag, variant, os);
+            if (!candidate.cuda_runtime) {
+                saw_engine_without_cuda_runtime = true;
+                continue; // A server without its matching CUDA runtime is not installable.
+            }
+        }
         auto& preferred = prerelease ? prerelease_match : stable_match;
-        if (!preferred) preferred = std::move(release_match);
-        // GitHub lists releases newest-first. A stable match wins even if a newer
-        // prerelease match was encountered; otherwise first prerelease is newest.
+        if (!preferred) preferred = std::move(candidate);
     }
 
     if (stable_match) return *stable_match;
     if (prerelease_match) return *prerelease_match;
+    if (saw_engine_without_cuda_runtime) {
+        throw std::runtime_error("An official llama.cpp CUDA server archive was found, but no matching verified CUDA runtime/DLL archive was available for this release. Nothing was installed; refresh the catalog and try a newer official release later.");
+    }
     throw std::runtime_error("No verified official llama.cpp release archive with a published SHA-256 matches this OS, architecture and backend. Stable releases may not include prebuilt binaries; check the official releases page for supported packages.");
 }
 
@@ -424,7 +493,8 @@ bool has_gguf_header(const std::filesystem::path& path) {
 }
 
 void download_to_file(const std::string& url, const std::filesystem::path& destination,
-                      std::uint64_t expected_size, const std::shared_ptr<DownloadManager::Job>& job);
+                      std::uint64_t expected_size, const std::shared_ptr<DownloadManager::Job>& job,
+                      std::uint64_t progress_offset = 0, std::uint64_t aggregate_total = 0);
 
 bool path_is_within(const std::filesystem::path& root, const std::filesystem::path& candidate) {
     std::filesystem::path::const_iterator root_it;
@@ -581,7 +651,8 @@ DownloadJobSnapshot snapshot_job(const std::shared_ptr<DownloadManager::Job>& jo
 }
 
 void download_to_file(const std::string& url, const std::filesystem::path& destination,
-                      std::uint64_t expected_size, const std::shared_ptr<DownloadManager::Job>& job) {
+                      std::uint64_t expected_size, const std::shared_ptr<DownloadManager::Job>& job,
+                      std::uint64_t progress_offset, std::uint64_t aggregate_total) {
     if (url.rfind("https://", 0) != 0) throw std::runtime_error("Refusing to download a non-HTTPS URL.");
     ensure_curl_initialized();
     std::error_code fs_error;
@@ -600,10 +671,11 @@ void download_to_file(const std::string& url, const std::filesystem::path& desti
     context.output = &output;
     context.maximum_bytes = expected_size;
     context.cancelled = [job] { return job->cancel_requested.load(); };
-    context.progress = [job](std::uint64_t received, std::uint64_t total) {
+    context.progress = [job, progress_offset, aggregate_total](std::uint64_t received, std::uint64_t total) {
         mutate_job(job, [&](DownloadManager::Job& current) {
-            current.downloaded_bytes = received;
-            if (total > 0) current.total_bytes = total;
+            current.downloaded_bytes = progress_offset + received;
+            if (aggregate_total > 0) current.total_bytes = aggregate_total;
+            else if (total > 0) current.total_bytes = total;
         });
     };
     curl_easy_setopt(curl.get(), CURLOPT_URL, url.c_str());
@@ -617,7 +689,9 @@ void download_to_file(const std::string& url, const std::filesystem::path& desti
     curl_easy_setopt(curl.get(), CURLOPT_WRITEFUNCTION, write_file_callback);
     curl_easy_setopt(curl.get(), CURLOPT_WRITEDATA, &context);
     if (expected_size > 0) curl_easy_setopt(curl.get(), CURLOPT_MAXFILESIZE_LARGE, static_cast<curl_off_t>(expected_size));
-    if (expected_size > 0) mutate_job(job, [&](DownloadManager::Job& current) { current.total_bytes = expected_size; });
+    if (expected_size > 0) mutate_job(job, [&](DownloadManager::Job& current) {
+        current.total_bytes = aggregate_total > 0 ? aggregate_total : expected_size;
+    });
     const auto result = curl_easy_perform(curl.get());
     long response_code = 0;
     curl_easy_getinfo(curl.get(), CURLINFO_RESPONSE_CODE, &response_code);
@@ -652,6 +726,17 @@ void download_to_file(const std::string& url, const std::filesystem::path& desti
 }
 
 } // namespace
+
+namespace catalog {
+bool is_supported_engine_archive(const std::string& name, const std::string& variant,
+                                 const std::string& os, const std::string& architecture) {
+    return is_supported_engine_asset_name_for_host(name, variant, os, architecture);
+}
+bool is_supported_cuda_runtime_archive(const std::string& name, const std::string& variant,
+                                       const std::string& os, const std::string& architecture) {
+    return is_supported_cuda_runtime_asset_name_for_host(name, variant, os, architecture);
+}
+} // namespace catalog
 
 DownloadManager::DownloadManager(RuntimeConfig config, EngineManager& engines)
     : config_(std::move(config)), engines_(engines) {}
@@ -788,7 +873,10 @@ std::string DownloadManager::catalog_json() const {
         const bool installed = !installed_dir.empty();
         out << "{\"id\":" << json_quote(id)
             << ",\"type\":\"engine\",\"name\":" << json_quote(title)
-            << ",\"description\":" << json_quote("Finds the newest compatible official llama.cpp server package, preferring stable releases and falling back to an official prerelease only when no stable binary is published. Verifies GitHub's SHA-256 digest, safely extracts the archive and registers the engine.")
+            << ",\"description\":" << json_quote(
+                backend == "cpu"
+                    ? "Finds the newest compatible official llama.cpp server package, preferring stable releases and falling back to an official prerelease only when no stable binary is published. Verifies GitHub's SHA-256 digest, safely extracts the archive and registers the engine."
+                    : "Downloads the matching official llama.cpp CUDA server and CUDA runtime/DLL archives from the same release. Both archives must have official SHA-256 digests; both are verified before activation. Successful installation does not by itself prove GPU inference: driver, VRAM, model and real-task validation are still required.")
             << ",\"version\":\"latest-compatible\",\"backend\":" << json_quote(backend)
             << ",\"license\":\"MIT\",\"license_url\":\"https://github.com/ggml-org/llama.cpp/blob/master/LICENSE\""
             << ",\"source_url\":\"https://github.com/ggml-org/llama.cpp/releases\""
@@ -1297,12 +1385,21 @@ void DownloadManager::download_model(const std::shared_ptr<Job>& job) {
 
 void DownloadManager::download_engine(const std::shared_ptr<Job>& job, const std::string& variant) {
     mutate_job(job, [](DownloadManager::Job& current) { current.state = "downloading"; current.phase = "Finding a compatible official llama.cpp package and SHA-256 metadata (stable preferred)"; });
-    const auto asset = resolve_engine_asset(variant);
+    const auto assets = resolve_engine_assets(variant);
+    const auto total_download_size = assets.total_size();
+    log_diagnostic("INFO", "engine.asset.selected", "variant=" + variant + " tag=" + assets.engine.tag +
+        " engine_asset=" + assets.engine.name + " engine_bytes=" + std::to_string(assets.engine.size) +
+        " engine_sha256=" + assets.engine.sha256 +
+        (assets.cuda_runtime ? " cuda_runtime_asset=" + assets.cuda_runtime->name +
+            " cuda_runtime_bytes=" + std::to_string(assets.cuda_runtime->size) +
+            " cuda_runtime_sha256=" + assets.cuda_runtime->sha256 : std::string{}));
     mutate_job(job, [&](DownloadManager::Job& current) {
-        current.version = asset.tag;
-        current.total_bytes = asset.size;
-        current.phase = "Downloading official llama.cpp " + asset.tag +
-            (asset.prerelease ? " prerelease package" : " stable package");
+        current.version = assets.engine.tag;
+        current.total_bytes = total_download_size;
+        current.downloaded_bytes = 0;
+        current.phase = "Downloading official llama.cpp " + assets.engine.tag +
+            (assets.engine.prerelease ? " prerelease package" : " stable package") +
+            (assets.cuda_runtime ? " and its matching CUDA runtime libraries" : "");
     });
     const auto data_root = user_data_directory();
     const auto stage_root = data_root / "staging" / job->id;
@@ -1310,26 +1407,83 @@ void DownloadManager::download_engine(const std::shared_ptr<Job>& job, const std
     std::filesystem::create_directories(data_root / "staging", fs_error);
     if (fs_error) throw std::runtime_error("Could not create the component staging directory: " + fs_error.message());
     const auto available = std::filesystem::space(data_root / "staging", fs_error);
-    if (fs_error || available.available < asset.size + 512ULL * 1024ULL * 1024ULL) {
-        throw std::runtime_error("Not enough free disk space to download and extract llama.cpp. At least the archive size plus 512 MB is required.");
+    // CUDA installs may include a large server archive plus a separate runtime
+    // archive. Both stay in staging while their extracted payload is assembled,
+    // so budget conservatively for the downloads and expansion rather than only
+    // the compressed transfer size.
+    const auto required_free_space = total_download_size * 3ULL + 512ULL * 1024ULL * 1024ULL;
+    if (fs_error || available.available < required_free_space) {
+        throw std::runtime_error("Not enough free disk space to install llama.cpp safely. Free space for at least three times the combined archive size plus 512 MB, then retry. No engine files were activated.");
     }
     std::filesystem::remove_all(stage_root, fs_error);
     fs_error.clear();
     std::filesystem::create_directories(stage_root, fs_error);
     if (fs_error) throw std::runtime_error("Could not create a staging directory for llama.cpp: " + fs_error.message());
-    const auto archive_path = stage_root / (asset.name);
-    download_to_file(asset.url, archive_path, asset.size, job);
-    mutate_job(job, [](DownloadManager::Job& current) { current.state = "verifying"; current.phase = "Verifying official GitHub release SHA-256"; });
-    if (sha256_file(archive_path) != asset.sha256) {
+    const auto archive_path = stage_root / assets.engine.name;
+    download_to_file(assets.engine.url, archive_path, assets.engine.size, job, 0, total_download_size);
+    mutate_job(job, [](DownloadManager::Job& current) { current.state = "verifying"; current.phase = "Verifying official llama.cpp archive SHA-256"; });
+    if (sha256_file(archive_path) != assets.engine.sha256) {
         std::filesystem::remove_all(stage_root, fs_error);
         throw std::runtime_error("llama.cpp archive SHA-256 did not match the official release API. The archive was discarded.");
     }
-    mutate_job(job, [](DownloadManager::Job& current) { current.state = "extracting"; current.phase = "Safely extracting the verified engine archive"; });
     const auto extracted = stage_root / "extracted";
+    mutate_job(job, [](DownloadManager::Job& current) { current.state = "extracting"; current.phase = "Safely extracting the verified engine archive"; });
     extract_archive_safely(archive_path, extracted, job);
+
+    if (assets.cuda_runtime) {
+        const auto runtime_archive_path = stage_root / assets.cuda_runtime->name;
+        mutate_job(job, [&](DownloadManager::Job& current) {
+            current.state = "downloading";
+            current.phase = "Downloading matching CUDA runtime libraries";
+        });
+        download_to_file(assets.cuda_runtime->url, runtime_archive_path, assets.cuda_runtime->size,
+                         job, assets.engine.size, total_download_size);
+        mutate_job(job, [](DownloadManager::Job& current) {
+            current.state = "verifying";
+            current.phase = "Verifying CUDA runtime SHA-256";
+        });
+        if (sha256_file(runtime_archive_path) != assets.cuda_runtime->sha256) {
+            std::filesystem::remove_all(stage_root, fs_error);
+            throw std::runtime_error("CUDA runtime archive SHA-256 did not match the official release API. Both downloaded archives were discarded.");
+        }
+        mutate_job(job, [](DownloadManager::Job& current) {
+            current.state = "extracting";
+            current.phase = "Safely extracting the verified CUDA runtime libraries";
+        });
+        const auto runtime_extracted = stage_root / "cuda-runtime-extracted";
+        extract_archive_safely(runtime_archive_path, runtime_extracted, job);
+        for (const auto& entry : std::filesystem::recursive_directory_iterator(runtime_extracted)) {
+            const auto relative = entry.path().lexically_relative(runtime_extracted);
+            if (relative.empty() || relative.is_absolute() || relative.has_root_name()) {
+                throw std::runtime_error("CUDA runtime archive produced an invalid relative path.");
+            }
+            for (const auto& part : relative) {
+                if (part == "..") throw std::runtime_error("CUDA runtime archive path escaped its extraction directory.");
+            }
+            const auto destination = extracted / relative;
+            if (entry.is_directory()) {
+                std::filesystem::create_directories(destination, fs_error);
+                if (fs_error) throw std::runtime_error("Could not merge CUDA runtime directories: " + fs_error.message());
+                continue;
+            }
+            if (!entry.is_regular_file()) throw std::runtime_error("CUDA runtime archive contains an unsupported file type.");
+            std::filesystem::create_directories(destination.parent_path(), fs_error);
+            if (fs_error) throw std::runtime_error("Could not create a destination for a CUDA runtime library: " + fs_error.message());
+            if (std::filesystem::exists(destination)) {
+                if (sha256_file(destination) != sha256_file(entry.path())) {
+                    throw std::runtime_error("A CUDA runtime library conflicts with a file in the server archive: " + relative.string());
+                }
+            } else {
+                std::filesystem::copy_file(entry.path(), destination, std::filesystem::copy_options::none, fs_error);
+                if (fs_error) throw std::runtime_error("Could not install a verified CUDA runtime library: " + fs_error.message());
+            }
+        }
+        log_diagnostic("INFO", "engine.cuda_runtime.merged", "variant=" + variant + " asset=" + assets.cuda_runtime->name);
+    }
+
     const auto server_path = find_llama_server(extracted);
-    if (!server_path) throw std::runtime_error("The verified archive did not contain llama-server (or llama-server.exe).");
-    auto safe_tag = asset.tag;
+    if (!server_path) throw std::runtime_error("The verified archive set did not contain llama-server (or llama-server.exe).");
+    auto safe_tag = assets.engine.tag;
     if (!safe_tag.empty() && safe_tag.front() == 'v') safe_tag.erase(safe_tag.begin());
     const auto final_dir = data_root / "engines" / "llama.cpp" / (safe_tag + "-" + variant);
     std::filesystem::create_directories(final_dir.parent_path(), fs_error);

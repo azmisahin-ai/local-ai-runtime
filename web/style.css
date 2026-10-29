@@ -209,3 +209,22 @@ input:focus, select:focus { outline: 2px solid #92b7ff70; border-color: var(--ac
 
 .diagnostics-option { display: flex; align-items: flex-start; gap: .6rem; margin: .7rem 0; color: var(--muted); font-size: .85rem; font-weight: 500; }
 .diagnostics-option input { width: auto; margin: .25rem 0 0; flex: 0 0 auto; }
+
+/* Task workspaces are deliberately separate from the installable component catalogue. */
+.workspace-panel { margin: .4rem 0 1.2rem; padding: 1.15rem; border: 1px solid var(--line); border-radius: 1.1rem; background: color-mix(in srgb, var(--panel) 94%, transparent); }
+.workspace-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 1rem; margin-bottom: .9rem; }
+.workspace-heading .hint { max-width: 34rem; margin: 0; }
+.workspace-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .65rem; }
+.workspace-card { min-width: 0; display: grid; grid-template-columns: 2.25rem minmax(0, 1fr); grid-template-rows: auto auto; column-gap: .65rem; row-gap: .55rem; align-items: center; padding: .85rem; border: 1px solid var(--line); border-radius: .85rem; background: #101319; color: var(--text); text-decoration: none; }
+.workspace-card.available { border-color: color-mix(in srgb, var(--accent) 58%, var(--line)); }
+.workspace-card[href]:hover, .workspace-card[href]:focus-visible { border-color: var(--accent); transform: translateY(-1px); }
+.workspace-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.workspace-icon { grid-row: 1 / span 2; display: grid; place-items: center; width: 2.25rem; height: 2.25rem; border-radius: .65rem; background: #222936; color: var(--accent); font-weight: 800; font-size: 1rem; }
+.workspace-copy { min-width: 0; display: grid; gap: .2rem; }
+.workspace-copy strong { font-size: .91rem; line-height: 1.3; }
+.workspace-copy small { color: var(--muted); line-height: 1.35; }
+.workspace-state { justify-self: start; padding: .14rem .5rem; border: 1px solid var(--line); border-radius: 99px; color: var(--muted); font-size: .71rem; font-weight: 750; text-transform: uppercase; letter-spacing: .04em; }
+.workspace-state.available-state { border-color: #3e7d5b; color: var(--good); }
+.workspace-footnote { margin: .8rem 0 0; font-size: .82rem; }
+@media (max-width: 1050px) { .workspace-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .workspace-heading { align-items: flex-start; flex-direction: column; } }
+@media (max-width: 540px) { .workspace-grid { grid-template-columns: 1fr; } .workspace-card { grid-template-columns: 2.25rem minmax(0, 1fr) auto; grid-template-rows: auto; } .workspace-icon { grid-row: auto; } .workspace-state { grid-column: 3; grid-row: 1; } }

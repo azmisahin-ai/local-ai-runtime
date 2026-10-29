@@ -163,6 +163,9 @@ def main():
             )
             status, page, content_type = request(base + "/")
             assert status == 200 and "text/html" in content_type and "Local AI Runtime" in page
+            assert 'id="workspace-panel"' in page and "Language &amp; chat" in page
+            assert "Image generation" in page and "Vision &amp; OCR" in page and "Music &amp; SFX" in page
+            assert "Only Language &amp; chat is implemented in this alpha." in page
             assert 'id="diagnostics-export"' in page and 'id="downloads-refresh"' in page
             assert 'id="include-engine-logs"' in page
             assert 'id="update-download"' in page
