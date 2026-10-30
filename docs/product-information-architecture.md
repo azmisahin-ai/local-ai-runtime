@@ -58,7 +58,7 @@ For managed llama.cpp profiles, CPU requests `--n-gpu-layers 0`; CUDA packages r
 
 ## Catalog navigation
 
-The component library is a resource browser, not the primary list of user tasks. The current Models view includes the Active Chat Runtime Profile above the catalogue so users can distinguish what is installed from what Chat will actually start. Its main filters should be:
+The component library is a resource browser, not the primary list of user tasks. The Models view includes the Active Chat Runtime Profile above the catalogue so users can distinguish what is installed from what Chat will actually start. Catalog v2 presents model weights and engine runtime packages in separate sections; a backend package is never presented as another model. Installed components show a compact status and a profile-selection action instead of a large disabled “Installed” button. “Select for Chat” and “Select engine” only draft the profile; the user must still explicitly apply it. Its main filters are:
 
 1. **Engines** — runtime family, task capabilities, supported backend, platform, version, and required dependencies.
 2. **Models** — task/modality, family, format, quantization/precision, language, model size, license, disk size, and estimated system RAM/VRAM.
@@ -66,11 +66,11 @@ The component library is a resource browser, not the primary list of user tasks.
 4. **Installed** — installed version, source, verification status, assigned model, running/ready state, and actions.
 5. **Activity & diagnostics** — persistent operation rows, engine state and the FIFO component-install queue. Queued jobs show their position and reviewed dependency plan; active transfer cancellation and explicit retry remain separate actions. A future append-only event ledger will add a richer ordered timeline for validation, engine start/stop, inference failures, update and rollback events.
 
-Search should match task, model family, quantization, backend, hardware requirement, and license. Incompatible items should be hidden from the default recommendation view or disabled with a concise reason, while advanced users may inspect the full catalog.
+Search should match task, model family, architecture, parameter count, format, quantization, backend, hardware requirement, and license. Model-task filters are generated from reviewed metadata groups (`chat`, `vision`, `embeddings`, `speech`, `image-generation`, `video`, `audio`) and only appear when the catalogue contains more than one task group. License acknowledgement is preserved across background catalogue refreshes. Incompatible items should be hidden from the default recommendation view or disabled with a concise reason, while advanced users may inspect the full catalog.
 
 ## Versioned component metadata contract
 
-Every catalog API entry must follow the published [component-v1 schema](../catalog/schemas/component-v1.schema.json), which is validated against the actual `/v1/catalog` response in HTTP smoke tests. The current contract includes the following fields; future versions may add requirements but must not silently change v1 semantics:
+Every catalog API entry must follow the published [component-v1 schema](../catalog/schemas/component-v1.schema.json), which is validated against the actual `/v1/catalog` response in HTTP smoke tests. The current contract includes the following fields; Catalog v2 currently describes the task-first presentation and additive optional `model_profile` metadata; `/v1/catalog` remains backward-compatible and its v1 semantics are not changed. Future incompatible API changes require a separate versioned endpoint. Model profile fields include task group, architecture, parameter count, format, and quantization:
 
 - Identity: `schema_version`, stable `id`, `type` (`engine`/`model`), `name`, `family`, `version`/version policy.
 - Purpose: `workspaces`, `tasks`, `modalities`, `input_formats`, `output_formats`, and capabilities.
@@ -113,9 +113,9 @@ Every job emits structured local events with `job_id`, `component_id`, stage/pha
 2. [x] Unify operation state in `activity-v1` and durable `jobs-v1`; component retry remains allowlist-restricted and streamed inference supports explicit cancellation.
 3. [x] Complete the first localization/accessibility/onboarding slice; native screen-reader review and broader clean-OS acceptance remain open.
 4. [x] Move reviewed model, engine and dependency definitions to the embedded versioned authoring manifest.
-5. [~] Separate install from activation with explicit Runtime Profiles, persistent model/backend selection and Chat readiness gates; candidate is pending four-platform publisher CI.
-6. [x] Add a persistent single-worker FIFO installation queue, idempotent duplicate handling, bounded queue capacity, queued cancellation, safe pending-job recovery and reviewed CUDA runtime dependency plans before growing the catalogue.
-7. [ ] Complete Catalog v2 and simplified model details/quantization UI.
+5. [x] Separate install from activation with explicit Runtime Profiles, persistent model/backend selection and Chat readiness gates (`v0.1.19-alpha`).
+6. [x] Add a persistent single-worker FIFO installation queue, idempotent duplicate handling, bounded queue capacity, queued cancellation, safe pending-job recovery and reviewed CUDA runtime dependency plans (`v0.1.20-alpha`).
+7. [~] Catalog v2 presentation: separate Models/Engine runtimes, optional model profile metadata, task filters, compact installed/selected actions; additional reviewed model families remain future work.
 8. [ ] Finalize and test the shared engine adapter lifecycle against the existing `llama.cpp` integration.
 9. [ ] Validate reproducible CPU/GPU hardware profiles and add Qwen3.5/Gemma 4 as model-family pilots on the existing engine where formats and capabilities are verified.
 10. [ ] Deliver a constrained stdio MCP adapter, then Documents/RAG and the first Vision/Speech pilots.

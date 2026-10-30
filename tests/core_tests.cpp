@@ -88,6 +88,48 @@ int main() {
                 "manifest should reject unsupported macOS CUDA targets");
         require(!lar::catalog::find_component("https://example.invalid/payload"),
                 "arbitrary URLs must never resolve as installable catalog IDs");
+
+        stage("generic immutable Hugging Face GGUF model pins");
+        constexpr std::string_view sample_revision = "0123456789abcdef0123456789abcdef01234567";
+        constexpr std::string_view sample_filename = "example-model-q4_k_m.gguf";
+        const std::string sample_url = "https://huggingface.co/ExampleOrg/Example-GGUF/resolve/" +
+            std::string(sample_revision) + "/" + std::string(sample_filename);
+        require(lar::catalog::is_supported_pinned_gguf_url(
+                    sample_url, sample_filename, sample_revision,
+                    "https://huggingface.co/ExampleOrg/Example-GGUF"),
+                "a reviewed GGUF from a second immutable Hugging Face repository should be accepted");
+        require(!lar::catalog::is_supported_pinned_gguf_url(
+                    "https://huggingface.co.evil.invalid/ExampleOrg/Example-GGUF/resolve/" +
+                        std::string(sample_revision) + "/" + std::string(sample_filename),
+                    sample_filename, sample_revision, "https://huggingface.co/ExampleOrg/Example-GGUF"),
+                "lookalike Hugging Face hosts must be rejected");
+        require(!lar::catalog::is_supported_pinned_gguf_url(
+                    sample_url + "?download=true", sample_filename, sample_revision,
+                    "https://huggingface.co/ExampleOrg/Example-GGUF"),
+                "query-string model URLs must be rejected");
+        require(!lar::catalog::is_supported_pinned_gguf_url(
+                    sample_url + "/extra", sample_filename, sample_revision,
+                    "https://huggingface.co/ExampleOrg/Example-GGUF"),
+                "extra model URL path segments must be rejected");
+        require(!lar::catalog::is_supported_pinned_gguf_url(
+                    "https://huggingface.co/ExampleOrg/Example-GGUF/resolve/" +
+                        std::string(sample_revision) + "/example%2Fmodel.gguf",
+                    "example%2Fmodel.gguf", sample_revision,
+                    "https://huggingface.co/ExampleOrg/Example-GGUF"),
+                "percent-encoded model paths must be rejected");
+        require(!lar::catalog::is_supported_pinned_gguf_url(
+                    "https://huggingface.co/ExampleOrg/../resolve/" + std::string(sample_revision) + "/" + std::string(sample_filename),
+                    sample_filename, sample_revision, "https://huggingface.co/ExampleOrg/../"),
+                "path traversal repository segments must be rejected");
+        require(!lar::catalog::is_supported_pinned_gguf_url(
+                    sample_url, sample_filename, "0123456789abcdef", "https://huggingface.co/ExampleOrg/Example-GGUF"),
+                "mutable or malformed model revisions must be rejected");
+        require(!lar::catalog::is_supported_pinned_gguf_url(
+                    sample_url, "other-model.gguf", sample_revision, "https://huggingface.co/ExampleOrg/Example-GGUF"),
+                "the URL filename must match the pinned install filename");
+        require(!lar::catalog::is_supported_pinned_gguf_url(
+                    sample_url, sample_filename, sample_revision, "https://huggingface.co/OtherOrg/Example-GGUF"),
+                "the provenance source repository must match the immutable download URL");
         require(lar::catalog::is_known_engine_variant("cuda13") && !lar::catalog::is_known_engine_variant("unreviewed"),
                 "engine release resolver must only accept manifest-defined variants");
 

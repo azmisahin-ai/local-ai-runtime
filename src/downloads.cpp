@@ -89,6 +89,30 @@ const catalog::ComponentDefinition& pinned_model_component(std::string_view id) 
     return *component;
 }
 
+std::filesystem::path model_component_directory(const std::filesystem::path& root,
+                                                const catalog::ComponentDefinition& component) {
+    return root / "models" / component.id;
+}
+
+std::filesystem::path model_component_path(const std::filesystem::path& root,
+                                           const catalog::ComponentDefinition& component) {
+    return model_component_directory(root, component) / component.filename;
+}
+
+std::filesystem::path existing_model_component_path(const std::filesystem::path& root,
+                                                     const catalog::ComponentDefinition& component) {
+    const auto component_path = model_component_path(root, component);
+    std::error_code fs_error;
+    if (std::filesystem::is_regular_file(component_path, fs_error) && !fs_error) return component_path;
+
+    // Backward compatibility for models installed before per-component storage
+    // was introduced. New downloads always use the isolated component directory.
+    fs_error.clear();
+    const auto legacy_path = root / "models" / component.filename;
+    if (std::filesystem::is_regular_file(legacy_path, fs_error) && !fs_error) return legacy_path;
+    return component_path;
+}
+
 std::once_flag curl_init_flag;
 CURLcode curl_init_result = CURLE_FAILED_INIT;
 
@@ -1222,7 +1246,7 @@ std::string DownloadManager::catalog_json() const {
         std::filesystem::path installed_path;
         std::error_code fs_error;
         if (component.installer == "pinned-gguf") {
-            installed_path = root / "models" / component.filename;
+            installed_path = existing_model_component_path(root, component);
             if (std::filesystem::is_regular_file(installed_path, fs_error) && !fs_error) {
                 const auto actual_size = std::filesystem::file_size(installed_path, fs_error);
                 if (!fs_error && actual_size == component.size_bytes) {
@@ -1333,7 +1357,7 @@ bool DownloadManager::apply_runtime_profile(const std::string& engine_component_
         return false;
     }
 
-    const auto model_path = data_root / "models" / model_component->filename;
+    const auto model_path = existing_model_component_path(data_root, *model_component);
     std::error_code fs_error;
     if (!std::filesystem::is_regular_file(model_path, fs_error) || fs_error) {
         error = "The selected model is not installed. Download it from Models before applying this profile.";
@@ -1876,13 +1900,14 @@ void DownloadManager::run_job(const std::shared_ptr<Job>& job) {
         std::error_code ignored;
         const auto root = user_data_directory();
         std::filesystem::remove_all(root / "staging" / job->id, ignored);
-        // Keep models/<name>.part: download_model only leaves this final staging
-        // file behind after the size, SHA-256 and GGUF checks have all passed.
+        // Keep the component-scoped models/<component-id>/<name>.part file:
+        // download_model only leaves it after size, SHA-256 and GGUF checks pass.
         // A retry can finalize it without downloading another gigabyte.
         if (const auto* component = catalog::find_component(job->item_id);
             component && component->installer == "pinned-gguf") {
             ignored.clear();
-            std::filesystem::remove(root / "models" / (component->filename + ".part.part"), ignored);
+            std::filesystem::remove(model_component_directory(root, *component) /
+                                    (component->filename + ".part.part"), ignored);
         }
     }
 }
@@ -1978,7 +2003,7 @@ void DownloadManager::download_runtime_update(const std::shared_ptr<Job>& job) {
 void DownloadManager::download_model(const std::shared_ptr<Job>& job) {
     const auto& model = pinned_model_component(job->item_id);
     const auto root = user_data_directory();
-    const auto directory = root / "models";
+    const auto directory = model_component_directory(root, model);
     const auto final_path = directory / model.filename;
     auto partial = final_path;
     partial += ".part";

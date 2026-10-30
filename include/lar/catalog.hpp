@@ -45,6 +45,11 @@ bool supports_target(const ComponentDefinition& component, const std::string& pl
                      const std::string& architecture);
 bool is_known_engine_variant(const std::string& variant);
 
+// Accepts only a single GGUF file from a pinned Hugging Face revision.
+// The caller must still verify the downloaded file against its declared digest and size.
+bool is_supported_pinned_gguf_url(std::string_view url, std::string_view filename,
+                                  std::string_view revision, std::string_view source_url);
+
 // Pure, host-parameterized archive-name predicates used by the release resolver
 // and regression tests. Callers must still verify HTTPS URL, SHA-256 and size.
 bool is_supported_engine_archive(const std::string& name, const std::string& variant,

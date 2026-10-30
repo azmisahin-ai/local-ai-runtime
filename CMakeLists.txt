@@ -127,6 +127,13 @@ if(LAR_BUILD_TESTS)
             NAME lar_catalog_manifest_contract
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/catalog_manifest_contract.py"
         )
+        find_program(NODE_EXECUTABLE node)
+        if(NODE_EXECUTABLE)
+            add_test(
+                NAME lar_models_ui_contract
+                COMMAND "${NODE_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models_ui_contract.js"
+            )
+        endif()
         add_test(
             NAME lar_http_smoke
             COMMAND "${Python3_EXECUTABLE}"

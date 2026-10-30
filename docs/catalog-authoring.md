@@ -8,10 +8,12 @@ At CMake configure time, the manifest is embedded into the runtime binary. The r
 
 - `schema_version` describes the manifest contract; `manifest_version` versions reviewed catalog content.
 - Each component has a stable `id`, `kind`, `installable` flag, `default_model` marker, an `install` policy, and `metadata_json`.
-- `metadata_json` is the compact canonical `component-v1` JSON object stored as a string so the compiled runtime can preserve JSON scalar types exactly when it adds runtime-derived `installed` and `installed_path` properties.
+- `metadata_json` is the compact canonical `component-v1` JSON object stored as a string so the compiled runtime can preserve JSON scalar types exactly when it adds runtime-derived `installed` and `installed_path` properties. Model entries must include `model_profile` with a reviewed task group, architecture, parameter count, format and quantization; engine entries must not declare model-only metadata.
 - `install.targets` is the install allowlist for OS/architecture pairs. It must exactly match `metadata_json.compatibility.targets`; display claims and install permissions cannot drift apart.
 - `metadata_json.provenance.dependencies` is an explicit, reviewed dependency plan. In the current v1 starter catalogue it describes the matching CUDA runtime archive for CUDA 12/13 llama.cpp packages. That archive is resolved from the same official release, verified and installed as part of the parent engine job; it is not an independent user-selectable component.
 - The only accepted installer strategies in v1 are `llama-release` and `pinned-gguf`. Unknown strategy names fail closed.
+
+The public `component-v1` response remains backward-compatible. Catalog v2 currently means a task-first Models presentation and additive optional model metadata, not a breaking API change. Task groups are `chat`, `vision`, `embeddings`, `speech`, `image-generation`, `video` and `audio`; a task filter is shown only when more than one reviewed group is present.
 
 The contracts are:
 
@@ -26,7 +28,9 @@ Used only for reviewed `llama.cpp` engine variants (`cpu`, `cuda12`, `cuda13`). 
 
 ### `pinned-gguf`
 
-Used for the default Qwen GGUF starter model. The install record pins a reviewed Hugging Face model repository, immutable 40-character revision, exact filename, SHA-256 and byte size. Runtime validation requires the exact reviewed upstream URL namespace, a path-safe filename, a 64-character digest, a positive bounded size, and matching digest/size in the public metadata. A manifest cannot provide an executable command or install script.
+Used for reviewed, single-file GGUF model artifacts from Hugging Face. A pinned model does not have to be the default model; the manifest may contain multiple chat, vision or other GGUF model entries, but exactly one reviewed pinned GGUF model must be marked `default_model: true`. The install record pins the Hugging Face owner/repository, immutable 40-character revision, exact filename, SHA-256 and byte size. Runtime validation accepts only the canonical `https://huggingface.co/{owner}/{repo}/resolve/{revision}/{filename}` HTTPS form, verifies that the metadata source repository and revision match that URL, limits path segments to safe characters, rejects query strings/encoded paths/extra path segments, and enforces a positive bounded size plus matching digest/size in public metadata. A manifest cannot provide an executable command or install script.
+
+Each model is stored in an isolated `models/{component-id}/{filename}` directory so two repositories may safely publish the same filename. Existing starter models installed before this layout are still discovered through a legacy `models/{filename}` fallback; new downloads always use the isolated path. This strategy currently supports one GGUF file per model. Multi-file models (for example a separate multimodal projector), ONNX, SafeTensors, embedding runtimes with auxiliary assets, and downloaded tokenizers/config bundles require separately reviewed installer strategies or dependency plans; do not represent them as `pinned-gguf` until those strategies exist. Each new model still requires a human-reviewed license, immutable revision, exact byte size, SHA-256, model metadata, target matrix and real-task evidence. The generic URL validator does not automatically approve or add a model to the shipped manifest.
 
 ## Installation queue and dependency behavior
 
@@ -56,4 +60,4 @@ Queued entries are persisted and revalidated against the embedded manifest, plat
 - No model or engine is automatically installed or updated from a catalog refresh.
 - “Detected” does not mean “supported”; “package installed” does not mean “real inference tested.”
 
-The v1 manifest currently contains the reviewed `llama.cpp` CPU/CUDA 12/CUDA 13 entries and one pinned Qwen2.5 1.5B GGUF model. It is the single source for those components' display metadata and installer allowlist, not yet a catalog of every relevant C/C++ engine or model.
+The v1 manifest currently contains the reviewed `llama.cpp` CPU/CUDA 12/CUDA 13 entries and one pinned Qwen2.5 1.5B GGUF model. The generic `pinned-gguf` contract permits additional non-default single-file Hugging Face GGUF entries after review, but no additional model is shipped merely because the validator can accept one. The catalogue is not yet a catalogue of every relevant C/C++ engine or model.

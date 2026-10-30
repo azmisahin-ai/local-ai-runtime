@@ -501,6 +501,14 @@ def main():
             catalog_schema = json.loads(catalog_schema_path.read_text(encoding="utf-8"))
             catalog_errors = validate_catalog_schema(catalog, catalog_schema)
             assert not catalog_errors, "Catalog API did not satisfy component-v1 schema: " + "; ".join(catalog_errors[:12])
+            catalog_models = [item for item in catalog["data"] if item.get("type") == "model"]
+            catalog_engines = [item for item in catalog["data"] if item.get("type") == "engine"]
+            assert catalog_models and all(isinstance(item.get("model_profile"), dict) for item in catalog_models), (
+                "Every model catalog item must expose structured task/format/quantization metadata"
+            )
+            assert all("model_profile" not in item for item in catalog_engines), (
+                "Engine packages must remain distinct from model-weight metadata"
+            )
             profile_status, profile_raw, profile_type = request(base + "/v1/runtime/profile")
             runtime_profile = json.loads(profile_raw)
             profile_schema_path = Path(__file__).resolve().parents[1] / "catalog" / "schemas" / "runtime-profile-v1.schema.json"

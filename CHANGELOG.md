@@ -1,3 +1,11 @@
+## Unreleased — multi-model Catalog v2 pinning
+
+- Generalize the compiled `pinned-gguf` allowlist from one Qwen-specific repository to reviewed single-file GGUF files hosted at canonical Hugging Face owner/repository URLs with immutable 40-character revisions.
+- Permit multiple non-default GGUF model entries while retaining exactly one explicit default model; verify URL owner/repository, metadata source URL, revision, exact filename, SHA-256, exact bounded byte size and GGUF format agree.
+- Reject lookalike hosts, query strings, percent-encoded paths, traversal segments, extra path segments, mutable revisions and arbitrary installer commands.
+- Store each model under a component-ID-scoped directory to prevent filename collisions while retaining read compatibility for the existing flat Qwen starter path.
+- Add C++ regression checks and a synthetic non-default second-repository manifest fixture; document that multi-file multimodal, ONNX and SafeTensors packages still need dedicated installer strategies.
+
 ## Unreleased — explicit Runtime Profile and model activation
 
 - Persist a selected engine/backend component, Chat model component and context size separately from installed artifacts.
@@ -18,6 +26,15 @@
 - Keep manual llama.cpp configuration as an Advanced/custom setup path, separate from managed catalog profiles.
 - Fix component ID persistence so catalog IDs containing dots (for example `llama.cpp-cuda12` and `qwen2.5-1.5b-q4km`) survive config save/restart validation.
 - Keep the first-run model step incomplete until an engine and model are actually configured, not merely downloaded.
+
+## Unreleased — task-first Catalog v2 and simplified Models UI
+
+- Split the Models catalogue into distinct model-weight and engine-runtime sections so backend packages are no longer presented as additional language models.
+- Add optional structured `model_profile` metadata for task group, architecture, parameter count, format and quantization while preserving the existing `/v1/catalog` response contract and adding no breaking API version change.
+- Add metadata-driven task filtering for Chat, Vision, Embeddings, Speech, Image generation, Video and Audio as reviewed catalogue entries become available.
+- Replace the large disabled Installed action with a compact installed/selected status and a small action that drafts the component into the Runtime Profile; activation still requires explicit profile application.
+- Show queued/installing state with a View Activity action, retain license acknowledgements across catalogue refreshes, and keep details, compatibility, provenance, evidence and local install path behind an expandable details section.
+- Add model-profile manifest/schema/API checks and a static Models UI contract test; keep the current single reviewed Qwen starter and three llama.cpp backend entries unchanged.
 
 # Changelog
 

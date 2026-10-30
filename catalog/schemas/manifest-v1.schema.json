@@ -27,8 +27,8 @@
             "properties": {
               "strategy": { "enum": ["llama-release", "pinned-gguf"] },
               "variant": { "enum": ["cpu", "cuda12", "cuda13"] },
-              "filename": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$" },
-              "url": { "type": "string", "pattern": "^https://huggingface\\.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/[a-fA-F0-9]{40}/[A-Za-z0-9._-]+$" },
+              "filename": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$" },
+              "url": { "type": "string", "pattern": "^https://huggingface\\.co/[A-Za-z0-9][A-Za-z0-9._-]{0,95}/[A-Za-z0-9][A-Za-z0-9._-]{0,95}/resolve/[a-fA-F0-9]{40}/[A-Za-z0-9][A-Za-z0-9._-]{0,254}$" },
               "sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" },
               "size_bytes": { "type": "integer", "minimum": 1 },
               "targets": {
@@ -57,7 +57,26 @@
             ]
           },
           "metadata_json": { "type": "string", "minLength": 2, "pattern": "^\\{.*\\}$" }
-        }
+        },
+        "allOf": [
+          {
+            "if": { "properties": { "install": { "properties": { "strategy": { "const": "pinned-gguf" } }, "required": ["strategy"] } }, "required": ["install"] },
+            "then": { "properties": { "kind": { "const": "model" } } }
+          },
+          {
+            "if": { "properties": { "install": { "properties": { "strategy": { "const": "llama-release" } }, "required": ["strategy"] } }, "required": ["install"] },
+            "then": { "properties": { "kind": { "const": "engine" } } }
+          },
+          {
+            "if": { "properties": { "default_model": { "const": true } }, "required": ["default_model"] },
+            "then": {
+              "properties": {
+                "kind": { "const": "model" },
+                "install": { "properties": { "strategy": { "const": "pinned-gguf" } }, "required": ["strategy"] }
+              }
+            }
+          }
+        ]
       }
     }
   }

@@ -111,6 +111,27 @@ std::vector<ComponentDefinition> parse_embedded_manifest() {
             metadata.get<unsigned int>("schema_version", 0U) != 1U) {
             throw std::runtime_error("Catalog metadata identity does not match its install manifest entry: " + component.id);
         }
+        if (component.kind == "model") {
+            const auto profile = metadata.get_child_optional("model_profile");
+            if (!profile || !has_only_keys(*profile, {"task_group", "architecture", "parameter_count", "format", "quantization"})) {
+                throw std::runtime_error("A model catalog entry requires a reviewed model_profile: " + component.id);
+            }
+            const auto task_group = profile->get<std::string>("task_group", "");
+            const auto format = profile->get<std::string>("format", "");
+            const auto is_non_empty_string = [&](const char* key) {
+                const auto value = profile->get<std::string>(key, "");
+                return !value.empty() && value.size() <= 128U;
+            };
+            if ((task_group != "chat" && task_group != "vision" && task_group != "embeddings" &&
+                 task_group != "speech" && task_group != "image-generation" && task_group != "video" && task_group != "audio") ||
+                (format != "GGUF" && format != "ONNX" && format != "SafeTensors" && format != "Other") ||
+                !is_non_empty_string("architecture") || !is_non_empty_string("parameter_count") ||
+                !is_non_empty_string("quantization")) {
+                throw std::runtime_error("A model catalog entry contains an unsupported or incomplete model_profile: " + component.id);
+            }
+        } else if (metadata.get_child_optional("model_profile")) {
+            throw std::runtime_error("Engine catalog entries cannot declare model_profile: " + component.id);
+        }
 
         const auto dependency_nodes = metadata.get_child_optional("provenance.dependencies");
         if (!dependency_nodes) {
@@ -190,22 +211,21 @@ std::vector<ComponentDefinition> parse_embedded_manifest() {
                 throw std::runtime_error("The llama-release policy declares a platform target not supported by its reviewed asset resolver: " + component.id);
             }
         } else if (component.installer == "pinned-gguf") {
-            constexpr std::string_view allowed_url_prefix =
-                "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/";
-            if (component.kind != "model" || !component.default_model || !is_safe_filename(component.filename) ||
-                component.url.rfind(allowed_url_prefix, 0) != 0 ||
-                component.url.substr(component.url.find_last_of('/') + 1U) != component.filename ||
+            const auto revision = metadata.get<std::string>("version", "");
+            const auto source_url = metadata.get<std::string>("source_url", "");
+            if (component.kind != "model" || !is_safe_filename(component.filename) ||
+                !is_supported_pinned_gguf_url(component.url, component.filename, revision, source_url) ||
                 !is_hex(component.sha256, 64U) || component.size_bytes == 0U || component.size_bytes > 16ULL * 1024ULL * 1024ULL * 1024ULL) {
-                throw std::runtime_error("The pinned GGUF install policy failed its URL, filename, digest or size checks: " + component.id);
-            }
-            const auto revision_start = allowed_url_prefix.size();
-            const auto revision_end = component.url.find('/', revision_start);
-            if (revision_end == std::string::npos || !is_hex(std::string_view(component.url).substr(revision_start, revision_end - revision_start), 40U)) {
-                throw std::runtime_error("The pinned GGUF URL does not contain an immutable 40-character revision: " + component.id);
+                throw std::runtime_error("The pinned GGUF install policy failed its reviewed Hugging Face URL, filename, revision, digest or size checks: " + component.id);
             }
             if (metadata.get<std::string>("sha256", "") != component.sha256 ||
-                metadata.get<std::uint64_t>("size_bytes", 0U) != component.size_bytes) {
-                throw std::runtime_error("The pinned GGUF install metadata does not match the catalog metadata: " + component.id);
+                metadata.get<std::uint64_t>("size_bytes", 0U) != component.size_bytes ||
+                metadata.get<std::string>("provenance.source_url", "") != source_url ||
+                metadata.get<std::string>("provenance.revision", "") != revision ||
+                metadata.get<std::string>("provenance.revision_policy", "") != "pinned-revision" ||
+                metadata.get<std::string>("provenance.digest_policy", "") != "pinned-sha256-and-exact-size" ||
+                metadata.get<std::string>("model_profile.format", "") != "GGUF") {
+                throw std::runtime_error("The pinned GGUF install metadata does not match the reviewed source, revision, format, digest or exact size: " + component.id);
             }
             const auto target_allowed = [](const InstallTarget& target) {
                 return (target.platform == "windows" && target.architecture == "x64") ||
@@ -215,9 +235,15 @@ std::vector<ComponentDefinition> parse_embedded_manifest() {
             if (!std::all_of(component.targets.begin(), component.targets.end(), target_allowed)) {
                 throw std::runtime_error("The pinned GGUF policy declares an unsupported platform target: " + component.id);
             }
-            ++default_model_count;
         } else {
             throw std::runtime_error("The component manifest contains an unknown install strategy: " + component.installer);
+        }
+
+        if (component.default_model) {
+            if (component.kind != "model" || component.installer != "pinned-gguf") {
+                throw std::runtime_error("Only a pinned GGUF model can be marked as the default model: " + component.id);
+            }
+            ++default_model_count;
         }
 
         if (component.installer == "llama-release" && component.variant == "cuda12") {
@@ -241,6 +267,45 @@ std::vector<ComponentDefinition> parse_embedded_manifest() {
 }
 
 } // namespace
+
+bool is_supported_pinned_gguf_url(std::string_view url, std::string_view filename,
+                                  std::string_view revision, std::string_view source_url) {
+    constexpr std::string_view prefix = "https://huggingface.co/";
+    const auto safe_segment = [](std::string_view value) {
+        if (value.empty() || value == "." || value == ".." || value.front() == '.' || value.back() == '.') return false;
+        return std::all_of(value.begin(), value.end(), [](unsigned char ch) {
+            return (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') ||
+                   (ch >= '0' && ch <= '9') || ch == '.' || ch == '_' || ch == '-';
+        });
+    };
+    if (url.rfind(prefix, 0) != 0 || url.find_first_of("?#\\%") != std::string_view::npos ||
+        !safe_segment(filename) || !is_hex(revision, 40U)) {
+        return false;
+    }
+
+    auto remainder = url.substr(prefix.size());
+    std::string_view segments[5];
+    for (std::size_t index = 0; index < 5U; ++index) {
+        const auto slash = remainder.find('/');
+        if (index < 4U) {
+            if (slash == std::string_view::npos) return false;
+            segments[index] = remainder.substr(0, slash);
+            remainder.remove_prefix(slash + 1U);
+        } else {
+            if (slash != std::string_view::npos) return false;
+            segments[index] = remainder;
+        }
+    }
+
+    const auto owner = segments[0];
+    const auto repository = segments[1];
+    if (!safe_segment(owner) || !safe_segment(repository) || segments[2] != "resolve" ||
+        !is_hex(segments[3], 40U) || segments[3] != revision || segments[4] != filename) {
+        return false;
+    }
+    const auto expected_source = std::string(prefix) + std::string(owner) + "/" + std::string(repository);
+    return source_url == expected_source;
+}
 
 const std::vector<ComponentDefinition>& components() {
     static const auto values = parse_embedded_manifest();

@@ -234,10 +234,16 @@
               <label for="catalog-search" data-i18n="models.searchLabel">Search models and engines</label>
               <input id="catalog-search" type="search" autocomplete="off" spellcheck="false" data-i18n-placeholder="models.searchPlaceholder" placeholder="Search by name, family, task or license…">
               <div id="catalog-filters" class="catalog-filters" role="group" aria-label="Filter components by type" data-i18n-aria="accessibility.componentFilters">
-                <button class="filter-chip active" type="button" data-catalog-filter="all" data-label="All components" data-label-key="models.filterAll" aria-pressed="true" data-i18n="models.filterAll">All components</button>
-                <button class="filter-chip" type="button" data-catalog-filter="engine" data-label="Engine runtimes" data-label-key="models.filterEngines" aria-pressed="false" data-i18n="models.filterEngines">Engines</button>
+                <button class="filter-chip active" type="button" data-catalog-filter="all" data-label="All" data-label-key="models.filterAll" aria-pressed="true" data-i18n="models.filterAll">All</button>
                 <button class="filter-chip" type="button" data-catalog-filter="model" data-label="Models" data-label-key="models.filterModels" aria-pressed="false" data-i18n="models.filterModels">Models</button>
+                <button class="filter-chip" type="button" data-catalog-filter="engine" data-label="Engine runtimes" data-label-key="models.filterEngines" aria-pressed="false" data-i18n="models.filterEngines">Engine runtimes</button>
                 <button class="filter-chip" type="button" data-catalog-filter="installed" data-label="Installed" data-label-key="models.filterInstalled" aria-pressed="false" data-i18n="models.filterInstalled">Installed</button>
+              </div>
+              <div id="catalog-task-toolbar" class="catalog-task-toolbar" hidden>
+                <label for="catalog-task-filter" data-i18n="models.taskFilter">Model task</label>
+                <select id="catalog-task-filter" aria-label="Filter models by task" data-i18n-aria="models.taskFilter">
+                  <option value="all" data-i18n="models.taskAll">All model tasks</option>
+                </select>
               </div>
               <p id="catalog-summary" class="hint catalog-summary" aria-live="polite" data-i18n="models.loading">Loading components…</p>
             </div>

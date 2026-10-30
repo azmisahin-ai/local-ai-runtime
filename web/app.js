@@ -25,6 +25,8 @@ const catalogList = document.querySelector('#catalog-list');
 const catalogSearch = document.querySelector('#catalog-search');
 const catalogSummary = document.querySelector('#catalog-summary');
 const catalogFilterButtons = [...document.querySelectorAll('[data-catalog-filter]')];
+const catalogTaskToolbar = document.querySelector('#catalog-task-toolbar');
+const catalogTaskFilter = document.querySelector('#catalog-task-filter');
 const downloadList = document.querySelector('#download-list');
 const catalogError = document.querySelector('#catalog-error');
 const catalogRefreshButton = document.querySelector('#catalog-refresh');
@@ -336,6 +338,8 @@ const completedDownloadJobs = new Set();
 let catalogItems = [];
 let downloadJobsSnapshot = [];
 let activeCatalogFilter = 'all';
+let activeCatalogTask = 'all';
+const catalogLicenseAcknowledgements = new Set();
 let availableRuntimeUpdate = null;
 let updateStageJobId = null;
 let updateApplySupported = false;
@@ -756,54 +760,137 @@ function safeHttpsUrl(value) {
   }
 }
 
+const CATALOG_TASK_GROUP_LABELS = {
+  chat: ['models.taskChat', 'Chat'],
+  vision: ['models.taskVision', 'Vision'],
+  embeddings: ['models.taskEmbeddings', 'Embeddings'],
+  speech: ['models.taskSpeech', 'Speech'],
+  'image-generation': ['models.taskImageGeneration', 'Image generation'],
+  video: ['models.taskVideo', 'Video'],
+  audio: ['models.taskAudio', 'Audio'],
+};
+
+function catalogTaskGroup(item) {
+  const declared = String(item?.model_profile?.task_group || '').trim().toLowerCase();
+  if (Object.prototype.hasOwnProperty.call(CATALOG_TASK_GROUP_LABELS, declared)) return declared;
+  const tasks = Array.isArray(item?.tasks) ? item.tasks.map((task) => String(task).toLowerCase()) : [];
+  const modalities = Array.isArray(item?.modalities) ? item.modalities.map((value) => String(value).toLowerCase()) : [];
+  if (tasks.some((task) => ['chat', 'text-generation', 'completion'].includes(task))) return 'chat';
+  if (tasks.some((task) => ['embeddings', 'embedding', 'reranking', 'retrieval'].includes(task))) return 'embeddings';
+  if (tasks.some((task) => ['vision', 'image-understanding', 'ocr'].includes(task)) || modalities.includes('image')) return 'vision';
+  if (tasks.some((task) => ['speech', 'speech-to-text', 'text-to-speech', 'transcription'].includes(task)) || modalities.includes('audio')) return 'speech';
+  if (tasks.some((task) => ['image-generation', 'text-to-image'].includes(task))) return 'image-generation';
+  if (tasks.some((task) => ['video', 'video-understanding'].includes(task)) || modalities.includes('video')) return 'video';
+  if (tasks.some((task) => ['audio-generation', 'music-generation', 'sound-effects'].includes(task))) return 'audio';
+  return '';
+}
+
+function catalogTaskGroupLabel(group) {
+  const entry = CATALOG_TASK_GROUP_LABELS[group];
+  return entry ? translation(entry[0], entry[1]) : group;
+}
+
+function selectCatalogComponentForProfile(item) {
+  const selectedEngine = runtimeProfileDraftDirty
+    ? runtimeProfileDraft.engine_component_id
+    : (runtimeProfile?.engine_component_id || '');
+  const selectedModel = runtimeProfileDraftDirty
+    ? runtimeProfileDraft.model_component_id
+    : (runtimeProfile?.model_component_id || '');
+  runtimeProfileDraft = {
+    engine_component_id: item.type === 'engine' ? item.id : selectedEngine,
+    model_component_id: item.type === 'model' ? item.id : selectedModel,
+    context_size: Number(runtimeProfileDraftDirty
+      ? runtimeProfileDraft.context_size
+      : (runtimeProfile?.context_size || 2048)),
+  };
+  runtimeProfileDraftDirty = true;
+  renderRuntimeProfile();
+  if (runtimeProfileSummary) {
+    runtimeProfileSummary.textContent = translation('models.profileDrafted', 'Selection added to the profile above. Review it and apply the profile to use it in Chat.');
+  }
+  const target = item.type === 'engine' ? runtimeProfileEngineSelect : runtimeProfileModelSelect;
+  if (runtimeProfilePanel) {
+    runtimeProfilePanel.scrollIntoView({ behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
+  }
+  target?.focus({ preventScroll: true });
+}
+
 function catalogItemCard(item) {
-  const card = make('article', 'catalog-card');
-  const info = make('div');
-  info.append(make('h3', '', item.name || item.id));
-  info.append(make('p', '', item.description || translation('models.reviewedComponent', 'Reviewed catalog component.')));
-  const meta = make('div', 'engine-meta');
-  meta.append(make('span', 'tag', item.type || 'component'));
+  const isEngine = item.type === 'engine';
+  const profileSelected = isEngine
+    ? runtimeProfile?.engine_component_id === item.id
+    : runtimeProfile?.model_component_id === item.id;
+  const queuedJob = downloadJobsSnapshot.find((job) => job.item_id === item.id &&
+    ['queued', 'running', 'downloading', 'verifying', 'extracting', 'configuring'].includes(job.state));
+  const card = make('article', `catalog-card catalog-card-${isEngine ? 'engine' : 'model'}`);
+  const info = make('div', 'catalog-card-info');
+  const heading = make('div', 'catalog-card-heading');
+  heading.append(make('h3', '', item.name || item.id));
+  const status = make('span', `tag catalog-status${item.installed || profileSelected ? ' ready' : queuedJob ? ' loading' : ''}`,
+    item.installed
+      ? (profileSelected ? translation('models.selectedForChat', 'Selected for Chat') : translation('models.installed', 'Installed'))
+      : queuedJob
+        ? (queuedJob.state === 'queued' ? translation('models.inQueue', 'In queue') : translation('models.installing', 'Installing…'))
+        : (isEngine ? translation('models.engineRuntime', 'Engine runtime') : translation('models.modelWeights', 'Model weights')));
+  heading.append(status);
+  info.append(heading);
+  info.append(make('p', 'catalog-description', item.description || translation('models.reviewedComponent', 'Reviewed catalog component.')));
+
+  const meta = make('div', 'engine-meta catalog-meta');
+  meta.append(make('span', 'tag', isEngine ? translation('models.engineRuntime', 'Engine runtime') : translation('models.modelWeights', 'Model weights')));
   if (item.backend) meta.append(make('span', 'tag', String(item.backend).toUpperCase()));
+  const modelProfile = item.model_profile && typeof item.model_profile === 'object' ? item.model_profile : null;
+  if (modelProfile) {
+    if (modelProfile.task_group) meta.append(make('span', 'tag catalog-task-tag', catalogTaskGroupLabel(String(modelProfile.task_group))));
+    if (modelProfile.parameter_count) meta.append(make('span', 'tag', String(modelProfile.parameter_count)));
+    if (modelProfile.quantization) meta.append(make('span', 'tag', String(modelProfile.quantization)));
+    if (modelProfile.format) meta.append(make('span', 'tag', String(modelProfile.format)));
+  }
   if (item.version) {
     const versionLabel = item.version === 'latest-compatible' ? translation('models.latestCompatible', 'latest compatible build') : (item.version === 'latest-stable' ? translation('models.latestStable', 'latest stable') : formatMessage('models.revision', { revision: String(item.version).slice(0, 12) }, `revision ${String(item.version).slice(0, 12)}`));
     meta.append(make('span', 'tag', versionLabel));
   }
-  meta.append(make('span', 'tag', item.installed ? translation('models.installed', 'installed') : formatBytes(item.size_bytes)));
-  if (item.installed) meta.append(make('span', 'tag ready', translation('models.verifiedFile', 'verified file present')));
+  if (Number(item.size_bytes || 0) > 0) meta.append(make('span', 'tag', formatBytes(item.size_bytes)));
   info.append(meta);
-  const licenseUrl = safeHttpsUrl(item.license_url);
-  const license = make('p', 'catalog-license');
-  license.append(document.createTextNode(formatMessage('models.license', { license: item.license || translation('common.notSpecified', 'Not specified') })));
-  if (licenseUrl) {
-    const link = make('a', '', translation('models.reviewLicense', 'review license'));
-    link.href = licenseUrl;
-    link.target = '_blank';
-    link.rel = 'noopener noreferrer';
-    license.append(link);
-  } else {
-    license.append(document.createTextNode(translation('models.licenseUnavailable', 'license URL unavailable')));
-  }
-  info.append(license);
-  if (item.sha256) info.append(make('p', 'hint', formatMessage('models.pinnedSha', { digest: item.sha256 })));
-  if (item.source_url) {
-    const sourceUrl = safeHttpsUrl(item.source_url);
-    if (sourceUrl) {
-      const source = make('a', 'catalog-source', translation('models.openOfficialSource', 'Open official model source'));
-      source.href = sourceUrl;
-      source.target = '_blank';
-      source.rel = 'noopener noreferrer';
-      info.append(source);
-    }
-  }
-  // Keep the catalog scannable as more runtimes arrive. Technical details are
-  // available on demand rather than taking over every component card.
+
   const compatibility = item.compatibility && typeof item.compatibility === 'object' ? item.compatibility : null;
   const resources = item.resources && typeof item.resources === 'object' ? item.resources : null;
   const provenance = item.provenance && typeof item.provenance === 'object' ? item.provenance : null;
   const evidence = item.evidence && typeof item.evidence === 'object' ? item.evidence : null;
-  if (compatibility || resources || provenance || evidence) {
+  const licenseUrl = safeHttpsUrl(item.license_url);
+  const sourceUrl = safeHttpsUrl(item.source_url);
+  if (compatibility || resources || provenance || evidence || modelProfile || item.sha256 || item.installed_path || item.license) {
     const details = make('details', 'catalog-details');
-    details.append(make('summary', '', translation('models.compatibility', 'Compatibility & requirements')));
+    details.append(make('summary', '', translation('models.details', 'Details & requirements')));
+    if (modelProfile) {
+      details.append(make('p', 'hint', formatMessage('models.modelProfile', {
+        architecture: modelProfile.architecture || translation('common.unspecified', 'unspecified'),
+        parameters: modelProfile.parameter_count || translation('common.unspecified', 'unspecified'),
+        format: modelProfile.format || translation('common.unspecified', 'unspecified'),
+        quantization: modelProfile.quantization || translation('common.unspecified', 'unspecified'),
+      }, 'Model: {architecture} · {parameters} · {format} · {quantization}')));
+    }
+    if (item.license) {
+      const license = make('p', 'catalog-license');
+      license.append(document.createTextNode(formatMessage('models.license', { license: item.license })));
+      if (licenseUrl) {
+        const link = make('a', '', translation('models.reviewLicense', 'Review license'));
+        link.href = licenseUrl;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        license.append(link);
+      }
+      details.append(license);
+    }
+    if (sourceUrl) {
+      const source = make('a', 'catalog-source', translation('models.openOfficialSource', 'Open official source'));
+      source.href = sourceUrl;
+      source.target = '_blank';
+      source.rel = 'noopener noreferrer';
+      details.append(source);
+    }
+    if (item.sha256) details.append(make('p', 'hint', formatMessage('models.pinnedSha', { digest: item.sha256 })));
     if (compatibility) {
       const targets = Array.isArray(compatibility.targets) ? compatibility.targets : [];
       if (targets.length) {
@@ -833,72 +920,122 @@ function catalogItemCard(item) {
     if (evidence) {
       details.append(make('p', 'hint', formatMessage('models.evidence', { package: evidence.package_verification || translation('common.unspecified', 'unspecified'), task: evidence.real_task_test || translation('common.unspecified', 'unspecified'), profile: evidence.profile_validation || translation('common.unspecified', 'unspecified') })));
     }
+    if (item.installed_path) details.append(make('p', 'hint', formatMessage('models.installedAt', { path: item.installed_path })));
     details.append(make('p', 'hint', translation('models.compatibilityDisclaimer', 'Compatibility and resource estimates are metadata, not a guarantee that this component will work on every machine.')));
     info.append(details);
   }
-  if (item.installed_path) info.append(make('p', 'hint', formatMessage('models.installedAt', { path: item.installed_path })));
 
   const actions = make('div', 'catalog-actions');
-  const acknowledgeLabel = make('label', 'license-ack');
-  const acknowledge = make('input');
-  acknowledge.type = 'checkbox';
-  acknowledge.id = `license-ack-${String(item.id).replace(/[^a-zA-Z0-9_-]/g, '-')}`;
-  acknowledge.checked = false;
-  const acknowledgeCopy = make('span', 'license-ack-copy');
-  acknowledgeCopy.append(make('strong', '', translation('models.requiredBeforeInstall', 'Required before install')), make('span', '', translation('models.acceptLicense', 'I have reviewed and accept this component’s license.')));
-  acknowledgeLabel.htmlFor = acknowledge.id;
-  acknowledgeLabel.append(acknowledge, acknowledgeCopy);
-  const queuedJob = downloadJobsSnapshot.find((job) => job.item_id === item.id &&
-    ['queued', 'running', 'downloading', 'verifying', 'extracting', 'configuring'].includes(job.state));
-  const installLabel = item.installed ? translation('models.installed', 'Installed')
-    : queuedJob ? (queuedJob.state === 'queued' ? translation('models.inQueue', 'In queue') : translation('models.installing', 'Installing…'))
-      : translation('models.downloadInstall', 'Download & install');
-  const install = make('button', 'button primary', installLabel);
-  install.type = 'button';
-  install.dataset.catalogInstallId = item.id;
-  install.disabled = Boolean(item.installed) || Boolean(queuedJob) || !licenseUrl;
-  acknowledge.addEventListener('change', () => {
-    install.classList.toggle('license-confirmed', acknowledge.checked);
-    if (acknowledge.checked) install.removeAttribute('aria-describedby');
+  if (item.installed) {
+    if (!profileSelected) {
+      const select = make('button', 'button secondary catalog-compact-action', isEngine
+        ? translation('models.selectEngine', 'Select engine')
+        : translation('models.selectForChat', 'Select for Chat'));
+      select.type = 'button';
+      select.addEventListener('click', () => selectCatalogComponentForProfile(item));
+      actions.append(select);
+    } else {
+      actions.append(make('p', 'catalog-active-note', translation('models.alreadySelected', 'This component is selected in the active Chat profile.')));
+    }
+  } else if (queuedJob) {
+    const viewActivity = make('button', 'text-button catalog-activity-link', translation('models.viewActivity', 'View activity'));
+    viewActivity.type = 'button';
+    viewActivity.addEventListener('click', () => setActiveView('activity'));
+    actions.append(viewActivity);
+  } else {
+    const acknowledgeLabel = make('label', 'license-ack');
+    const acknowledge = make('input');
+    acknowledge.type = 'checkbox';
+    acknowledge.id = `license-ack-${String(item.id).replace(/[^a-zA-Z0-9_-]/g, '-')}`;
+    acknowledge.checked = catalogLicenseAcknowledgements.has(item.id);
+    const acknowledgeCopy = make('span', 'license-ack-copy');
+    acknowledgeCopy.append(
+      make('strong', '', translation('models.requiredBeforeInstall', 'Required before install')),
+      make('span', '', translation('models.acceptLicense', 'I have reviewed and accept this component’s license.')),
+    );
+    acknowledgeLabel.htmlFor = acknowledge.id;
+    acknowledgeLabel.append(acknowledge, acknowledgeCopy);
+    const install = make('button', 'button primary', isEngine
+      ? translation('models.installEngine', 'Install engine runtime')
+      : translation('models.installModel', 'Install model'));
+    install.type = 'button';
+    install.dataset.catalogInstallId = item.id;
+    install.disabled = !licenseUrl;
+    acknowledge.addEventListener('change', () => {
+      if (acknowledge.checked) catalogLicenseAcknowledgements.add(item.id);
+      else catalogLicenseAcknowledgements.delete(item.id);
+      install.classList.toggle('license-confirmed', acknowledge.checked);
+      if (acknowledge.checked) install.removeAttribute('aria-describedby');
+      else install.setAttribute('aria-describedby', acknowledge.id);
+    });
+    if (acknowledge.checked) install.classList.add('license-confirmed');
     else install.setAttribute('aria-describedby', acknowledge.id);
-  });
-  install.addEventListener('click', async () => {
-    if (!acknowledge.checked) {
-      catalogError.textContent = translation('models.licenseCheck', 'Before downloading, tick the clearly marked license box on that component card.');
-      acknowledge.focus();
-      acknowledgeLabel.classList.add('needs-attention');
-      return;
-    }
-    acknowledgeLabel.classList.remove('needs-attention');
-    const sizeHint = Number(item.size_bytes || 0) > 0 ? formatMessage('models.approxDownload', { size: formatBytes(item.size_bytes) }) : translation('models.resolveSize', 'The exact archive size will be resolved from official release metadata.');
-    if (!window.confirm(formatMessage('models.confirmDownload', { name: item.name || item.id, sizeHint }))) return;
-    install.disabled = true;
-    catalogError.textContent = '';
-    try {
-      const started = await api('/v1/jobs', {
-        method: 'POST', body: JSON.stringify({ item_id: item.id, accept_license: true }),
-      });
-      catalogError.textContent = formatMessage('models.queued', { name: item.name || item.id, job: started.job_id });
-      await refreshDownloads();
-    } catch (error) {
-      catalogError.textContent = formatError(error);
-      install.disabled = Boolean(item.installed) || !licenseUrl;
-    }
-  });
-  actions.append(acknowledgeLabel, install);
-  if (!licenseUrl) actions.append(make('p', 'engine-error', translation('models.installBlocked', 'Installation is disabled because no safe HTTPS license link is available.')));
+    install.addEventListener('click', async () => {
+      if (!acknowledge.checked) {
+        catalogError.textContent = translation('models.licenseCheck', 'Before downloading, tick the clearly marked license box on that component card.');
+        acknowledge.focus();
+        acknowledgeLabel.classList.add('needs-attention');
+        return;
+      }
+      acknowledgeLabel.classList.remove('needs-attention');
+      const sizeHint = Number(item.size_bytes || 0) > 0 ? formatMessage('models.approxDownload', { size: formatBytes(item.size_bytes) }) : translation('models.resolveSize', 'The exact archive size will be resolved from official release metadata.');
+      if (!window.confirm(formatMessage('models.confirmDownload', { name: item.name || item.id, sizeHint }))) return;
+      install.disabled = true;
+      catalogError.textContent = '';
+      try {
+        const started = await api('/v1/jobs', {
+          method: 'POST', body: JSON.stringify({ item_id: item.id, accept_license: true }),
+        });
+        catalogError.textContent = formatMessage('models.queued', { name: item.name || item.id, job: started.job_id });
+        await refreshDownloads();
+        await refreshCatalog();
+      } catch (error) {
+        catalogError.textContent = formatError(error);
+        install.disabled = !licenseUrl;
+      }
+    });
+    actions.append(acknowledgeLabel, install);
+    if (!licenseUrl) actions.append(make('p', 'engine-error', translation('models.installBlocked', 'Installation is disabled because no safe HTTPS license link is available.')));
+  }
   card.append(info, actions);
   return card;
 }
 
 function renderCatalog() {
   const query = catalogSearch.value.trim().toLocaleLowerCase();
+  const taskGroups = [...new Set(catalogItems
+    .filter((item) => item.type === 'model')
+    .map((item) => catalogTaskGroup(item))
+    .filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  if (catalogTaskToolbar && catalogTaskFilter) {
+    catalogTaskFilter.replaceChildren();
+    const allTasks = make('option', '', translation('models.taskAll', 'All model tasks'));
+    allTasks.value = 'all';
+    catalogTaskFilter.append(allTasks);
+    for (const group of taskGroups) {
+      const option = make('option', '', catalogTaskGroupLabel(group));
+      option.value = group;
+      catalogTaskFilter.append(option);
+    }
+    if (!taskGroups.includes(activeCatalogTask)) activeCatalogTask = 'all';
+    catalogTaskFilter.value = activeCatalogTask;
+    catalogTaskToolbar.hidden = taskGroups.length < 2;
+  }
+
   const filtered = catalogItems.filter((item) => {
     const type = String(item.type || 'component').toLowerCase();
     if (activeCatalogFilter === 'installed' && !item.installed) return false;
     if (activeCatalogFilter !== 'all' && activeCatalogFilter !== 'installed' && type !== activeCatalogFilter) return false;
-    const searchable = [item.name, item.id, item.description, item.type, item.backend, item.license, item.version]
-      .filter(Boolean).join(' ').toLocaleLowerCase();
+    if (type === 'model' && activeCatalogTask !== 'all' && catalogTaskGroup(item) !== activeCatalogTask) return false;
+    const modelProfile = item.model_profile || {};
+    const searchable = [
+      item.name, item.id, item.description, item.type, item.family, item.backend,
+      item.license, item.version, modelProfile.architecture, modelProfile.parameter_count,
+      modelProfile.format, modelProfile.quantization, modelProfile.task_group,
+      ...(Array.isArray(item.tasks) ? item.tasks : []),
+      ...(Array.isArray(item.modalities) ? item.modalities : []),
+      ...(Array.isArray(item.workspaces) ? item.workspaces : []),
+    ].filter(Boolean).join(' ').toLocaleLowerCase();
     return !query || searchable.includes(query);
   });
   catalogList.replaceChildren();
@@ -908,16 +1045,37 @@ function renderCatalog() {
     const count = filter === 'all' ? catalogItems.length : (filter === 'installed'
       ? catalogItems.filter((item) => item.installed).length
       : catalogItems.filter((item) => String(item.type || 'component').toLowerCase() === filter).length);
-    button.textContent = `${button.dataset.label} (${count})`;
+    const filterLabel = button.dataset.labelKey
+      ? translation(button.dataset.labelKey, button.dataset.label || filter)
+      : (button.dataset.label || filter);
+    button.textContent = `${filterLabel} (${count})`;
     const selected = filter === activeCatalogFilter;
     button.classList.toggle('active', selected);
     button.setAttribute('aria-pressed', String(selected));
   }
+
+  const models = filtered.filter((item) => item.type === 'model');
+  const engines = filtered.filter((item) => item.type === 'engine');
+  const appendSection = (titleKey, fallback, descriptionKey, descriptionFallback, items, className) => {
+    if (!items.length) return;
+    const section = make('section', `catalog-section ${className}`);
+    const heading = make('div', 'catalog-section-heading');
+    const copy = make('div');
+    copy.append(make('h3', '', translation(titleKey, fallback)));
+    copy.append(make('p', 'hint', translation(descriptionKey, descriptionFallback)));
+    heading.append(copy, make('span', 'tag', String(items.length)));
+    section.append(heading);
+    const list = make('div', 'catalog-section-list');
+    for (const item of items) list.append(catalogItemCard(item));
+    section.append(list);
+    catalogList.append(section);
+  };
+  appendSection('models.groupModels', 'Models', 'models.groupModelsDescription', 'Model weights used by a compatible engine. Installing a model does not activate it.', models, 'catalog-model-section');
+  appendSection('models.groupEngines', 'Engine runtimes', 'models.groupEnginesDescription', 'Execution packages that load models. CPU and CUDA variants are engine backends, not separate models.', engines, 'catalog-engine-section');
+
   if (!filtered.length) {
     catalogList.append(make('div', 'empty', catalogItems.length ? translation('models.noFilterMatch', 'No components match this filter. Try another type or clear the search.') : translation('models.noneAvailable', 'No compatible catalog components are available for this computer yet.')));
-    return;
   }
-  for (const item of filtered) catalogList.append(catalogItemCard(item));
   renderRuntimeProfile();
 }
 
@@ -1048,6 +1206,7 @@ runtimeProfileApplyButton.addEventListener('click', async () => {
     };
     runtimeProfileSummary.textContent = translation('profile.applied', 'Runtime profile saved. Start the selected engine from Activity to enable Chat.');
     await Promise.all([refreshEngines(), refreshRuntimeProfile()]);
+    renderCatalog();
   } catch (error) {
     runtimeProfileError.textContent = formatError(error);
   } finally {
@@ -1655,6 +1814,10 @@ document.querySelector('#refresh').addEventListener('click', async () => {
 });
 catalogRefreshButton.addEventListener('click', refreshCatalog);
 catalogSearch.addEventListener('input', renderCatalog);
+if (catalogTaskFilter) catalogTaskFilter.addEventListener('change', () => {
+  activeCatalogTask = catalogTaskFilter.value || 'all';
+  renderCatalog();
+});
 catalogFilterButtons.forEach((button) => button.addEventListener('click', () => {
   activeCatalogFilter = button.dataset.catalogFilter || 'all';
   renderCatalog();
