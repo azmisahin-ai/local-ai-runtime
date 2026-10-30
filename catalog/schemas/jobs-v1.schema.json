@@ -40,6 +40,20 @@
         "attempt": { "type": "integer", "minimum": 1 },
         "cancel_requested": { "type": "boolean" },
         "retryable": { "type": "boolean" },
+        "queue_position": { "type": "integer", "minimum": 0 },
+        "dependency_plan": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "kind", "resolution"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1 },
+              "kind": { "type": "string", "minLength": 1 },
+              "resolution": { "type": "string", "minLength": 1 }
+            },
+            "additionalProperties": false
+          }
+        },
         "duration_ms": { "type": "integer", "minimum": 0 },
         "cancellable": { "type": "boolean" },
         "progress_bytes": { "type": "integer", "minimum": 0 }

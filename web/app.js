@@ -334,6 +334,7 @@ activateHashView();
 void setLocale(initialLocale);
 const completedDownloadJobs = new Set();
 let catalogItems = [];
+let downloadJobsSnapshot = [];
 let activeCatalogFilter = 'all';
 let availableRuntimeUpdate = null;
 let updateStageJobId = null;
@@ -847,9 +848,15 @@ function catalogItemCard(item) {
   acknowledgeCopy.append(make('strong', '', translation('models.requiredBeforeInstall', 'Required before install')), make('span', '', translation('models.acceptLicense', 'I have reviewed and accept this component’s license.')));
   acknowledgeLabel.htmlFor = acknowledge.id;
   acknowledgeLabel.append(acknowledge, acknowledgeCopy);
-  const install = make('button', 'button primary', item.installed ? translation('models.installed', 'Installed') : translation('models.downloadInstall', 'Download & install'));
+  const queuedJob = downloadJobsSnapshot.find((job) => job.item_id === item.id &&
+    ['queued', 'running', 'downloading', 'verifying', 'extracting', 'configuring'].includes(job.state));
+  const installLabel = item.installed ? translation('models.installed', 'Installed')
+    : queuedJob ? (queuedJob.state === 'queued' ? translation('models.inQueue', 'In queue') : translation('models.installing', 'Installing…'))
+      : translation('models.downloadInstall', 'Download & install');
+  const install = make('button', 'button primary', installLabel);
   install.type = 'button';
-  install.disabled = Boolean(item.installed) || !licenseUrl;
+  install.dataset.catalogInstallId = item.id;
+  install.disabled = Boolean(item.installed) || Boolean(queuedJob) || !licenseUrl;
   acknowledge.addEventListener('change', () => {
     install.classList.toggle('license-confirmed', acknowledge.checked);
     if (acknowledge.checked) install.removeAttribute('aria-describedby');
@@ -1114,6 +1121,13 @@ function downloadJobCard(job) {
   header.append(make('span', 'tag', isOperation ? translation('activity.operationTag', 'operation') : kindLabel));
   card.append(header);
   card.append(make('p', '', translateJobPhase(job.phase || job.state)));
+  if (job.state === 'queued' && Number(job.queue_position || 0) > 0) {
+    card.append(make('p', 'hint', formatMessage('activity.queuePosition', { position: job.queue_position }, `Queue position: ${job.queue_position}`)));
+  }
+  if (Array.isArray(job.dependency_plan) && job.dependency_plan.length) {
+    const dependencyNames = job.dependency_plan.map((dependency) => dependency.id).join(', ');
+    card.append(make('p', 'hint', formatMessage('activity.dependencyPlan', { dependencies: dependencyNames }, `Required components: ${dependencyNames}`)));
+  }
   if (Number(job.attempt || 1) > 1) card.append(make('p', 'hint', `${translation('activity.attempt', 'Attempt')} ${job.attempt}`));
   if (isOperation) {
     if (Number(job.progress_bytes || 0) > 0) card.append(make('p', 'hint', formatMessage('activity.outputReceivedBytes', { size: formatBytes(Number(job.progress_bytes)) }, `${formatBytes(Number(job.progress_bytes))} ${translation('activity.outputReceived', 'output received')}`)));
@@ -1179,6 +1193,20 @@ async function refreshDownloads() {
     const result = await api('/v1/jobs');
     if (!Array.isArray(result.data)) throw new Error('The unified job list response is invalid.');
     const jobs = [...result.data].sort((left, right) => Number(right.created_at || 0) - Number(left.created_at || 0));
+    downloadJobsSnapshot = jobs;
+    // Update only the install action label while polling. Rebuilding the full
+    // catalog would reset license acknowledgements and move keyboard focus.
+    for (const button of catalogList.querySelectorAll('button[data-catalog-install-id]')) {
+      const componentId = button.dataset.catalogInstallId;
+      const component = catalogItems.find((item) => item.id === componentId);
+      if (!component) continue;
+      const activeJob = jobs.find((job) => job.item_id === componentId &&
+        ['queued', 'running', 'downloading', 'verifying', 'extracting', 'configuring'].includes(job.state));
+      button.textContent = component.installed ? translation('models.installed', 'Installed')
+        : activeJob ? (activeJob.state === 'queued' ? translation('models.inQueue', 'In queue') : translation('models.installing', 'Installing…'))
+          : translation('models.downloadInstall', 'Download & install');
+      button.disabled = Boolean(component.installed) || Boolean(activeJob) || !component.license_url;
+    }
     const activeJobs = jobs.filter((job) => ['queued', 'running', 'downloading', 'verifying', 'extracting', 'configuring'].includes(job.state)).length;
     if (activityCountBadge) { activityCountBadge.textContent = String(activeJobs); activityCountBadge.hidden = activeJobs === 0; }
     if (activityActiveJobs) activityActiveJobs.textContent = String(activeJobs);

@@ -489,5 +489,9 @@
   "chat.engineRequired": "Seçilen sohbet motoru hazır değil. Models bölümünde bir model seçip profili uygulayın, ardından Activity bölümünden motoru başlatın. Mesajınız burada korunuyor.",
   "engine.profileModelNeeded": "Bu motoru başlatmadan önce Models → Etkin çalışma profili bölümünden kurulu bir model seçip uygulayın.",
   "profile.customConfigured": "Özel yapılandırma etkin",
-  "profile.customApplied": "Elle yapılandırılmış bir motor/model etkin. Düzenlemek için Gelişmiş Ayarları kullanın veya burada katalogdan bir profil seçin."
+  "profile.customApplied": "Elle yapılandırılmış bir motor/model etkin. Düzenlemek için Gelişmiş Ayarları kullanın veya burada katalogdan bir profil seçin.",
+  "models.inQueue": "Kuyrukta",
+  "models.installing": "Kuruluyor…",
+  "activity.queuePosition": "Kuyruk sırası: {position}",
+  "activity.dependencyPlan": "Gerekli bileşenler: {dependencies}"
 }

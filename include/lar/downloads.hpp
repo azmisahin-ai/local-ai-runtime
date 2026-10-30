@@ -4,8 +4,10 @@
 #include "lar/process.hpp"
 
 #include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -43,11 +45,8 @@ class DownloadManager {
 public:
     // Internal shared state is public only so C-style transfer callbacks can safely reference it.
     struct Job;
-    struct Worker {
-        std::string job_id;
-        std::thread thread;
-    };
-    DownloadManager(RuntimeConfig config, EngineManager& engines);
+    using QueueTestExecutor = std::function<void(const std::string&, const std::function<bool()>&)>;
+    DownloadManager(RuntimeConfig config, EngineManager& engines, QueueTestExecutor test_executor = {});
     DownloadManager(const DownloadManager&) = delete;
     DownloadManager& operator=(const DownloadManager&) = delete;
     ~DownloadManager();
@@ -80,7 +79,8 @@ private:
     bool persist_job(const std::shared_ptr<Job>& job) const;
     void remove_persisted_job(const std::string& job_id) const;
     void run_job(const std::shared_ptr<Job>& job);
-    void reap_finished_workers_locked();
+    void worker_loop();
+    std::size_t outstanding_install_job_count_locked() const;
     void download_model(const std::shared_ptr<Job>& job);
     void download_engine(const std::shared_ptr<Job>& job, const std::string& variant);
     void download_runtime_update(const std::shared_ptr<Job>& job);
@@ -93,7 +93,11 @@ private:
     mutable std::mutex mutex_;
     mutable std::mutex persistence_mutex_;
     std::vector<std::shared_ptr<Job>> jobs_;
-    std::vector<Worker> workers_;
+    std::condition_variable worker_cv_;
+    std::thread worker_thread_;
+    std::shared_ptr<Job> active_job_;
+    bool stopping_{false};
+    QueueTestExecutor test_executor_;
     std::uint64_t next_job_number_{1};
 };
 

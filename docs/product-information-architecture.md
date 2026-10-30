@@ -64,7 +64,7 @@ The component library is a resource browser, not the primary list of user tasks.
 2. **Models** — task/modality, family, format, quantization/precision, language, model size, license, disk size, and estimated system RAM/VRAM.
 3. **Supporting packages** — shown only where the user needs to understand a prerequisite; low-level CUDA DLL archives and similar assets remain dependencies of a selected engine.
 4. **Installed** — installed version, source, verification status, assigned model, running/ready state, and actions.
-5. **Activity & diagnostics** — current implementation provides persistent operation rows and engine state; the next queue/event-ledger work will add a true ordered timeline for downloads, validation, engine start/stop, inference failures, update and rollback events.
+5. **Activity & diagnostics** — persistent operation rows, engine state and the FIFO component-install queue. Queued jobs show their position and reviewed dependency plan; active transfer cancellation and explicit retry remain separate actions. A future append-only event ledger will add a richer ordered timeline for validation, engine start/stop, inference failures, update and rollback events.
 
 Search should match task, model family, quantization, backend, hardware requirement, and license. Incompatible items should be hidden from the default recommendation view or disabled with a concise reason, while advanced users may inspect the full catalog.
 
@@ -114,7 +114,7 @@ Every job emits structured local events with `job_id`, `component_id`, stage/pha
 3. [x] Complete the first localization/accessibility/onboarding slice; native screen-reader review and broader clean-OS acceptance remain open.
 4. [x] Move reviewed model, engine and dependency definitions to the embedded versioned authoring manifest.
 5. [~] Separate install from activation with explicit Runtime Profiles, persistent model/backend selection and Chat readiness gates; candidate is pending four-platform publisher CI.
-6. [ ] Add persistent installation queue and dependency/duplicate handling before growing the catalogue.
+6. [x] Add a persistent single-worker FIFO installation queue, idempotent duplicate handling, bounded queue capacity, queued cancellation, safe pending-job recovery and reviewed CUDA runtime dependency plans before growing the catalogue.
 7. [ ] Complete Catalog v2 and simplified model details/quantization UI.
 8. [ ] Finalize and test the shared engine adapter lifecycle against the existing `llama.cpp` integration.
 9. [ ] Validate reproducible CPU/GPU hardware profiles and add Qwen3.5/Gemma 4 as model-family pilots on the existing engine where formats and capabilities are verified.

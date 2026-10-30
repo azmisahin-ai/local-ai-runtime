@@ -10,12 +10,27 @@
 #include "lar/resource_monitor.hpp"
 
 #include <algorithm>
+#include <atomic>
+#include <condition_variable>
+#include <cstdlib>
+#include <functional>
+#include <mutex>
 #include <filesystem>
 #include <iostream>
 #include <fstream>
 #include <chrono>
 #include <stdexcept>
 #include <thread>
+#include <vector>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 namespace {
 void stage(const char* name) {
@@ -23,6 +38,18 @@ void stage(const char* name) {
 }
 void require(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
+}
+
+void set_test_data_root(const std::filesystem::path& root) {
+#ifdef _WIN32
+    if (!SetEnvironmentVariableW(L"LOCAL_AI_RUNTIME_DATA_DIR", root.c_str())) {
+        throw std::runtime_error("Could not set LOCAL_AI_RUNTIME_DATA_DIR for the install queue test.");
+    }
+#else
+    if (setenv("LOCAL_AI_RUNTIME_DATA_DIR", root.string().c_str(), 1) != 0) {
+        throw std::runtime_error("Could not set LOCAL_AI_RUNTIME_DATA_DIR for the install queue test.");
+    }
+#endif
 }
 }
 
@@ -46,6 +73,13 @@ int main() {
                 "CUDA 12 engine should resolve through the compiled manifest");
         require(cuda13_catalog_item && cuda13_catalog_item->installer == "llama-release" && cuda13_catalog_item->variant == "cuda13",
                 "CUDA 13 engine should resolve through the compiled manifest");
+        require(cpu_catalog_item->dependencies.empty(), "CPU llama.cpp must not declare a CUDA runtime dependency");
+        require(cuda12_catalog_item->dependencies.size() == 1 &&
+                cuda12_catalog_item->dependencies.front().id == "llama.cpp-cudart-cuda12",
+                "CUDA 12 must declare its matching runtime archive dependency");
+        require(cuda13_catalog_item->dependencies.size() == 1 &&
+                cuda13_catalog_item->dependencies.front().id == "llama.cpp-cudart-cuda13",
+                "CUDA 13 must declare its matching runtime archive dependency");
         require(starter_model && starter_model->installer == "pinned-gguf" && starter_model->filename == "qwen2.5-1.5b-instruct-q4_k_m.gguf",
                 "the default GGUF model should resolve from the manifest");
         require(lar::catalog::supports_target(*cpu_catalog_item, "windows", "x64"),
@@ -118,6 +152,255 @@ int main() {
                 "resource snapshot JSON omitted its schema version");
         require(resource_json.find("\"gpu_telemetry\"") != std::string::npos,
                 "resource snapshot JSON omitted GPU telemetry status");
+
+        stage("persistent sequential install queue and duplicate protection");
+        {
+            const auto queue_root = std::filesystem::temp_directory_path() /
+                ("lar-install-queue-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+            std::filesystem::create_directories(queue_root);
+            set_test_data_root(queue_root);
+            lar::EngineManager queue_engines({});
+            lar::RuntimeConfig queue_config;
+            std::mutex queue_mutex;
+            std::condition_variable queue_cv;
+            std::vector<std::string> execution_order;
+            std::atomic<int> active_workers{0};
+            std::atomic<int> maximum_active_workers{0};
+            bool first_started = false;
+            bool release_first = false;
+            auto executor = [&](const std::string& item_id, const std::function<bool()>& canceled) {
+                const int current = active_workers.fetch_add(1) + 1;
+                int observed = maximum_active_workers.load();
+                while (current > observed && !maximum_active_workers.compare_exchange_weak(observed, current)) {}
+                {
+                    std::lock_guard<std::mutex> lock(queue_mutex);
+                    execution_order.push_back(item_id);
+                    if (item_id == "llama.cpp-cpu") first_started = true;
+                }
+                queue_cv.notify_all();
+                if (item_id == "llama.cpp-cpu") {
+                    std::unique_lock<std::mutex> lock(queue_mutex);
+                    queue_cv.wait(lock, [&] { return release_first || canceled(); });
+                }
+                active_workers.fetch_sub(1);
+                if (canceled()) throw std::runtime_error("Download canceled by the user.");
+            };
+            {
+                lar::DownloadManager queue_manager(queue_config, queue_engines, executor);
+                std::string first_job, duplicate_job, second_job, canceled_job, queue_error;
+                require(queue_manager.start("llama.cpp-cpu", true, first_job, queue_error),
+                        (std::string("first catalog install should queue: ") + queue_error).c_str());
+                {
+                    std::unique_lock<std::mutex> lock(queue_mutex);
+                    require(queue_cv.wait_for(lock, std::chrono::seconds(2), [&] { return first_started; }),
+                            "the first queued install did not start");
+                }
+                require(queue_manager.start("llama.cpp-cpu", true, duplicate_job, queue_error),
+                        "a duplicate install request should reuse the queued/active job");
+                require(duplicate_job == first_job, "duplicate item clicks created a second install job");
+                require(queue_manager.start("qwen2.5-1.5b-q4km", true, second_job, queue_error),
+                        (std::string("second catalog install should join the queue: ") + queue_error).c_str());
+                require(second_job != first_job, "a distinct component must receive its own queue job");
+                const auto second_snapshot = queue_manager.job_json(second_job);
+                require(second_snapshot && second_snapshot->find("\"state\":\"queued\"") != std::string::npos &&
+                        second_snapshot->find("\"queue_position\":1") != std::string::npos,
+                        "the second install should remain queued at position one while the first is active");
+                require(queue_manager.start("llama.cpp-cuda12", true, canceled_job, queue_error),
+                        (std::string("a third install should join the queue: ") + queue_error).c_str());
+                const auto third_snapshot = queue_manager.job_json(canceled_job);
+                require(third_snapshot && third_snapshot->find("\"queue_position\":2") != std::string::npos &&
+                        third_snapshot->find("llama.cpp-cudart-cuda12") != std::string::npos,
+                        "the third CUDA install should expose queue position two and its reviewed runtime dependency");
+                require(queue_manager.cancel(canceled_job, queue_error),
+                        "a not-yet-started install should be cancelable immediately");
+                const auto canceled_snapshot = queue_manager.job_json(canceled_job);
+                require(canceled_snapshot && canceled_snapshot->find("\"state\":\"canceled\"") != std::string::npos,
+                        "canceling a queued install should mark it terminal without interrupting the active install");
+                {
+                    std::lock_guard<std::mutex> lock(queue_mutex);
+                    release_first = true;
+                }
+                queue_cv.notify_all();
+                const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+                bool completed = false;
+                while (std::chrono::steady_clock::now() < deadline) {
+                    const auto snapshot = queue_manager.job_json(second_job);
+                    if (snapshot && snapshot->find("\"state\":\"succeeded\"") != std::string::npos) {
+                        completed = true;
+                        break;
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                }
+                require(completed, "the second queued install did not run after the first completed");
+                require(maximum_active_workers.load() == 1, "more than one install worker ran concurrently");
+                {
+                    std::lock_guard<std::mutex> lock(queue_mutex);
+                    require(execution_order.size() == 2 && execution_order[0] == "llama.cpp-cpu" &&
+                            execution_order[1] == "qwen2.5-1.5b-q4km",
+                            "the install queue did not preserve FIFO order or ran a canceled queued item");
+                }
+            }
+            std::error_code ignored;
+            std::filesystem::remove_all(queue_root, ignored);
+        }
+
+        stage("queued installs survive runtime restart; active install is not replayed");
+        {
+            const auto queue_root = std::filesystem::temp_directory_path() /
+                ("lar-install-queue-restart-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+            std::filesystem::create_directories(queue_root);
+            set_test_data_root(queue_root);
+            lar::EngineManager queue_engines({});
+            lar::RuntimeConfig queue_config;
+            std::mutex queue_mutex;
+            std::condition_variable queue_cv;
+            bool active_started = false;
+            std::string active_job_id;
+            std::string pending_job_id;
+            auto blocking_executor = [&](const std::string&, const std::function<bool()>& canceled) {
+                {
+                    std::lock_guard<std::mutex> lock(queue_mutex);
+                    active_started = true;
+                }
+                queue_cv.notify_all();
+                while (!canceled()) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                throw std::runtime_error("Download canceled by the user.");
+            };
+            {
+                lar::DownloadManager first_runtime(queue_config, queue_engines, blocking_executor);
+                std::string queue_error;
+                require(first_runtime.start("llama.cpp-cpu", true, active_job_id, queue_error),
+                        "active install should start before simulated restart");
+                {
+                    std::unique_lock<std::mutex> lock(queue_mutex);
+                    require(queue_cv.wait_for(lock, std::chrono::seconds(2), [&] { return active_started; }),
+                            "active install did not enter its worker before simulated restart");
+                }
+                require(first_runtime.start("qwen2.5-1.5b-q4km", true, pending_job_id, queue_error),
+                        "the second install should persist as pending before simulated restart");
+            }
+            const auto pending_record = queue_root / "jobs" / (pending_job_id + ".json");
+            require(std::filesystem::is_regular_file(pending_record), "queued install record was not persisted");
+            {
+                std::ifstream input(pending_record, std::ios::binary);
+                const std::string content((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+                require(content.find("\"state\":\"queued\"") != std::string::npos,
+                        "shutdown should preserve not-yet-started jobs in queued state");
+            }
+            std::atomic<int> resumed_count{0};
+            auto resumed_executor = [&](const std::string& item_id, const std::function<bool()>& canceled) {
+                require(item_id == "qwen2.5-1.5b-q4km", "runtime restart replayed the active install instead of the pending queue item");
+                if (canceled()) throw std::runtime_error("Download canceled by the user.");
+                ++resumed_count;
+            };
+            {
+                lar::DownloadManager restored_runtime(queue_config, queue_engines, resumed_executor);
+                const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+                bool resumed = false;
+                while (std::chrono::steady_clock::now() < deadline) {
+                    const auto snapshot = restored_runtime.job_json(pending_job_id);
+                    if (snapshot && snapshot->find("\"state\":\"succeeded\"") != std::string::npos) {
+                        resumed = true;
+                        break;
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                }
+                require(resumed && resumed_count.load() == 1,
+                        "the explicitly queued install did not resume after runtime restart");
+                const auto interrupted = restored_runtime.job_json(active_job_id);
+                require(interrupted && interrupted->find("\"state\":\"canceled\"") != std::string::npos,
+                        "the in-flight install should stop safely and must not be replayed after restart");
+            }
+            std::error_code ignored;
+            std::filesystem::remove_all(queue_root, ignored);
+        }
+
+
+        stage("retry a failed install behind an active queued install");
+        {
+            const auto queue_root = std::filesystem::temp_directory_path() /
+                ("lar-install-queue-retry-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+            std::filesystem::create_directories(queue_root);
+            set_test_data_root(queue_root);
+            lar::EngineManager queue_engines({});
+            lar::RuntimeConfig queue_config;
+            std::mutex queue_mutex;
+            std::condition_variable queue_cv;
+            std::atomic<int> model_attempts{0};
+            std::vector<std::string> execution_order;
+            bool engine_started = false;
+            bool release_engine = false;
+            auto retry_executor = [&](const std::string& item_id, const std::function<bool()>& canceled) {
+                {
+                    std::lock_guard<std::mutex> lock(queue_mutex);
+                    execution_order.push_back(item_id);
+                    if (item_id == "llama.cpp-cpu") engine_started = true;
+                }
+                queue_cv.notify_all();
+                if (item_id == "qwen2.5-1.5b-q4km" && model_attempts.fetch_add(1) == 0) {
+                    throw std::runtime_error("Simulated transient model download failure.");
+                }
+                if (item_id == "llama.cpp-cpu") {
+                    std::unique_lock<std::mutex> lock(queue_mutex);
+                    queue_cv.wait(lock, [&] { return release_engine || canceled(); });
+                }
+                if (canceled()) throw std::runtime_error("Download canceled by the user.");
+            };
+            {
+                lar::DownloadManager queue_manager(queue_config, queue_engines, retry_executor);
+                std::string model_job, engine_job, queue_error;
+                require(queue_manager.start("qwen2.5-1.5b-q4km", true, model_job, queue_error),
+                        "the initial model install should enter the queue");
+                const auto failure_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+                bool failed = false;
+                while (std::chrono::steady_clock::now() < failure_deadline) {
+                    const auto snapshot = queue_manager.job_json(model_job);
+                    if (snapshot && snapshot->find("\"state\":\"failed\"") != std::string::npos) {
+                        failed = true;
+                        break;
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                }
+                require(failed, "the simulated first model attempt did not fail");
+                require(queue_manager.start("llama.cpp-cpu", true, engine_job, queue_error),
+                        "a different engine install should start after the model failure");
+                {
+                    std::unique_lock<std::mutex> lock(queue_mutex);
+                    require(queue_cv.wait_for(lock, std::chrono::seconds(2), [&] { return engine_started; }),
+                            "the engine install did not become active before model retry");
+                }
+                require(queue_manager.retry(model_job, queue_error),
+                        (std::string("a failed model retry should queue behind the active engine install: ") + queue_error).c_str());
+                const auto retry_snapshot = queue_manager.job_json(model_job);
+                require(retry_snapshot && retry_snapshot->find("\"state\":\"queued\"") != std::string::npos &&
+                        retry_snapshot->find("\"attempt\":2") != std::string::npos &&
+                        retry_snapshot->find("\"queue_position\":1") != std::string::npos,
+                        "retry should increment the attempt and wait behind the active install");
+                {
+                    std::lock_guard<std::mutex> lock(queue_mutex);
+                    release_engine = true;
+                }
+                queue_cv.notify_all();
+                const auto success_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+                bool succeeded = false;
+                while (std::chrono::steady_clock::now() < success_deadline) {
+                    const auto snapshot = queue_manager.job_json(model_job);
+                    if (snapshot && snapshot->find("\"state\":\"succeeded\"") != std::string::npos) {
+                        succeeded = true;
+                        break;
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                }
+                require(succeeded && model_attempts.load() == 2,
+                        "the queued retry did not execute and succeed after the active install finished");
+                std::lock_guard<std::mutex> lock(queue_mutex);
+                require(execution_order.size() == 3 && execution_order[0] == "qwen2.5-1.5b-q4km" &&
+                        execution_order[1] == "llama.cpp-cpu" && execution_order[2] == "qwen2.5-1.5b-q4km",
+                        "the failed job retry did not preserve FIFO queue order");
+            }
+            std::error_code ignored;
+            std::filesystem::remove_all(queue_root, ignored);
+        }
 
         stage("archive path safety");
         // Engine archives are untrusted inputs; extraction must reject paths that

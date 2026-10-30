@@ -10,6 +10,7 @@ At CMake configure time, the manifest is embedded into the runtime binary. The r
 - Each component has a stable `id`, `kind`, `installable` flag, `default_model` marker, an `install` policy, and `metadata_json`.
 - `metadata_json` is the compact canonical `component-v1` JSON object stored as a string so the compiled runtime can preserve JSON scalar types exactly when it adds runtime-derived `installed` and `installed_path` properties.
 - `install.targets` is the install allowlist for OS/architecture pairs. It must exactly match `metadata_json.compatibility.targets`; display claims and install permissions cannot drift apart.
+- `metadata_json.provenance.dependencies` is an explicit, reviewed dependency plan. In the current v1 starter catalogue it describes the matching CUDA runtime archive for CUDA 12/13 llama.cpp packages. That archive is resolved from the same official release, verified and installed as part of the parent engine job; it is not an independent user-selectable component.
 - The only accepted installer strategies in v1 are `llama-release` and `pinned-gguf`. Unknown strategy names fail closed.
 
 The contracts are:
@@ -26,6 +27,14 @@ Used only for reviewed `llama.cpp` engine variants (`cpu`, `cuda12`, `cuda13`). 
 ### `pinned-gguf`
 
 Used for the default Qwen GGUF starter model. The install record pins a reviewed Hugging Face model repository, immutable 40-character revision, exact filename, SHA-256 and byte size. Runtime validation requires the exact reviewed upstream URL namespace, a path-safe filename, a 64-character digest, a positive bounded size, and matching digest/size in the public metadata. A manifest cannot provide an executable command or install script.
+
+## Installation queue and dependency behavior
+
+All component and runtime-update downloads enter one persistent FIFO installation queue. The runtime accepts up to 16 outstanding installation jobs (including the active job) and uses one installation worker, so only one download/extract/configure pipeline runs at a time. Repeated requests for the same queued or active component are idempotent and return the existing job instead of creating duplicates. The queue is bounded; a full queue returns HTTP `409` and remains visible in Activity. A queued item can be canceled before it starts; an active transfer receives a cancellation request and is finalized at a safe cancellation point.
+
+CUDA 12 and CUDA 13 engine entries declare their matching runtime archive in `provenance.dependencies`. The runtime resolves the server and companion archive from the same official release, verifies both SHA-256 values, and stages them under one parent job. The Activity job exposes `queue_position` and `dependency_plan`; it does not create a separate synthetic job for an internal DLL/archive dependency. CPU llama.cpp and the pinned GGUF starter have no additional installer dependency.
+
+Queued entries are persisted and revalidated against the embedded manifest, platform allowlist and recorded license acceptance at startup. Safe jobs that had not started resume in FIFO order. A job whose transfer was already active at shutdown is recorded as interrupted and is not replayed automatically; the user must explicitly retry it. This prevents an ambiguous partial download or install from silently running twice.
 
 ## Adding or changing a component safely
 

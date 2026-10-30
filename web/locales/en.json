@@ -489,5 +489,9 @@
   "chat.engineRequired": "The selected chat engine is not ready. Choose and apply a model in Models, then start the engine from Activity. Your message is still here.",
   "engine.profileModelNeeded": "Choose and apply an installed model in Models → Active runtime profile before starting this engine.",
   "profile.customConfigured": "Custom setup active",
-  "profile.customApplied": "A manually configured engine/model is active. Use Advanced Settings to edit it, or choose an installed catalog profile here."
+  "profile.customApplied": "A manually configured engine/model is active. Use Advanced Settings to edit it, or choose an installed catalog profile here.",
+  "models.inQueue": "In queue",
+  "models.installing": "Installing…",
+  "activity.queuePosition": "Queue position: {position}",
+  "activity.dependencyPlan": "Required components: {dependencies}"
 }

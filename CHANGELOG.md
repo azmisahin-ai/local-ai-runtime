@@ -21,6 +21,16 @@
 
 # Changelog
 
+## Unreleased — persistent sequential installation queue
+
+- Replace per-install worker threads with one bounded (16 outstanding jobs including the active job), persistent FIFO worker shared by component and runtime-update downloads; keep only one installation pipeline active at a time.
+- Make repeated requests for the same queued/active component idempotent, returning the existing job ID instead of producing duplicate installation work.
+- Persist queue position and reviewed dependency plans in `jobs-v1`; show queue position, dependency assets, and queued/installing status in Activity and Models without resetting license-checkbox state during periodic refresh.
+- Declare matching CUDA 12/13 runtime archives in the embedded component manifest and resolve, SHA-256 verify, extract and merge each archive within its parent llama.cpp engine job.
+- Persist unstarted, user-authorized queued work and revalidate its component, platform and license before resuming after restart. Mark active transfers interrupted/canceled without automatic replay.
+- Add explicit queued-job cancellation, retry-to-queue behavior, queue capacity limits, duplicate protection, FIFO/one-worker core tests and restart recovery tests.
+- Keep `/v1/downloads` backwards compatible and return HTTP 409 for queue capacity/shutdown conflicts.
+
 ## Unreleased — manifest-driven component catalog
 
 - Add `catalog/manifest-v1.json` as the versioned source of truth for the reviewed component display metadata and installation allowlist.

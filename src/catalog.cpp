@@ -112,6 +112,27 @@ std::vector<ComponentDefinition> parse_embedded_manifest() {
             throw std::runtime_error("Catalog metadata identity does not match its install manifest entry: " + component.id);
         }
 
+        const auto dependency_nodes = metadata.get_child_optional("provenance.dependencies");
+        if (!dependency_nodes) {
+            throw std::runtime_error("Catalog metadata has no dependency declaration: " + component.id);
+        }
+        std::set<std::string> dependency_ids;
+        for (const auto& dependency_entry : *dependency_nodes) {
+            if (!has_only_keys(dependency_entry.second, {"id", "kind", "resolution"})) {
+                throw std::runtime_error("A catalog dependency contains an unknown property: " + component.id);
+            }
+            ComponentDependency dependency;
+            dependency.id = dependency_entry.second.get<std::string>("id", "");
+            dependency.kind = dependency_entry.second.get<std::string>("kind", "");
+            dependency.resolution = dependency_entry.second.get<std::string>("resolution", "");
+            if (!valid_id(dependency.id) || dependency.kind != "runtime-archive" ||
+                dependency.resolution.empty() || dependency.resolution.size() > 240 ||
+                !dependency_ids.insert(dependency.id).second) {
+                throw std::runtime_error("A catalog dependency has an invalid identity, kind, resolution or duplicate ID: " + component.id);
+            }
+            component.dependencies.push_back(std::move(dependency));
+        }
+
         const auto target_nodes = node.get_child_optional("install.targets");
         if (!target_nodes || target_nodes->empty()) {
             throw std::runtime_error("The component manifest entry has no supported install targets: " + component.id);
@@ -197,6 +218,18 @@ std::vector<ComponentDefinition> parse_embedded_manifest() {
             ++default_model_count;
         } else {
             throw std::runtime_error("The component manifest contains an unknown install strategy: " + component.installer);
+        }
+
+        if (component.installer == "llama-release" && component.variant == "cuda12") {
+            if (component.dependencies.size() != 1U || component.dependencies.front().id != "llama.cpp-cudart-cuda12") {
+                throw std::runtime_error("CUDA 12 llama.cpp must declare its matching runtime archive dependency.");
+            }
+        } else if (component.installer == "llama-release" && component.variant == "cuda13") {
+            if (component.dependencies.size() != 1U || component.dependencies.front().id != "llama.cpp-cudart-cuda13") {
+                throw std::runtime_error("CUDA 13 llama.cpp must declare its matching runtime archive dependency.");
+            }
+        } else if (!component.dependencies.empty()) {
+            throw std::runtime_error("This install strategy does not support external component dependencies: " + component.id);
         }
         result.push_back(std::move(component));
     }

@@ -1555,7 +1555,8 @@ http::response<http::string_body> handle_request(const http::request<http::strin
             std::string error;
             if (!downloads.start(item_id, accept_license, job_id, error)) {
                 const auto status = error.find("already being installed") != std::string::npos ||
-                    error.find("active in job") != std::string::npos || error.find("running engines") != std::string::npos
+                    error.find("active in job") != std::string::npos || error.find("running engines") != std::string::npos ||
+                    error.find("queue is full") != std::string::npos || error.find("shutting down") != std::string::npos
                     ? http::status::conflict : http::status::unprocessable_entity;
                 return error_response(status, version, error);
             }
@@ -1592,7 +1593,10 @@ http::response<http::string_body> handle_request(const http::request<http::strin
                     }
                     return error_response(http::status::not_found, version, error);
                 }
-                const auto status = error.find("active") != std::string::npos || error.find("running engines") != std::string::npos
+                const auto status = error.find("active") != std::string::npos ||
+                    error.find("running engines") != std::string::npos ||
+                    error.find("queue is full") != std::string::npos ||
+                    error.find("shutting down") != std::string::npos
                     ? http::status::conflict : http::status::unprocessable_entity;
                 return error_response(status, version, error);
             }
@@ -1634,7 +1638,10 @@ http::response<http::string_body> handle_request(const http::request<http::strin
                 std::string job_id;
                 std::string error;
                 if (!downloads.start(std::string(route_id), accept_license, job_id, error)) {
-                    const auto status = error.find("already being installed") != std::string::npos || error.find("running engines") != std::string::npos
+                    const auto status = error.find("already being installed") != std::string::npos ||
+                        error.find("running engines") != std::string::npos ||
+                        error.find("queue is full") != std::string::npos ||
+                        error.find("shutting down") != std::string::npos
                         ? http::status::conflict : http::status::unprocessable_entity;
                     return error_response(status, version, error);
                 }

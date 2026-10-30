@@ -271,7 +271,11 @@ def main():
             assert restored_job["error_code"] == "process_interrupted"
             assert restored_job["retryable"] is True and restored_job["attempt"] == 2
             assert restored_job["downloaded_bytes"] == 4096 and restored_job["cancel_requested"] is False
+            assert restored_job["queue_position"] == 0 and restored_job["dependency_plan"] == [], (
+                "Terminal legacy jobs must expose neutral queue metadata in jobs-v1"
+            )
             assert restored_jobs[1]["retryable"] is False, "Persisted jobs outside the reviewed catalog must never become retry commands"
+            assert restored_jobs[1]["queue_position"] == 0 and restored_jobs[1]["dependency_plan"] == []
             legacy_jobs_status, legacy_jobs_raw, _ = request(base + "/v1/downloads")
             assert legacy_jobs_status == 200 and json.loads(legacy_jobs_raw)["data"][0]["id"] == "download-41", (
                 "The legacy downloads endpoint must remain an alias for the persistent job list"

@@ -78,6 +78,7 @@ constexpr char kGitHubAssetPrefix[] = "https://github.com/ggml-org/llama.cpp/rel
 constexpr std::uint64_t kMaximumArchiveExpandedBytes = 3ULL * 1024ULL * 1024ULL * 1024ULL;
 constexpr std::uint64_t kMaximumReleaseAssetBytes = 2ULL * 1024ULL * 1024ULL * 1024ULL;
 constexpr std::uint64_t kMaximumRuntimeUpdateBytes = 256ULL * 1024ULL * 1024ULL;
+constexpr std::size_t kMaximumOutstandingInstallJobs = 16;
 
 const catalog::ComponentDefinition& pinned_model_component(std::string_view id) {
     const auto* component = catalog::find_component(id);
@@ -707,7 +708,7 @@ std::uint64_t unix_time_millis() {
 }
 
 bool is_active_job_state(std::string_view state) {
-    return state == "queued" || state == "downloading" || state == "verifying" ||
+    return state == "queued" || state == "running" || state == "downloading" || state == "verifying" ||
            state == "extracting" || state == "configuring";
 }
 
@@ -764,6 +765,38 @@ DownloadJobSnapshot snapshot_job(const std::shared_ptr<DownloadManager::Job>& jo
             job->installed_path, job->error, job->last_error, job->error_code, job->downloaded_bytes, job->total_bytes,
             job->created_at, job->updated_at, job->started_at, job->finished_at, job->attempt,
             job->cancel_requested.load(), is_retryable_job(*job)};
+}
+
+std::map<std::string, std::size_t> build_queue_positions(
+    const std::vector<std::shared_ptr<DownloadManager::Job>>& jobs) {
+    std::vector<std::pair<std::uint64_t, std::shared_ptr<DownloadManager::Job>>> queued;
+    for (const auto& job : jobs) {
+        const auto view = snapshot_job(job);
+        if (view.state == "queued") queued.emplace_back(view.updated_at, job);
+    }
+    std::stable_sort(queued.begin(), queued.end(), [](const auto& left, const auto& right) {
+        if (left.first != right.first) return left.first < right.first;
+        return snapshot_job(left.second).created_at < snapshot_job(right.second).created_at;
+    });
+    std::map<std::string, std::size_t> result;
+    for (std::size_t i = 0; i < queued.size(); ++i) result.emplace(snapshot_job(queued[i].second).id, i + 1U);
+    return result;
+}
+
+std::string dependency_plan_json(const std::string& item_id) {
+    const auto* component = catalog::find_component(item_id);
+    if (!component || component->dependencies.empty()) return "[]";
+    std::ostringstream out;
+    out << '[';
+    for (std::size_t i = 0; i < component->dependencies.size(); ++i) {
+        if (i) out << ',';
+        const auto& dependency = component->dependencies[i];
+        out << "{\"id\":" << json_quote(dependency.id)
+            << ",\"kind\":" << json_quote(dependency.kind)
+            << ",\"resolution\":" << json_quote(dependency.resolution) << '}';
+    }
+    out << ']';
+    return out.str();
 }
 
 void download_to_file(const std::string& url, const std::filesystem::path& destination,
@@ -854,9 +887,10 @@ bool is_supported_cuda_runtime_archive(const std::string& name, const std::strin
 }
 } // namespace catalog
 
-DownloadManager::DownloadManager(RuntimeConfig config, EngineManager& engines)
-    : config_(std::move(config)), engines_(engines) {
+DownloadManager::DownloadManager(RuntimeConfig config, EngineManager& engines, QueueTestExecutor test_executor)
+    : config_(std::move(config)), engines_(engines), test_executor_(std::move(test_executor)) {
     load_jobs();
+    worker_thread_ = std::thread([this] { worker_loop(); });
 }
 
 bool DownloadManager::is_newer_release_tag(const std::string& candidate_tag, const std::string& current_version) {
@@ -867,9 +901,13 @@ bool DownloadManager::is_newer_release_tag(const std::string& candidate_tag, con
 DownloadManager::~DownloadManager() {
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        for (const auto& job : jobs_) job->cancel_requested.store(true);
+        stopping_ = true;
+        // Stop only the active transfer. Explicitly queued jobs remain persisted
+        // and are resumed in FIFO order the next time the runtime starts.
+        if (active_job_) active_job_->cancel_requested.store(true);
     }
-    for (auto& worker : workers_) if (worker.thread.joinable()) worker.thread.join();
+    worker_cv_.notify_all();
+    if (worker_thread_.joinable()) worker_thread_.join();
 }
 
 void DownloadManager::load_jobs() {
@@ -925,11 +963,40 @@ void DownloadManager::load_jobs() {
             if (job->created_at == 0) job->created_at = unix_time_millis();
             if (job->updated_at == 0) job->updated_at = job->created_at;
 
-            if (!is_terminal_job_state(job->state)) {
+            if (job->state == "queued") {
+                bool safe_to_resume = false;
+                if (job->item_id == "runtime-update") {
+                    const auto expected_asset = runtime_update_asset_name();
+                    const auto expected_url = "https://github.com/azmisahin-ai/local-ai-runtime/releases/download/" +
+                                              job->version + "/" + expected_asset;
+                    safe_to_resume = job->kind == "update" && !expected_asset.empty() &&
+                        job->asset_name == expected_asset && job->source_url == expected_url &&
+                        is_newer_release_tag(job->version, "0.0.0") &&
+                        is_sha256_digest(job->expected_sha256) && job->expected_size >= 1024 &&
+                        job->expected_size <= kMaximumRuntimeUpdateBytes;
+                } else {
+                    const auto* component = catalog::find_component(job->item_id);
+                    safe_to_resume = job->license_accepted && component && component->installable &&
+                        component->kind == job->kind &&
+                        (component->installer == "llama-release" || component->installer == "pinned-gguf") &&
+                        catalog::supports_target(*component, host_os(), host_architecture());
+                }
+                if (!safe_to_resume || job->cancel_requested.load()) {
+                    job->state = job->cancel_requested.load() ? "canceled" : "failed";
+                    job->phase = job->cancel_requested.load() ? "Canceled while waiting in the install queue" : "Queued item failed startup validation";
+                    job->error_code = job->cancel_requested.load() ? "job_canceled" : "queue_validation_failed";
+                    job->error = job->cancel_requested.load()
+                        ? "The queued installation was canceled before it started."
+                        : "The saved queue entry no longer matches a trusted, installable catalog item for this platform.";
+                    job->finished_at = unix_time_millis();
+                    job->updated_at = job->finished_at;
+                    job->cancel_requested.store(false);
+                }
+            } else if (!is_terminal_job_state(job->state)) {
                 job->state = "interrupted";
                 job->phase = "Interrupted when Local AI Runtime was not running";
                 job->error_code = "process_interrupted";
-                job->error = "The runtime stopped before this job finished. It was not resumed automatically; retry it to start a new attempt.";
+                job->error = "The active installation was interrupted when the runtime stopped. It was not replayed; retry it to create a new queued attempt.";
                 job->finished_at = unix_time_millis();
                 job->updated_at = job->finished_at;
                 job->cancel_requested.store(false);
@@ -1339,6 +1406,7 @@ std::string DownloadManager::jobs_json() const {
         std::lock_guard<std::mutex> lock(mutex_);
         jobs = jobs_;
     }
+    const auto queue_positions = build_queue_positions(jobs);
     std::ostringstream out;
     out << "{\"data\":[";
     for (std::size_t i = 0; i < jobs.size(); ++i) {
@@ -1346,6 +1414,7 @@ std::string DownloadManager::jobs_json() const {
         const auto job = snapshot_job(jobs[i]);
         const auto percent = job.total_bytes > 0 ? std::min<std::uint64_t>(100, (job.downloaded_bytes * 100ULL) / job.total_bytes)
                           : (job.state == "succeeded" ? 100ULL : 0ULL);
+        const auto position = queue_positions.find(job.id);
         out << "{\"id\":" << json_quote(job.id) << ",\"item_id\":" << json_quote(job.item_id)
             << ",\"kind\":" << json_quote(job.kind) << ",\"state\":" << json_quote(job.state)
             << ",\"phase\":" << json_quote(job.phase) << ",\"version\":" << json_quote(job.version)
@@ -1360,7 +1429,9 @@ std::string DownloadManager::jobs_json() const {
             << ",\"finished_at\":" << job.finished_at
             << ",\"attempt\":" << job.attempt
             << ",\"cancel_requested\":" << (job.cancel_requested ? "true" : "false")
-            << ",\"retryable\":" << (job.retryable ? "true" : "false") << '}';
+            << ",\"retryable\":" << (job.retryable ? "true" : "false")
+            << ",\"queue_position\":" << (position == queue_positions.end() ? 0U : position->second)
+            << ",\"dependency_plan\":" << dependency_plan_json(job.item_id) << '}';
     }
     out << "]}";
     return out.str();
@@ -1372,11 +1443,13 @@ std::optional<std::string> DownloadManager::job_json(const std::string& id) cons
         std::lock_guard<std::mutex> lock(mutex_);
         jobs = jobs_;
     }
+    const auto queue_positions = build_queue_positions(jobs);
     for (const auto& job : jobs) {
         const auto view = snapshot_job(job);
         if (view.id != id) continue;
         const auto percent = view.total_bytes > 0 ? std::min<std::uint64_t>(100, (view.downloaded_bytes * 100ULL) / view.total_bytes)
                           : (view.state == "succeeded" ? 100ULL : 0ULL);
+        const auto position = queue_positions.find(view.id);
         return "{\"id\":" + json_quote(view.id) + ",\"item_id\":" + json_quote(view.item_id) +
             ",\"kind\":" + json_quote(view.kind) + ",\"state\":" + json_quote(view.state) +
             ",\"phase\":" + json_quote(view.phase) + ",\"version\":" + json_quote(view.version) +
@@ -1389,9 +1462,19 @@ std::optional<std::string> DownloadManager::job_json(const std::string& id) cons
             ",\"started_at\":" + std::to_string(view.started_at) + ",\"finished_at\":" + std::to_string(view.finished_at) +
             ",\"attempt\":" + std::to_string(view.attempt) +
             ",\"cancel_requested\":" + (view.cancel_requested ? "true" : "false") +
-            ",\"retryable\":" + (view.retryable ? "true" : "false") + "}";
+            ",\"retryable\":" + (view.retryable ? "true" : "false") +
+            ",\"queue_position\":" + std::to_string(position == queue_positions.end() ? 0U : position->second) +
+            ",\"dependency_plan\":" + dependency_plan_json(view.item_id) + "}";
     }
     return std::nullopt;
+}
+
+std::size_t DownloadManager::outstanding_install_job_count_locked() const {
+    std::size_t count = 0;
+    for (const auto& job : jobs_) {
+        if (is_active_job_state(snapshot_job(job).state)) ++count;
+    }
+    return count;
 }
 
 bool DownloadManager::start(const std::string& item_id, bool accept_license,
@@ -1411,65 +1494,61 @@ bool DownloadManager::start(const std::string& item_id, bool accept_license,
         error = "Stop running engines before installing or changing runtime components.";
         return false;
     }
+
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        reap_finished_workers_locked();
+        if (stopping_) { error = "The installation queue is shutting down."; return false; }
         for (const auto& existing : jobs_) {
             const auto view = snapshot_job(existing);
-            const bool active = view.state == "queued" || view.state == "downloading" || view.state == "verifying" ||
-                                view.state == "extracting" || view.state == "configuring";
-            if (!active) continue;
-            error = view.item_id == item_id
-                ? "This catalog item is already being installed in job " + view.id + "."
-                : "Another component installation is active in job " + view.id + ". Finish or cancel it before starting another download.";
+            if (!is_active_job_state(view.state)) continue;
+            if (view.item_id == item_id) {
+                // Duplicate requests are idempotent: return the existing queued/active job.
+                job_id = view.id;
+                error.clear();
+                log_diagnostic("INFO", "download.duplicate_request_reused", "job=" + job_id + " item=" + item_id);
+                return true;
+            }
+        }
+        if (outstanding_install_job_count_locked() >= kMaximumOutstandingInstallJobs) {
+            error = "The installation queue is full. Wait for a queued item to finish before adding another.";
             return false;
         }
-        // Keep the in-memory history and joinable thread handles bounded during
-        // long-lived app sessions. Recent terminal jobs remain visible for diagnosis.
         constexpr std::size_t max_job_history = 64;
         while (jobs_.size() >= max_job_history) {
             const auto terminal = std::find_if(jobs_.begin(), jobs_.end(), [](const auto& candidate) {
                 return is_terminal_job_state(snapshot_job(candidate).state);
             });
             if (terminal == jobs_.end()) {
-                error = "Download job history is full and no completed job can be removed yet. Restart Local AI Runtime to clear the history.";
+                error = "Download job history is full and no completed job can be removed yet.";
                 return false;
             }
             remove_persisted_job((*terminal)->id);
             jobs_.erase(terminal);
         }
+
         auto job = std::make_shared<Job>();
         job->id = "download-" + std::to_string(next_job_number_++);
         job->item_id = item_id;
         job->kind = component->kind;
         job->license_accepted = accept_license;
+        job->state = "queued";
+        job->phase = "Waiting in installation queue";
         job->created_at = unix_time_millis();
         job->updated_at = job->created_at;
         job->persist_callback = [this, weak = std::weak_ptr<Job>(job)] {
             if (const auto locked = weak.lock()) persist_job(locked);
         };
         job_id = job->id;
-        try {
-            workers_.reserve(workers_.size() + 1);
-            jobs_.push_back(job);
-            if (!persist_job(job)) {
-                jobs_.pop_back();
-                error = "Could not persist this job in the local user-data folder; no download was started.";
-                return false;
-            }
-            workers_.push_back(Worker{job->id, std::thread([this, job] { run_job(job); })});
-        } catch (const std::exception& ex) {
-            // If the job was added but thread creation failed, remove it from the
-            // list. reserve() occurs before constructing the thread, so the move
-            // into workers_ cannot require another vector allocation.
-            const auto found = std::find(jobs_.begin(), jobs_.end(), job);
-            if (found != jobs_.end()) jobs_.erase(found);
-            remove_persisted_job(job->id);
-            error = std::string("Could not start download worker: ") + ex.what();
+        jobs_.push_back(job);
+        if (!persist_job(job)) {
+            jobs_.pop_back();
+            error = "Could not persist this job in the local user-data folder; it was not added to the queue.";
             return false;
         }
     }
+    worker_cv_.notify_one();
     log_diagnostic("INFO", "download.queued", "job=" + job_id + " item=" + item_id);
+    error.clear();
     return true;
 }
 
@@ -1508,80 +1587,102 @@ bool DownloadManager::start_update(const std::string& current_version, const std
         return false;
     }
 
-    std::lock_guard<std::mutex> lock(mutex_);
-    reap_finished_workers_locked();
-    for (const auto& existing : jobs_) {
-        const auto view = snapshot_job(existing);
-        const bool active = view.state == "queued" || view.state == "downloading" || view.state == "verifying" ||
-                            view.state == "extracting" || view.state == "configuring";
-        if (!active) continue;
-        error = "Another download is active in job " + view.id + ". Finish or cancel it before staging a runtime update.";
-        return false;
-    }
-    constexpr std::size_t max_job_history = 64;
-    while (jobs_.size() >= max_job_history) {
-        const auto terminal = std::find_if(jobs_.begin(), jobs_.end(), [](const auto& candidate) {
-            return is_terminal_job_state(snapshot_job(candidate).state);
-        });
-        if (terminal == jobs_.end()) {
-            error = "Download job history is full and no completed job can be removed yet.";
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (stopping_) { error = "The installation queue is shutting down."; return false; }
+        for (const auto& existing : jobs_) {
+            const auto view = snapshot_job(existing);
+            if (is_active_job_state(view.state) && view.item_id == "runtime-update" && view.version == tag_name) {
+                job_id = view.id;
+                error.clear();
+                log_diagnostic("INFO", "update.duplicate_request_reused", "job=" + job_id + " version=" + tag_name);
+                return true;
+            }
+        }
+        if (outstanding_install_job_count_locked() >= kMaximumOutstandingInstallJobs) {
+            error = "The installation queue is full. Wait for a queued item to finish before adding another.";
             return false;
         }
-        remove_persisted_job((*terminal)->id);
-        jobs_.erase(terminal);
-    }
-    auto job = std::make_shared<Job>();
-    job->id = "download-" + std::to_string(next_job_number_++);
-    job->item_id = "runtime-update";
-    job->kind = "update";
-    job->version = tag_name;
-    job->source_url = download_url;
-    job->expected_sha256 = normalized_digest;
-    job->asset_name = asset_name;
-    job->expected_size = expected_size;
-    job->total_bytes = expected_size;
-    job->created_at = unix_time_millis();
-    job->updated_at = job->created_at;
-    job->persist_callback = [this, weak = std::weak_ptr<Job>(job)] {
-        if (const auto locked = weak.lock()) persist_job(locked);
-    };
-    job_id = job->id;
-    try {
-        workers_.reserve(workers_.size() + 1);
+        constexpr std::size_t max_job_history = 64;
+        while (jobs_.size() >= max_job_history) {
+            const auto terminal = std::find_if(jobs_.begin(), jobs_.end(), [](const auto& candidate) {
+                return is_terminal_job_state(snapshot_job(candidate).state);
+            });
+            if (terminal == jobs_.end()) {
+                error = "Download job history is full and no completed job can be removed yet.";
+                return false;
+            }
+            remove_persisted_job((*terminal)->id);
+            jobs_.erase(terminal);
+        }
+        auto job = std::make_shared<Job>();
+        job->id = "download-" + std::to_string(next_job_number_++);
+        job->item_id = "runtime-update";
+        job->kind = "update";
+        job->version = tag_name;
+        job->source_url = download_url;
+        job->expected_sha256 = normalized_digest;
+        job->asset_name = asset_name;
+        job->expected_size = expected_size;
+        job->total_bytes = expected_size;
+        job->state = "queued";
+        job->phase = "Waiting in installation queue";
+        job->created_at = unix_time_millis();
+        job->updated_at = job->created_at;
+        job->persist_callback = [this, weak = std::weak_ptr<Job>(job)] {
+            if (const auto locked = weak.lock()) persist_job(locked);
+        };
+        job_id = job->id;
         jobs_.push_back(job);
         if (!persist_job(job)) {
             jobs_.pop_back();
-            error = "Could not persist this update job in the local user-data folder; no download was started.";
+            error = "Could not persist this update job in the local user-data folder; no update download was queued.";
             return false;
         }
-        workers_.push_back(Worker{job->id, std::thread([this, job] { run_job(job); })});
-    } catch (const std::exception& ex) {
-        const auto found = std::find(jobs_.begin(), jobs_.end(), job);
-        if (found != jobs_.end()) jobs_.erase(found);
-        remove_persisted_job(job->id);
-        error = std::string("Could not start update download worker: ") + ex.what();
-        return false;
     }
+    worker_cv_.notify_one();
     log_diagnostic("INFO", "update.download_queued", "job=" + job_id + " version=" + tag_name + " asset=" + asset_name);
+    error.clear();
     return true;
 }
 
-void DownloadManager::reap_finished_workers_locked() {
-    for (auto it = workers_.begin(); it != workers_.end();) {
-        const auto job_it = std::find_if(jobs_.begin(), jobs_.end(), [&](const auto& job) {
-            return job->id == it->job_id;
-        });
-        bool finished = job_it == jobs_.end();
-        if (!finished) {
-            const auto state = snapshot_job(*job_it).state;
-            finished = is_terminal_job_state(state);
+void DownloadManager::worker_loop() {
+    for (;;) {
+        std::shared_ptr<Job> next_job;
+        {
+            std::unique_lock<std::mutex> lock(mutex_);
+            worker_cv_.wait(lock, [&] {
+                if (stopping_) return true;
+                return std::any_of(jobs_.begin(), jobs_.end(), [](const auto& job) {
+                    return snapshot_job(job).state == "queued";
+                });
+            });
+            if (stopping_) return;
+
+            for (const auto& candidate : jobs_) {
+                const auto view = snapshot_job(candidate);
+                if (view.state != "queued") continue;
+                if (!next_job) {
+                    next_job = candidate;
+                    continue;
+                }
+                const auto selected = snapshot_job(next_job);
+                if (view.updated_at < selected.updated_at ||
+                    (view.updated_at == selected.updated_at && view.created_at < selected.created_at)) {
+                    next_job = candidate;
+                }
+            }
+            if (!next_job) continue;
+            active_job_ = next_job;
         }
-        if (!finished) {
-            ++it;
-            continue;
+
+        run_job(next_job);
+
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (active_job_ == next_job) active_job_.reset();
         }
-        if (it->thread.joinable()) it->thread.join();
-        it = workers_.erase(it);
+        worker_cv_.notify_one();
     }
 }
 
@@ -1593,91 +1694,106 @@ bool DownloadManager::has_active_jobs() const {
     }
     for (const auto& job : jobs) {
         const auto view = snapshot_job(job);
-        if (view.state == "queued" || view.state == "downloading" || view.state == "verifying" ||
-            view.state == "extracting" || view.state == "configuring") return true;
+        if (is_active_job_state(view.state)) return true;
     }
     return false;
 }
 
 bool DownloadManager::cancel(const std::string& job_id, std::string& error) {
     std::shared_ptr<Job> selected;
+    bool queued_canceled = false;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         const auto found = std::find_if(jobs_.begin(), jobs_.end(), [&](const auto& job) { return job->id == job_id; });
         if (found != jobs_.end()) selected = *found;
+        if (!selected) { error = "Unknown download job id."; return false; }
+        const auto view = snapshot_job(selected);
+        if (is_terminal_job_state(view.state)) { error = "This job has already finished."; return false; }
+        if (view.state == "queued" && active_job_ != selected) {
+            mutate_job(selected, [](Job& job) {
+                job.cancel_requested.store(false);
+                job.state = "canceled";
+                job.phase = "Canceled while waiting in the installation queue";
+                job.error = "The queued installation was canceled before it started.";
+                job.error_code = "job_canceled";
+                job.finished_at = unix_time_millis();
+            });
+            queued_canceled = true;
+        } else {
+            mutate_job(selected, [](Job& job) {
+                job.cancel_requested.store(true);
+                job.phase = "Cancel requested; waiting for a safe cancellation point";
+            });
+        }
     }
-    if (!selected) { error = "Unknown download job id."; return false; }
-    bool accepted = false;
-    mutate_job(selected, [&](Job& job) {
-        if (is_terminal_job_state(job.state)) return;
-        job.cancel_requested.store(true);
-        job.phase = "Cancel requested; waiting for a safe cancellation point";
-        accepted = true;
-    });
-    if (!accepted) { error = "This job has already finished."; return false; }
+    worker_cv_.notify_one();
     error.clear();
-    log_diagnostic("INFO", "jobs.cancel_requested", "job=" + job_id);
+    log_diagnostic("INFO", queued_canceled ? "jobs.queue_item_canceled" : "jobs.cancel_requested",
+                   "job=" + job_id);
     return true;
 }
 
 bool DownloadManager::retry(const std::string& job_id, std::string& error) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    reap_finished_workers_locked();
-    const auto found = std::find_if(jobs_.begin(), jobs_.end(), [&](const auto& job) { return job->id == job_id; });
-    if (found == jobs_.end()) { error = "Unknown job id."; return false; }
-    const auto job = *found;
-    const auto previous = snapshot_job(job);
-    if (previous.state != "failed" && previous.state != "canceled" && previous.state != "interrupted") {
-        error = "Only failed, canceled or interrupted jobs can be retried.";
-        return false;
-    }
-    if (!is_retryable_job(*job)) {
-        error = "This saved job does not contain enough trusted task information to retry safely.";
-        return false;
-    }
-    if (any_engine_running(engines_)) {
-        error = "Stop running engines before retrying a component installation.";
-        return false;
-    }
-    if (job->item_id != "runtime-update") {
-        const auto* component = catalog::find_component(job->item_id);
-        if (!component || !component->installable || component->kind != job->kind ||
-            !catalog::supports_target(*component, host_os(), host_architecture())) {
-            error = "This catalog item is not in the reviewed manifest for the current OS/architecture and cannot be retried.";
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (stopping_) { error = "The installation queue is shutting down."; return false; }
+        const auto found = std::find_if(jobs_.begin(), jobs_.end(), [&](const auto& job) { return job->id == job_id; });
+        if (found == jobs_.end()) { error = "Unknown job id."; return false; }
+        const auto job = *found;
+        const auto previous = snapshot_job(job);
+        if (previous.state != "failed" && previous.state != "canceled" && previous.state != "interrupted") {
+            error = "Only failed, canceled or interrupted jobs can be retried.";
             return false;
         }
-    }
-    for (const auto& existing : jobs_) {
-        if (existing == job) continue;
-        const auto state = snapshot_job(existing).state;
-        if (is_active_job_state(state)) {
-            error = "Another job is active in " + existing->id + ". Finish or cancel it before retrying.";
+        if (!is_retryable_job(*job)) {
+            error = "This saved job does not contain enough trusted task information to retry safely.";
             return false;
         }
-    }
-    if (job->item_id == "runtime-update") {
-        const auto expected_asset = runtime_update_asset_name();
-        const auto expected_url = "https://github.com/azmisahin-ai/local-ai-runtime/releases/download/" +
-                                  job->version + "/" + expected_asset;
-        if (expected_asset.empty() || job->asset_name != expected_asset || job->source_url != expected_url ||
-            !is_newer_release_tag(job->version, "0.0.0") || !is_sha256_digest(job->expected_sha256) ||
-            job->expected_size < 1024 || job->expected_size > kMaximumRuntimeUpdateBytes) {
-            error = "The saved runtime update metadata failed its safety checks and cannot be retried.";
+        if (any_engine_running(engines_)) {
+            error = "Stop running engines before retrying a component installation.";
             return false;
         }
-    } else if (!job->license_accepted) {
-        error = "The original upstream license acceptance was not recorded; start this catalog item again and review its license.";
-        return false;
-    }
+        if (outstanding_install_job_count_locked() >= kMaximumOutstandingInstallJobs) {
+            error = "The installation queue is full. Wait for a queued item to finish before retrying.";
+            return false;
+        }
+        for (const auto& existing : jobs_) {
+            if (existing == job) continue;
+            const auto view = snapshot_job(existing);
+            if (is_active_job_state(view.state) && view.item_id == previous.item_id) {
+                error = "This catalog item already has an active or queued installation in job " + view.id + ".";
+                return false;
+            }
+        }
+        if (job->item_id != "runtime-update") {
+            const auto* component = catalog::find_component(job->item_id);
+            if (!component || !component->installable || component->kind != job->kind ||
+                !catalog::supports_target(*component, host_os(), host_architecture())) {
+                error = "This catalog item is not in the reviewed manifest for the current OS/architecture and cannot be retried.";
+                return false;
+            }
+        }
+        if (job->item_id == "runtime-update") {
+            const auto expected_asset = runtime_update_asset_name();
+            const auto expected_url = "https://github.com/azmisahin-ai/local-ai-runtime/releases/download/" +
+                                      job->version + "/" + expected_asset;
+            if (expected_asset.empty() || job->asset_name != expected_asset || job->source_url != expected_url ||
+                !is_newer_release_tag(job->version, "0.0.0") || !is_sha256_digest(job->expected_sha256) ||
+                job->expected_size < 1024 || job->expected_size > kMaximumRuntimeUpdateBytes) {
+                error = "The saved runtime update metadata failed its safety checks and cannot be retried.";
+                return false;
+            }
+        } else if (!job->license_accepted) {
+            error = "The original upstream license acceptance was not recorded; start this catalog item again and review its license.";
+            return false;
+        }
 
-    try {
-        workers_.reserve(workers_.size() + 1);
         mutate_job(job, [](Job& current) {
             current.last_error = current.error.empty() ? current.last_error : current.error;
             current.error.clear();
             current.error_code.clear();
             current.state = "queued";
-            current.phase = "Retry queued";
+            current.phase = "Waiting in installation queue — retry";
             current.downloaded_bytes = 0;
             current.total_bytes = current.item_id == "runtime-update" ? current.expected_size : 0;
             current.cancel_requested.store(false);
@@ -1690,7 +1806,6 @@ bool DownloadManager::retry(const std::string& job_id, std::string& error) {
                 current.state = previous.state;
                 current.phase = previous.phase;
                 current.error = previous.error;
-                current.last_error = previous.last_error;
                 current.error_code = previous.error_code;
                 current.downloaded_bytes = previous.downloaded_bytes;
                 current.total_bytes = previous.total_bytes;
@@ -1699,35 +1814,29 @@ bool DownloadManager::retry(const std::string& job_id, std::string& error) {
                 current.finished_at = previous.finished_at;
                 current.cancel_requested.store(previous.cancel_requested);
             });
-            error = "Could not persist the retry attempt in the local user-data folder; no retry was started.";
+            error = "Could not persist the retry attempt in the local user-data folder; no retry was queued.";
             return false;
         }
-        workers_.push_back(Worker{job->id, std::thread([this, job] { run_job(job); })});
-    } catch (const std::exception& ex) {
-        mutate_job(job, [&](Job& current) {
-            current.state = "failed";
-            current.phase = "Could not start retry";
-            current.error_code = "worker_start_failed";
-            current.error = std::string("Could not start retry worker: ") + ex.what();
-            current.finished_at = unix_time_millis();
-        });
-        error = std::string("Could not start retry worker: ") + ex.what();
-        return false;
     }
-    log_diagnostic("INFO", "jobs.retry_queued", "job=" + job_id + " attempt=" + std::to_string(previous.attempt + 1));
+    worker_cv_.notify_one();
+    log_diagnostic("INFO", "jobs.retry_queued", "job=" + job_id);
     error.clear();
     return true;
 }
 
 void DownloadManager::run_job(const std::shared_ptr<Job>& job) {
     mutate_job(job, [](Job& current) {
+        current.state = "running";
         current.started_at = unix_time_millis();
-        current.phase = current.attempt > 1 ? "Starting retry attempt" : "Starting job";
+        current.phase = current.attempt > 1 ? "Starting retry attempt" : "Starting queued installation";
     });
     log_diagnostic("INFO", "download.started", "job=" + job->id + " item=" + job->item_id);
     try {
         if (job->cancel_requested.load()) throw std::runtime_error("Download canceled by the user.");
-        if (job->item_id == "runtime-update") {
+        if (test_executor_) {
+            test_executor_(job->item_id, [job] { return job->cancel_requested.load(); });
+            if (job->cancel_requested.load()) throw std::runtime_error("Download canceled by the user.");
+        } else if (job->item_id == "runtime-update") {
             download_runtime_update(job);
         } else {
             const auto* component = catalog::find_component(job->item_id);
@@ -1967,8 +2076,32 @@ void DownloadManager::download_model(const std::shared_ptr<Job>& job) {
 }
 
 void DownloadManager::download_engine(const std::shared_ptr<Job>& job, const std::string& variant) {
-    mutate_job(job, [](DownloadManager::Job& current) { current.state = "downloading"; current.phase = "Finding a compatible official llama.cpp package and SHA-256 metadata (stable preferred)"; });
+    const auto* component = catalog::find_component(job->item_id);
+    if (!component || component->installer != "llama-release" || component->variant != variant) {
+        throw std::runtime_error("The queued engine no longer matches its reviewed catalog installer strategy.");
+    }
+    const bool dependency_required = variant == "cuda12" || variant == "cuda13";
+    const auto expected_dependency_id = "llama.cpp-cudart-" + variant;
+    const bool dependency_declared = std::any_of(component->dependencies.begin(), component->dependencies.end(),
+        [&](const catalog::ComponentDependency& dependency) {
+            return dependency.id == expected_dependency_id && dependency.kind == "runtime-archive";
+        });
+    if (dependency_required != dependency_declared) {
+        throw std::runtime_error("The engine's required CUDA runtime dependency is missing or does not match the selected backend in the reviewed manifest.");
+    }
+    mutate_job(job, [&](DownloadManager::Job& current) {
+        current.state = "downloading";
+        current.phase = dependency_required
+            ? "Resolving llama.cpp server and required " + expected_dependency_id + " dependency"
+            : "Finding a compatible official llama.cpp CPU package and SHA-256 metadata";
+    });
     const auto assets = resolve_engine_assets(variant);
+    if (dependency_required && !assets.cuda_runtime) {
+        throw std::runtime_error("The official release did not provide the required matching CUDA runtime dependency.");
+    }
+    if (!dependency_required && assets.cuda_runtime) {
+        throw std::runtime_error("A CUDA runtime archive was resolved for a CPU-only engine package; refusing an unexpected dependency.");
+    }
     const auto total_download_size = assets.total_size();
     log_diagnostic("INFO", "engine.asset.selected", "variant=" + variant + " tag=" + assets.engine.tag +
         " engine_asset=" + assets.engine.name + " engine_bytes=" + std::to_string(assets.engine.size) +

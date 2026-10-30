@@ -10,9 +10,9 @@ The runtime, engines, and models remain separate versioned components. The catal
 
 ## Current baseline and visible progress — 2026-10-30
 
-**Published baseline:** `v0.1.18-alpha` (`7a1f73d`). The user confirmed that both `main` CI and tagged release CI passed on Windows x64, Linux x64, macOS x64 and macOS arm64. The published foundation includes the five-area dashboard, local streaming chat, persistent Activity/jobs, live CPU/RAM/engine resource telemetry, EN/TR onboarding/accessibility, and the build-time embedded component manifest. Hosted CI uses fake engines and does not prove real GPU/model task compatibility.
+**Published baseline:** `v0.1.19-alpha` (`ad6d157`). The user confirmed that the main workflow and tagged release workflow both completed successfully after re-running the failed Release job. The GitHub Release contains Linux x64, macOS x64/arm64, Windows x64 setup and ZIP assets plus `SHA256SUMS.txt`. The published foundation includes the five-area dashboard, local streaming chat, persistent Activity/jobs, live CPU/RAM/engine resource telemetry, EN/TR onboarding/accessibility, embedded component manifest v1, and explicit Runtime Profile/model selection. Hosted CI uses fake engines and does not prove real GPU/model task compatibility.
 
-**Current work:** Stage 8 — Runtime Profile & Model Selection. The working-tree candidate separates package installation from active model/backend selection, persists an explicit chat profile, guards Chat readiness, and fixes engine/model component ID persistence. It is not released until the maintainer publisher script passes the main and tagged four-platform CI gates. Candidate release target: `v0.1.19-alpha`.
+**Current work:** Stage 9 — Persistent Install Queue & Dependency Manager. The working-tree candidate replaces per-install workers with one bounded FIFO worker, deduplicates repeated install requests, persists safe queued jobs, resumes only not-yet-started jobs after restart, records active transfers as interrupted/canceled, exposes queue position/dependency plan, and keeps matching CUDA runtime archives inside their parent engine install job. Linux Release build and local tests pass; the candidate is not released until the main and tagged four-platform CI gates pass. Candidate release target: `v0.1.20-alpha`.
 
 ### Product delivery checklist
 
@@ -24,8 +24,8 @@ The runtime, engines, and models remain separate versioned components. The catal
 | 6 | EN/TR, accessibility and first-run guide | [x] Published | `v0.1.17-alpha` |
 | 6.1 | CI failure diagnostics and Windows process cleanup | [x] Published | `v0.1.17-alpha` |
 | 7 | Embedded Component Catalog Manifest v1 | [x] Published | `v0.1.18-alpha` |
-| 8 | Runtime Profile, explicit model/backend selection and Chat readiness | [~] Candidate; local tests pass, four-platform CI pending | `v0.1.19-alpha` |
-| 9 | Persistent install queue, duplicate/dependency handling and reliable retries | [ ] Not started | `v0.1.20-alpha` |
+| 8 | Runtime Profile, explicit model/backend selection and Chat readiness | [x] Published; main and tagged workflow succeeded after Release-job rerun | `v0.1.19-alpha` |
+| 9 | Persistent install queue, duplicate/dependency handling and reliable retries | [~] Candidate; local tests pass, four-platform CI pending | `v0.1.20-alpha` |
 | 10 | Catalog v2 and simplified Models UI, model details/quantization/compatibility | [ ] Not started | `v0.1.20-alpha` or later |
 | 11 | Shared Engine Adapter lifecycle; keep llama.cpp as first adapter | [ ] Not started | `v0.1.21-alpha` |
 | 12 | Hardware Compatibility & Evidence; real CPU/CUDA profiles and RTX 3060 acceptance | [ ] Not started | `v0.1.22-alpha` |
@@ -36,6 +36,18 @@ The runtime, engines, and models remain separate versioned components. The catal
 | 17 | Video understanding (frames + audio + vision) | [ ] Not started | Later alpha |
 | 18 | Music and advanced audio generation | [ ] Not started | Later alpha |
 | 19 | Signing, provenance, cross-platform install/update/recovery parity and v1.0 acceptance | [ ] Not started | v1.0 gate |
+
+### Stage 9 acceptance checklist
+
+- [x] Replace per-install worker threads with one bounded FIFO install worker shared by catalogue components and runtime-update packages.
+- [x] Make duplicate start requests for the same queued/active component idempotent and return the existing job ID.
+- [x] Persist queued jobs, validate embedded manifest identity, target support and recorded license acceptance at startup, and resume only jobs that had not started.
+- [x] Mark an active transfer as canceled/interrupted on shutdown and do not replay partially completed work automatically.
+- [x] Add queue position and reviewed dependency plan to `jobs-v1`; display queue state and dependency metadata in Activity and Models.
+- [x] Declare CUDA 12/13 runtime archives in manifest metadata and resolve/verify/merge them within their parent llama.cpp install job.
+- [x] Add FIFO, one-worker, duplicate, restart recovery and active-job non-replay core tests.
+- [x] Pass Windows x64, Linux x64, macOS x64 and macOS arm64 main/tag CI; publish `v0.1.19-alpha` (tagged release required a failed-job rerun after a transient GitHub Release API 500).
+- [ ] Validate the queue manually on Windows by adding CPU, CUDA 12 and CUDA 13 packages in quick succession; confirm they run sequentially and only the selected Runtime Profile becomes active.
 
 ### Stage 8 acceptance checklist
 
@@ -51,11 +63,13 @@ The runtime, engines, and models remain separate versioned components. The catal
 - [x] Add a versioned runtime-profile API schema and regression tests for persisted component IDs (including dots in IDs).
 - [ ] Pass Windows x64, Linux x64, macOS x64 and macOS arm64 main/tag CI; then publish the candidate.
 
+The Stage 8 Runtime Profile milestone is published in `v0.1.19-alpha`. The Stage 9 queue remains a candidate until its four-platform publisher workflow and the quick successive-install acceptance test pass.
+
 The default product workflow remains task-first: users choose a task/workspace, the runtime helps select a compatible model and engine profile, Activity shows preparation/execution, and the Chat or task workspace only offers controls supported by the selected model's capabilities. No additional engine family is added until the profile, queue, adapter, hardware-evidence and distribution gates are ready.
 
 ## Distribution status
 
-- The `v0.1.2-alpha` milestone introduced the Windows per-user setup installer `local-ai-runtime-windows-x64-setup.exe`; the current published baseline is `v0.1.18-alpha`. The user has confirmed installation, launch and a Qwen2.5 starter-model chat on one Windows environment. This is not evidence for both Windows 10 and 11, real GPU inference, or every upgrade/uninstall path. Publisher signing remains outstanding. Always check the [live Releases page](https://github.com/azmisahin-ai/local-ai-runtime/releases) for current assets.
+- The `v0.1.2-alpha` milestone introduced the Windows per-user setup installer `local-ai-runtime-windows-x64-setup.exe`; the current published baseline is `v0.1.19-alpha`. The user has confirmed installation, launch and a Qwen2.5 starter-model chat on one Windows environment. This is not evidence for both Windows 10 and 11, real GPU inference, or every upgrade/uninstall path. Publisher signing remains outstanding. Always check the [live Releases page](https://github.com/azmisahin-ai/local-ai-runtime/releases) for current assets.
 - The Windows shell hosts the dashboard in WebView2, starts the C++ runtime without a console window, and uses a tray menu for reopen, update check and graceful exit. Clean Windows 10/11 manual acceptance remains a release gate.
 - The managed catalogue contains llama.cpp CPU/CUDA packages and a pinned Qwen2.5 1.5B GGUF starter model. Manifest v1 is now published and embedded at build time. It is a reviewed starter catalogue, not a general catalogue of every model or C/C++ engine. Real model/CPU/GPU task evidence is still required per declared platform/profile.
 - The dashboard has five destinations (Overview, Chat, Models, Activity, Settings), local EN/TR resources, first-run onboarding, accessibility basics, persistent jobs and resource telemetry. Manual screen-reader review remains open. See [product information architecture](product-information-architecture.md) and [UI/UX principles](ui-ux.md).
@@ -64,7 +78,7 @@ The default product workflow remains task-first: users choose a task/workspace, 
 
 ## Historical foundation status
 
-`v0.1.12-alpha` introduced the five-area UI and first `/v1/activity` snapshot. `v0.1.13-alpha` added SSE streaming and local conversation history. `v0.1.14-alpha` added durable component jobs and interrupted-state recovery. `v0.1.15-alpha` unified runtime operation jobs. `v0.1.16-alpha` added resource monitoring. `v0.1.17-alpha` expanded onboarding, localization and accessibility and included CI diagnostics/process cleanup. `v0.1.18-alpha` published the manifest-driven catalogue. The next release candidate is Stage 8; it must not be called published until the main and tagged publisher CI both pass.
+`v0.1.12-alpha` introduced the five-area UI and first `/v1/activity` snapshot. `v0.1.13-alpha` added SSE streaming and local conversation history. `v0.1.14-alpha` added durable component jobs and interrupted-state recovery. `v0.1.15-alpha` unified runtime operation jobs. `v0.1.16-alpha` added resource monitoring. `v0.1.17-alpha` expanded onboarding, localization and accessibility and included CI diagnostics/process cleanup. `v0.1.18-alpha` published the manifest-driven catalogue. The Runtime Profile milestone shipped in `v0.1.19-alpha`; the next release candidate is Stage 9 and must not be called published until main and tagged publisher CI both pass.
 
 - [x] Fix the Windows PowerShell 5.1 publisher smoke-test regression and confirm the canonical four-target pipeline passes. `f841c80` was the confirmed green publisher/installer baseline when this roadmap update began (`v0.1.2-alpha`).
 - [x] Keep one maintainer command and one stable bundle filename (`local-ai-runtime-update.bundle`). A push uses a normal fast-forward, never force-pushes, and stops at a failed CI gate.

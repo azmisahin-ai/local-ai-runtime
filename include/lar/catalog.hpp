@@ -14,6 +14,12 @@ struct InstallTarget {
 
 // A compiled, reviewed component definition. The catalog manifest is embedded
 // into the runtime at build time; it is not loaded from a user-writable path.
+struct ComponentDependency {
+    std::string id;
+    std::string kind;
+    std::string resolution;
+};
+
 struct ComponentDefinition {
     std::string id;
     std::string kind;
@@ -26,6 +32,7 @@ struct ComponentDefinition {
     bool installable{false};
     bool default_model{false};
     std::vector<InstallTarget> targets;
+    std::vector<ComponentDependency> dependencies;
     std::string metadata_json;
 };
 
