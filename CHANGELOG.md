@@ -12,6 +12,8 @@
 - Allow explicit cancellation of active streamed inference from Activity; keep retry restricted to reviewed component/update workflows and never replay engine lifecycle operations.
 - Include unified component and operation job history in exported diagnostics without logging prompt or generated response text.
 - Add core, HTTP integration, schema, recovery, and explicit streaming-cancellation regression coverage for the unified Activity path.
+- Keep streamed-inference cancellation compatible with the Boost.Asio timer API exposed by Windows and macOS dependency versions; use the non-error-code timer cancellation overload.
+- Use the Microsoft secure environment-variable API for the runtime data-root identity on MSVC builds.
 
 
 ## Unreleased

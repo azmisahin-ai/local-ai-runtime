@@ -57,9 +57,23 @@ volatile std::sig_atomic_t shutdown_requested = 0;
 void request_shutdown(int) { shutdown_requested = 1; }
 
 std::string runtime_data_root_id() {
+    std::string id;
+#ifdef _MSC_VER
+    // Use the Microsoft secure CRT variant to avoid C4996 while keeping the
+    // returned environment value owned and released by this function.
+    char* value = nullptr;
+    std::size_t value_size = 0;
+    if (_dupenv_s(&value, &value_size, "LOCAL_AI_RUNTIME_DATA_ROOT_ID") != 0 || !value) {
+        std::free(value);
+        return {};
+    }
+    id.assign(value);
+    std::free(value);
+#else
     const char* value = std::getenv("LOCAL_AI_RUNTIME_DATA_ROOT_ID");
     if (!value) return {};
-    const std::string id(value);
+    id.assign(value);
+#endif
     static const std::regex guid_pattern(R"(^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$)");
     return std::regex_match(id, guid_pattern) ? id : std::string{};
 }
@@ -1067,8 +1081,11 @@ void proxy_chat_stream(beast::tcp_stream& client_stream,
             [&](const boost::system::error_code& error, std::size_t) {
                 header_error = error;
                 header_read_done = true;
-                boost::system::error_code ignored;
-                cancellation_poll.cancel(ignored);
+                // Timer::cancel() without an error_code parameter is
+                // available across the Boost.Asio versions used by all CI
+                // platforms (older Windows and newer macOS packages differ
+                // in whether the error_code overload is exposed).
+                cancellation_poll.cancel();
             });
         poll_cancellation();
         ioc.run();
