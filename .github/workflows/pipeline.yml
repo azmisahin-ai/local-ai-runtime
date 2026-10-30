@@ -70,6 +70,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m json.tool config/engines.example.json > $null
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m json.tool web/locales/en.json > $null
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m json.tool web/locales/tr.json > $null
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m json.tool catalog/schemas/activity-v1.schema.json > $null
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Identify vcpkg cache identity
         id: vcpkg-cache-identity
@@ -342,6 +348,9 @@ jobs:
           $actual = & (Join-Path $verify 'local-ai-runtime.exe') --version
           if ($LASTEXITCODE -ne 0 -or $actual.Trim() -ne $version) { throw "Packaged Windows executable failed version check: $actual" }
           if (-not (Test-Path (Join-Path $verify 'web/index.html'))) { throw 'Packaged dashboard is missing.' }
+          foreach ($locale in @('en', 'tr')) {
+            if (-not (Test-Path (Join-Path $verify "web/locales/$locale.json"))) { throw "Packaged dashboard locale is missing: $locale" }
+          }
           if (-not (Test-Path (Join-Path $verify 'Start-LocalAIRuntime.cmd'))) { throw 'Double-click Windows launcher is missing.' }
           if (-not (Test-Path (Join-Path $verify 'scripts/Start-LocalAIRuntime.ps1'))) { throw 'Packaged Windows launcher is missing.' }
           if (-not (Test-Path (Join-Path $verify 'scripts/Apply-LocalAIRuntimeUpdate.ps1'))) { throw 'Packaged Windows update helper is missing.' }
@@ -577,6 +586,9 @@ jobs:
           node tests/site_smoke.js
           python -m json.tool site/product.json >/dev/null
           python -m json.tool config/engines.example.json >/dev/null
+          python -m json.tool web/locales/en.json >/dev/null
+          python -m json.tool web/locales/tr.json >/dev/null
+          python -m json.tool catalog/schemas/activity-v1.schema.json >/dev/null
 
       - name: Install dependencies
         id: dependencies
@@ -659,7 +671,7 @@ jobs:
           STAGE="$GITHUB_WORKSPACE/dist/stage"
           mkdir -p "$STAGE/web" "$STAGE/config" "$STAGE/scripts"
           install -m 0755 build/local-ai-runtime "$STAGE/local-ai-runtime"
-          cp web/* "$STAGE/web/"
+          cp -R web/. "$STAGE/web/"
           cp config/engines.example.json "$STAGE/config/"
           cp LICENSE "$STAGE/"
           install -m 0755 scripts/start-runtime.sh "$STAGE/scripts/start-runtime.sh"
@@ -714,6 +726,8 @@ jobs:
           tar -xzf "$PACKAGE" -C "$VERIFY"
           test "$("$VERIFY/local-ai-runtime" --version)" = "$VERSION"
           test -f "$VERIFY/web/index.html"
+          test -f "$VERIFY/web/locales/en.json"
+          test -f "$VERIFY/web/locales/tr.json"
           test -x "$VERIFY/scripts/start-runtime.sh"
           test -x "$VERIFY/Start-LocalAIRuntime.sh"
           missing_deps="$(ldd "$VERIFY/local-ai-runtime" | grep 'not found' || true)"
@@ -824,6 +838,9 @@ jobs:
           node tests/site_smoke.js
           python -m json.tool site/product.json >/dev/null
           python -m json.tool config/engines.example.json >/dev/null
+          python -m json.tool web/locales/en.json >/dev/null
+          python -m json.tool web/locales/tr.json >/dev/null
+          python -m json.tool catalog/schemas/activity-v1.schema.json >/dev/null
 
       - name: Install only missing native dependencies (no brew update)
         id: dependencies
@@ -949,6 +966,8 @@ jobs:
           tar -xzf "$PACKAGE" -C "$VERIFY"
           test "$("$VERIFY/local-ai-runtime" --version)" = "$VERSION"
           test -f "$VERIFY/web/index.html"
+          test -f "$VERIFY/web/locales/en.json"
+          test -f "$VERIFY/web/locales/tr.json"
           test -x "$VERIFY/scripts/start-runtime.sh"
           test -x "$VERIFY/Start-LocalAIRuntime.command"
           if otool -L "$VERIFY/local-ai-runtime" | grep -E '/opt/homebrew/|/usr/local/Cellar/|/usr/local/opt/'; then

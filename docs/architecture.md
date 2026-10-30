@@ -20,8 +20,8 @@ per-user-data/logs/<engine-id>.log
 
 - **Core/config:** reads and atomically persists a user-owned JSON manifest; validates engine IDs, loopback binding and upstream URLs.
 - **Process manager:** starts one configured engine with a direct argument vector; monitors exit state; captures stdout/stderr to a per-engine log; refuses to replace configuration while an engine is running.
-- **HTTP API:** exposes status/start/stop/setup/chat proxy routes. The listener binds only to IPv4 loopback. The llama.cpp setup endpoint accepts explicit local paths and writes them to the user configuration; it never downloads or executes setup scripts.
-- **UI:** static same-origin browser page with no build-time JavaScript dependencies. At startup it checks the public GitHub release feed for a newer version; this is a notification/link, not a silent updater. The setup form configures an installed `llama-server` and local GGUF model.
+- **HTTP API:** exposes status/start/stop/setup/chat proxy routes. The listener binds only to IPv4 loopback. The llama.cpp setup endpoint accepts explicit local paths and writes them to the user configuration; it never downloads or executes setup scripts. `GET /v1/activity` returns the current engine and download/update job snapshot under `activity-v1`; it is not a persistent audit/event ledger.
+- **UI:** static same-origin browser page with no build-time JavaScript dependencies. It has five user-facing destinations (Overview, Chat, Models, Activity, Settings) and first-pass English/Turkish resources loaded only from two allowlisted loopback paths. At startup it checks the public GitHub release feed for a newer version; the dashboard fallback is a release notification/link, while the installed Windows desktop shell owns the verified full-installer update flow. The setup form configures an installed `llama-server` and local GGUF model.
 - **Engine adapter:** v0.1 uses process launch plus an OpenAI-compatible local upstream. Readiness is determined by `GET /health`, falling back to `GET /v1/models` only when the upstream does not implement `/health`. Model inference remains inside the engine process.
 
 ## Important invariants
@@ -44,7 +44,9 @@ per-user-data/logs/<engine-id>.log
 
 - The server is synchronous per connection and uses detached request threads; production hardening should add bounded concurrency and orderly shutdown.
 - Windows process stop currently uses `TerminateProcess`; graceful application-specific stop is a future adapter feature.
-- The chat proxy is non-streaming and currently assumes the local upstream serves `/v1/chat/completions`.
+- The chat proxy is non-streaming and currently assumes the local upstream serves `/v1/chat/completions`; the new chat workspace does not yet provide token streaming or durable conversation history.
+- The catalogue is still generated from a reviewed built-in allowlist in `src/downloads.cpp`. A checked-in authoring manifest that generates both display metadata and the install allowlist is a planned migration; remote arbitrary executable manifests are prohibited.
+- `/v1/activity` is a point-in-time snapshot of jobs and engine readiness. A durable structured event ledger with retry/cancel semantics across all job types remains planned.
 - The process manager handles one active process per configured engine; there is no multi-engine GPU scheduler.
 - JSON configuration parsing still uses Boost.PropertyTree and therefore does not preserve all JSON type distinctions. A stricter schema/JSON library should be considered before a stable release.
 - The setup form requires users to bring a `llama-server` binary and `.gguf` file; verified downloads, resumability and model-license metadata are not implemented yet.

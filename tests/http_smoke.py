@@ -151,6 +151,21 @@ def main():
         try:
             wait_until(lambda: request(base + "/health")[0] == 200, 15, "runtime health endpoint")
 
+            # The desktop shell serves only the two reviewed locale resources.
+            locale_resources = {}
+            for locale in ("en", "tr"):
+                locale_status, locale_raw, locale_type = request(base + f"/locales/{locale}.json")
+                assert locale_status == 200 and "application/json" in locale_type
+                locale_resources[locale] = json.loads(locale_raw)
+            assert set(locale_resources["en"]) == set(locale_resources["tr"]), "English and Turkish resources must expose the same keys"
+            assert locale_resources["en"].get("nav.overview") == "Overview"
+            assert locale_resources["tr"].get("nav.overview") == "Genel Bakış"
+            try:
+                request(base + "/locales/fr.json")
+                raise AssertionError("The locale route must not expose arbitrary file paths.")
+            except urllib.error.HTTPError as locale_error:
+                assert locale_error.code == 404
+
             status, identity_raw, identity_type = request(base + "/v1/system/identity")
             identity = json.loads(identity_raw)
             assert status == 200 and "application/json" in identity_type
@@ -191,8 +206,11 @@ def main():
             status, page, content_type = request(base + "/")
             assert status == 200 and "text/html" in content_type and "Local AI Runtime" in page
             assert 'id="workspace-panel"' in page and "Language &amp; chat" in page
-            assert "Image generation" in page and "Vision &amp; OCR" in page and "Music &amp; SFX" in page
-            assert "Only Language &amp; chat is implemented in this alpha." in page
+            assert "Image generation" in page and "Vision &amp; OCR" in page and "Speech &amp; audio" in page
+            assert "Only available workspaces are interactive." in page
+            assert 'data-view-target="overview"' in page and 'data-view-target="chat"' in page
+            assert 'data-view-target="models"' in page and 'data-view-target="activity"' in page
+            assert 'data-view-target="settings"' in page
             assert 'id="diagnostics-export"' in page and 'id="downloads-refresh"' in page
             assert 'id="include-engine-logs"' in page
             assert 'id="update-download"' in page
@@ -332,6 +350,14 @@ def main():
             catalog_schema = json.loads(catalog_schema_path.read_text(encoding="utf-8"))
             catalog_errors = validate_catalog_schema(catalog, catalog_schema)
             assert not catalog_errors, "Catalog API did not satisfy component-v1 schema: " + "; ".join(catalog_errors[:12])
+            activity_status, activity_raw, activity_type = request(base + "/v1/activity")
+            activity = json.loads(activity_raw)
+            activity_schema_path = Path(__file__).resolve().parents[1] / "catalog" / "schemas" / "activity-v1.schema.json"
+            activity_schema = json.loads(activity_schema_path.read_text(encoding="utf-8"))
+            activity_errors = validate_catalog_schema(activity, activity_schema)
+            assert activity_status == 200 and "application/json" in activity_type
+            assert not activity_errors, "Activity API did not satisfy activity-v1 schema: " + "; ".join(activity_errors[:12])
+            assert activity["snapshot"] is True and activity["summary"]["engine_count"] == 1
             items = {item["id"]: item for item in catalog["data"]}
             assert "qwen2.5-1.5b-q4km" in items
             model_item = items["qwen2.5-1.5b-q4km"]
@@ -395,6 +421,11 @@ def main():
                 assert status == 200 and engine_status["ready"] is True, (
                     "Runtime should distinguish process-running from HTTP-ready: " + engine_status_raw
                 )
+                activity_status, activity_raw, _ = request(base + "/v1/activity")
+                activity = json.loads(activity_raw)
+                ready_items = [item for item in activity["data"] if item["type"] == "engine" and item["component_id"] == "fake-engine"]
+                assert activity_status == 200 and len(ready_items) == 1 and ready_items[0]["state"] == "ready"
+                assert activity["summary"]["ready_engines"] == 1
                 assert engine_status["backend_target"] == "unspecified"
                 # GPU observation must refuse to run under an unverified/non-GPU
                 # engine configuration; it must not silently change the backend.

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Replace the developer-oriented single-page dashboard layout with five user-facing areas: Overview, Chat, Models, Activity, and Settings. Preserve the existing local hardware, managed catalogue, runtime, diagnostics, and update workflows behind task-oriented navigation.
+- Add first-pass English and Turkish UI resource files with a persisted local language preference; serve only the two reviewed locale resources from the loopback runtime. Remaining dynamic error/catalog/status strings still need complete resource-key extraction.
+- Add loopback `GET /v1/activity` with the versioned `activity-v1` snapshot schema, combining current download/update jobs and engine readiness counters for the UI and future local clients. This is a current snapshot, not a durable event timeline.
+- Preserve nested dashboard assets (including locale resources) in Linux portable packages and assert both reviewed language files are present in extracted Windows/Linux/macOS package smoke tests.
+- Improve the chat entry experience with suggested prompts, keyboard guidance, dedicated conversation space, and a clear local privacy statement. Streaming responses and durable conversation history remain future work.
+- Record the user-confirmed clean Windows installation, launch, and first successful Qwen2.5 starter-model chat on one Windows environment. This does not by itself validate both Windows 10 and 11, real NVIDIA GPU inference, or every upgrade/uninstall scenario.
+
 - Fix Windows desktop rollback backup-manifest round-tripping by storing a versioned JSON envelope with an explicit file count and files collection; validate the declared count against the parsed collection and assert the persisted manifest in the rollback smoke test.
 - Fix the Windows desktop shell build by disambiguating recovery/update local variables and qualifying shared window-title references from the dashboard form.
 - Fix the Windows desktop shell compile failure in the interrupted-update recovery message by escaping the documented user-data backup path correctly in the C# string literal.

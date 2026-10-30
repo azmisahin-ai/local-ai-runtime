@@ -2,6 +2,18 @@
 
 This document defines the user-facing organization of Local AI Runtime. The dashboard must remain understandable as the number of engines and model families grows; implementation details and download artifacts are not the primary navigation model.
 
+## Application navigation
+
+The current dashboard is organized into five persistent destinations:
+
+1. **Overview** — local runtime readiness, current chat model, hardware summary, and clearly-labelled available/planned workspaces.
+2. **Chat** — the primary user task, with a dedicated composer and local privacy guidance. The current chat API is non-streaming; streaming and durable conversation history are not yet implemented.
+3. **Models** — reviewed engines, models, dependencies, requirements, licenses, and installed state. The catalogue is still backed by reviewed built-in metadata; it is not yet a user-editable or remotely executable manifest.
+4. **Activity** — installed engine state and the current download/update job snapshot. `GET /v1/activity` follows [activity-v1](../catalog/schemas/activity-v1.schema.json). It is a point-in-time snapshot, not a durable event history; events remain in local diagnostics until a separate event ledger is implemented.
+5. **Settings** — language preference, release/update controls, advanced manual engine configuration, and privacy information.
+
+The UI ships English and Turkish resource files under `web/locales/`. The loopback server serves only `/locales/en.json` and `/locales/tr.json`; arbitrary locale paths are not exposed. The current localization slice covers the navigation, section headings, and primary static content. Dynamic catalog, hardware, and error messages still need complete resource-key extraction before localization is considered complete.
+
 ## Separate tasks from components
 
 - **Workspace** answers “What do I want to do?” Examples: chat, image generation, image understanding, transcription, speech, music/SFX, video, local knowledge search, and automation.
@@ -9,7 +21,7 @@ This document defines the user-facing organization of Local AI Runtime. The dash
 - **Model** is a versioned weight/checkpoint used by an engine; quantizations are distinct variants with their own resource and license metadata.
 - **Dependency** is a package required by an engine (for example the official `cudart` DLL archive required beside a CUDA-enabled `llama-server`). Dependencies are installed and verified as part of the engine choice, not exposed as duplicate engines to users.
 - **Installed instance** is a configured engine/model combination with process, readiness, and last-task status.
-- **Job** describes download, verification, extraction, activation, update, or test progress. It has a durable phase, event trail, actionable error, and retry/cancel behavior where safe.
+- **Job** describes download, verification, extraction, activation, update, or test progress. The current API exposes a point-in-time state/progress snapshot; the target model adds a durable phase/event trail, actionable error, and retry/cancel behavior where safe.
 - **Compatibility profile** records observed hardware/software and the evidence for a specific engine/model/task combination. Hardware detection alone is not a support claim.
 
 ## User-facing workspaces
@@ -78,9 +90,10 @@ Every job emits structured local events with `job_id`, `component_id`, stage/pha
 
 ## Implementation order
 
-1. Keep the released Windows installer and existing CPU chat path reliable.
-2. Pair and SHA-256-verify the official CUDA server + companion runtime archives; expose the two asset names/hashes in local diagnostics. Run a real task on a physical GPU and collect backend/VRAM evidence before advertising CUDA as tested.
-3. Add local hardware discovery and memory estimates; use the detected profile to order/disable catalog choices with explanations.
-4. Finalize the common engine/model/dependency schema and lifecycle contract against `llama.cpp`.
-5. Add the next runtime family only when packaging, process lifecycle, logs, cancel/retry, uninstall, update and real-task tests pass for that family.
-6. Implement the same product model for image, audio, music/SFX, video, knowledge/search and automation, while keeping each domain's unsupported capabilities visibly planned.
+1. Establish the five-area UI shell, task-first Overview, dedicated Chat, and initial EN/TR resources (implemented as the first foundation slice).
+2. Unify current operation state in the `activity-v1` snapshot and evolve it into a durable job/event contract with safe retry/cancel semantics.
+3. Complete dynamic localization, accessible names/status announcements, first-run onboarding, and streaming chat with conversation persistence.
+4. Move reviewed model, engine and dependency definitions to a checked-in versioned authoring manifest that generates both API metadata and the install allowlist from one source.
+5. Finalize and test the shared engine adapter lifecycle against the existing `llama.cpp` integration.
+6. Validate reproducible CPU/GPU hardware profiles and add Qwen3.5/Gemma 4 as model-family pilots on the existing engine where formats and capabilities are verified.
+7. Add additional engine families only after the product, adapter, catalogue, compatibility, distribution and recovery gates are met.

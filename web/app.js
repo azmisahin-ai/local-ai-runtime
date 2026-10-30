@@ -34,6 +34,151 @@ const downloadsRefreshButton = document.querySelector('#downloads-refresh');
 const diagnosticsExportButton = document.querySelector('#diagnostics-export');
 const diagnosticsStatus = document.querySelector('#diagnostics-status');
 const includeEngineLogsCheckbox = document.querySelector('#include-engine-logs');
+const languageSelect = document.querySelector('#language-select');
+const settingsLanguageSelect = document.querySelector('#settings-language-select');
+const overviewRuntimeState = document.querySelector('#overview-runtime-state');
+const overviewRuntimeDetail = document.querySelector('#overview-runtime-detail');
+const overviewModelState = document.querySelector('#overview-model-state');
+const overviewModelDetail = document.querySelector('#overview-model-detail');
+const overviewDeviceState = document.querySelector('#overview-device-state');
+const overviewDeviceDetail = document.querySelector('#overview-device-detail');
+const modelCountBadge = document.querySelector('#model-count');
+const activityCountBadge = document.querySelector('#activity-count');
+const activityActiveJobs = document.querySelector('#activity-active-jobs');
+const activityReadyEngines = document.querySelector('#activity-ready-engines');
+const activityTotalEngines = document.querySelector('#activity-total-engines');
+const chatWelcome = document.querySelector('#chat-welcome');
+
+const SUPPORTED_LOCALES = ['en', 'tr'];
+const VIEW_COPY_KEYS = {
+  overview: ['page.overview.title', 'page.overview.description'],
+  chat: ['page.chat.title', 'page.chat.description'],
+  models: ['page.models.title', 'page.models.description'],
+  activity: ['page.activity.title', 'page.activity.description'],
+  settings: ['page.settings.title', 'page.settings.description'],
+};
+const LEGACY_VIEW_HASHES = { 'chat-panel': 'chat', 'catalog-panel': 'models', 'runtime-panel': 'activity', 'device-panel': 'overview' };
+let currentView = 'overview';
+let currentLocale = 'en';
+let localeMessages = {};
+
+function translation(key, fallback = key) {
+  return Object.prototype.hasOwnProperty.call(localeMessages, key) ? localeMessages[key] : fallback;
+}
+
+function applyLocale() {
+  document.documentElement.lang = currentLocale;
+  for (const element of document.querySelectorAll('[data-i18n]')) {
+    const key = element.dataset.i18n;
+    if (key) element.textContent = translation(key, element.textContent);
+  }
+  for (const element of document.querySelectorAll('[data-i18n-placeholder]')) {
+    const key = element.dataset.i18nPlaceholder;
+    if (key) element.setAttribute('placeholder', translation(key, element.getAttribute('placeholder') || ''));
+  }
+  for (const element of document.querySelectorAll('[data-i18n-aria]')) {
+    const key = element.dataset.i18nAria;
+    if (key) element.setAttribute('aria-label', translation(key, element.getAttribute('aria-label') || ''));
+  }
+  for (const element of document.querySelectorAll('[data-i18n-title]')) {
+    const key = element.dataset.i18nTitle;
+    if (key) element.setAttribute('title', translation(key, element.getAttribute('title') || ''));
+  }
+  if (languageSelect) languageSelect.value = currentLocale;
+  if (settingsLanguageSelect) settingsLanguageSelect.value = currentLocale;
+  const pageCopy = VIEW_COPY_KEYS[currentView];
+  if (pageCopy) {
+    document.querySelector('#page-title').textContent = translation(pageCopy[0]);
+    document.querySelector('#page-description').textContent = translation(pageCopy[1]);
+  }
+  for (const button of catalogFilterButtons) {
+    const key = button.dataset.labelKey;
+    if (key) button.dataset.label = translation(key, button.dataset.label || key);
+  }
+}
+
+async function setLocale(locale) {
+  const requested = SUPPORTED_LOCALES.includes(locale) ? locale : 'en';
+  try {
+    const response = await fetch(`/locales/${requested}.json`, { cache: 'no-store' });
+    if (!response.ok) throw new Error(`Language resource returned ${response.status}`);
+    const messages = await response.json();
+    if (!messages || typeof messages !== 'object' || Array.isArray(messages)) throw new Error('Language resource is invalid.');
+    localeMessages = messages;
+    currentLocale = requested;
+    try { localStorage.setItem('lar.locale', requested); } catch (_) { /* Preference persistence is optional. */ }
+    applyLocale();
+    renderCatalog();
+    reportDiagnosticEvent('ui.locale.changed', `locale=${requested}`);
+  } catch (error) {
+    if (requested !== 'en') {
+      reportDiagnosticEvent('ui.locale.load_failed', `locale=${requested}; error=${String(error.message || error).slice(0, 180)}`);
+      await setLocale('en');
+      return;
+    }
+    reportDiagnosticEvent('ui.locale.load_failed', `locale=en; error=${String(error.message || error).slice(0, 180)}`);
+  }
+}
+
+function setActiveView(view, updateHash = true) {
+  if (!Object.prototype.hasOwnProperty.call(VIEW_COPY_KEYS, view)) view = 'overview';
+  currentView = view;
+  for (const section of document.querySelectorAll('[data-view]')) {
+    const active = section.dataset.view === view;
+    section.classList.toggle('active', active);
+    section.hidden = !active;
+  }
+  for (const button of document.querySelectorAll('[data-view-target]')) {
+    if (!button.classList.contains('nav-item')) continue;
+    const active = button.dataset.viewTarget === view;
+    button.classList.toggle('active', active);
+    if (active) button.setAttribute('aria-current', 'page');
+    else button.removeAttribute('aria-current');
+  }
+  const pageCopy = VIEW_COPY_KEYS[view];
+  document.querySelector('#page-title').textContent = translation(pageCopy[0]);
+  document.querySelector('#page-description').textContent = translation(pageCopy[1]);
+  if (updateHash && window.location.hash !== `#${view}`) history.pushState(null, '', `#${view}`);
+  const reducedMotion = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (typeof window.scrollTo === 'function') window.scrollTo({ top: 0, behavior: reducedMotion ? 'auto' : 'smooth' });
+  if (view === 'activity') {
+    void refreshEngines();
+    void refreshDownloads();
+    void refreshActivitySnapshot();
+  } else if (view === 'models') {
+    void refreshCatalog();
+  }
+}
+
+for (const button of document.querySelectorAll('[data-view-target]')) {
+  button.addEventListener('click', () => setActiveView(button.dataset.viewTarget));
+}
+function activateHashView() {
+  const hash = String(window.location.hash || '').replace(/^#/, '').toLowerCase();
+  setActiveView(LEGACY_VIEW_HASHES[hash] || hash, false);
+  if (Object.prototype.hasOwnProperty.call(LEGACY_VIEW_HASHES, hash)) {
+    const legacyTarget = document.getElementById(hash);
+    if (legacyTarget && typeof legacyTarget.scrollIntoView === 'function') legacyTarget.scrollIntoView({ block: 'start' });
+  }
+}
+window.addEventListener('popstate', activateHashView);
+window.addEventListener('hashchange', activateHashView);
+for (const button of document.querySelectorAll('[data-view-action]')) {
+  button.addEventListener('click', () => {
+    if (button.dataset.viewAction === 'check-updates') checkForUpdates(true);
+  });
+}
+const initialLocale = (() => {
+  try {
+    const saved = localStorage.getItem('lar.locale');
+    if (SUPPORTED_LOCALES.includes(saved)) return saved;
+  } catch (_) { /* Use the browser language when storage is unavailable. */ }
+  return String(navigator.language || 'en').toLowerCase().startsWith('tr') ? 'tr' : 'en';
+})();
+if (languageSelect) languageSelect.addEventListener('change', () => setLocale(languageSelect.value));
+if (settingsLanguageSelect) settingsLanguageSelect.addEventListener('change', () => setLocale(settingsLanguageSelect.value));
+activateHashView();
+void setLocale(initialLocale);
 const completedDownloadJobs = new Set();
 let catalogItems = [];
 let activeCatalogFilter = 'all';
@@ -602,7 +747,8 @@ function renderCatalog() {
   const query = catalogSearch.value.trim().toLocaleLowerCase();
   const filtered = catalogItems.filter((item) => {
     const type = String(item.type || 'component').toLowerCase();
-    if (activeCatalogFilter !== 'all' && type !== activeCatalogFilter) return false;
+    if (activeCatalogFilter === 'installed' && !item.installed) return false;
+    if (activeCatalogFilter !== 'all' && activeCatalogFilter !== 'installed' && type !== activeCatalogFilter) return false;
     const searchable = [item.name, item.id, item.description, item.type, item.backend, item.license, item.version]
       .filter(Boolean).join(' ').toLocaleLowerCase();
     return !query || searchable.includes(query);
@@ -611,14 +757,16 @@ function renderCatalog() {
   catalogSummary.textContent = `Showing ${filtered.length} of ${catalogItems.length} components`;
   for (const button of catalogFilterButtons) {
     const filter = button.dataset.catalogFilter;
-    const count = filter === 'all' ? catalogItems.length : catalogItems.filter((item) => String(item.type || 'component').toLowerCase() === filter).length;
+    const count = filter === 'all' ? catalogItems.length : (filter === 'installed'
+      ? catalogItems.filter((item) => item.installed).length
+      : catalogItems.filter((item) => String(item.type || 'component').toLowerCase() === filter).length);
     button.textContent = `${button.dataset.label} (${count})`;
     const selected = filter === activeCatalogFilter;
     button.classList.toggle('active', selected);
     button.setAttribute('aria-pressed', String(selected));
   }
   if (!filtered.length) {
-    catalogList.append(make('div', 'empty', catalogItems.length ? 'No components match this filter. Try another type or clear the search.' : 'No compatible catalog components are available for this computer yet.'));
+    catalogList.append(make('div', 'empty', catalogItems.length ? (currentLocale === 'tr' ? 'Bu filtreyle eşleşen bileşen yok. Başka bir tür dene veya aramayı temizle.' : 'No components match this filter. Try another type or clear the search.') : (currentLocale === 'tr' ? 'Bu bilgisayar için henüz uyumlu katalog bileşeni yok.' : 'No compatible catalog components are available for this computer yet.')));
     return;
   }
   for (const item of filtered) catalogList.append(catalogItemCard(item));
@@ -631,6 +779,8 @@ async function refreshCatalog() {
     const result = await api('/v1/catalog');
     if (!Array.isArray(result.data)) throw new Error('The component catalog response is invalid.');
     catalogItems = result.data;
+    const installedModels = catalogItems.filter((item) => item.type === 'model' && item.installed).length;
+    if (modelCountBadge) { modelCountBadge.textContent = String(installedModels); modelCountBadge.hidden = installedModels === 0; }
     renderCatalog();
   } catch (error) {
     catalogItems = [];
@@ -689,9 +839,12 @@ async function refreshDownloads() {
   try {
     const result = await api('/v1/downloads');
     if (!Array.isArray(result.data)) throw new Error('The download job list response is invalid.');
+    const activeJobs = result.data.filter((job) => ['queued', 'downloading', 'verifying', 'extracting', 'configuring'].includes(job.state)).length;
+    if (activityCountBadge) { activityCountBadge.textContent = String(activeJobs); activityCountBadge.hidden = activeJobs === 0; }
+    if (activityActiveJobs) activityActiveJobs.textContent = String(activeJobs);
     downloadList.replaceChildren();
     if (!result.data.length) {
-      downloadList.append(make('div', 'empty', 'No downloads started.'));
+      downloadList.append(make('div', 'empty', translation('activity.noJobs', 'No downloads or setup jobs yet.')));
       return;
     }
     let hasActive = false;
@@ -717,6 +870,28 @@ async function refreshDownloads() {
   } catch (error) {
     catalogError.textContent = error.message;
     return false;
+  }
+}
+
+async function refreshActivitySnapshot() {
+  try {
+    const result = await api('/v1/activity');
+    if (result.schema_version !== 1 || !Array.isArray(result.data) || !result.summary) {
+      throw new Error('The activity snapshot response is invalid.');
+    }
+    if (activityActiveJobs) activityActiveJobs.textContent = String(Number(result.summary.active_jobs || 0));
+    if (activityReadyEngines) activityReadyEngines.textContent = String(Number(result.summary.ready_engines || 0));
+    if (activityTotalEngines) activityTotalEngines.textContent = String(Number(result.summary.engine_count || 0));
+    if (activityCountBadge) {
+      const active = Number(result.summary.active_jobs || 0);
+      activityCountBadge.textContent = String(active);
+      activityCountBadge.hidden = active === 0;
+    }
+  } catch (error) {
+    if (activityActiveJobs) activityActiveJobs.textContent = '—';
+    if (activityReadyEngines) activityReadyEngines.textContent = '—';
+    if (activityTotalEngines) activityTotalEngines.textContent = '—';
+    reportDiagnosticEvent('ui.activity.refresh_failed', String(error.message || error).slice(0, 260));
   }
 }
 
@@ -756,7 +931,7 @@ function renderHardwareRecommendations(recommendations) {
     if (item.reason) card.append(make('p', 'recommendation-reason', item.reason));
     const action = document.createElement('a');
     action.className = 'button secondary';
-    action.href = '#catalog-panel';
+    action.href = '#models';
     action.textContent = item.id === 'nvidia-cuda-chat' ? 'Review engine options' : 'Browse starter components';
     card.append(action);
     grid.append(card);
@@ -767,6 +942,10 @@ function renderHardwareRecommendations(recommendations) {
 
 function renderHardware(info) {
   hardwareSummary.replaceChildren();
+  const platformLabel = `${String(info.platform || 'Unknown').toUpperCase()} ${String(info.architecture || '').toUpperCase()}`.trim();
+  if (overviewDeviceState) overviewDeviceState.textContent = platformLabel || (currentLocale === 'tr' ? 'Bilinmiyor' : 'Unknown');
+  if (overviewDeviceDetail) overviewDeviceDetail.textContent = `${Number(info.logical_cpu_count || 0)} ${currentLocale === 'tr' ? 'mantıksal işlemci' : 'logical processors'} · ${formatBytes(info.total_memory_bytes)} RAM`;
+
   const facts = make('div', 'hardware-facts');
   const addFact = (label, value) => {
     const fact = make('div', 'hardware-fact');
@@ -883,13 +1062,27 @@ async function refreshEngines() {
     const result = await api('/v1/engines');
     engineList.replaceChildren();
     if (!result.data?.length) {
-      engineList.append(make('div', 'empty', 'No engines configured. Use the setup form above to configure llama.cpp.'));
+      engineList.append(make('div', 'empty', currentLocale === 'tr' ? 'Henüz motor yapılandırılmadı. Modeller bölümünden bir motor kur veya gelişmiş ayarlardan elle yapılandır.' : 'No engines configured yet. Install an engine from Models or configure one manually in Settings.'));
       chatSendButton.disabled = true;
-      chatReadiness.textContent = 'Configure llama.cpp above, then start the engine.';
+      chatReadiness.textContent = translation('chat.notReady', 'Install and start a chat model to begin.');
+      if (overviewRuntimeState) overviewRuntimeState.textContent = currentLocale === 'tr' ? 'Kurulum gerekli' : 'Setup needed';
+      if (overviewRuntimeDetail) overviewRuntimeDetail.textContent = currentLocale === 'tr' ? 'Sohbet motoru yapılandırılmadı' : 'No chat engine is configured';
+      if (overviewModelState) overviewModelState.textContent = currentLocale === 'tr' ? 'Model yok' : 'No model yet';
+      if (overviewModelDetail) overviewModelDetail.textContent = translation('overview.modelDetail');
       return;
     }
     for (const engine of result.data) engineList.append(engineCard(engine));
     const defaultChat = result.data.find((engine) => engine.default_for_chat);
+    if (overviewRuntimeState) overviewRuntimeState.textContent = defaultChat?.ready
+      ? (currentLocale === 'tr' ? 'Hazır' : 'Ready')
+      : (defaultChat?.status === 'running' ? (currentLocale === 'tr' ? 'Yükleniyor' : 'Loading') : (currentLocale === 'tr' ? 'Durduruldu' : 'Stopped'));
+    if (overviewRuntimeDetail) overviewRuntimeDetail.textContent = defaultChat?.ready
+      ? (currentLocale === 'tr' ? 'Yerel model sunucusu hazır' : 'Local model server is ready')
+      : (defaultChat?.status === 'running' ? (currentLocale === 'tr' ? 'Modelin yüklenmesi bekleniyor' : 'Waiting for the model to load') : (currentLocale === 'tr' ? 'Etkin bir sohbet motoru yok' : 'No active chat engine'));
+    if (overviewModelState) overviewModelState.textContent = defaultChat?.model_configured
+      ? (currentLocale === 'tr' ? 'Yapılandırıldı' : 'Configured')
+      : (currentLocale === 'tr' ? 'Yapılandırılmadı' : 'Not configured');
+    if (overviewModelDetail) overviewModelDetail.textContent = defaultChat?.display_name || translation('overview.modelDetail');
     chatSendButton.disabled = !defaultChat?.ready;
     const gpuReady = Boolean(defaultChat?.ready && defaultChat.backend_target === 'gpu-requested');
     gpuObservationButton.disabled = !gpuReady;
@@ -1016,12 +1209,13 @@ document.querySelector('#chat-form').addEventListener('submit', async (event) =>
   event.preventDefault();
   chatError.textContent = '';
   answerWrap.hidden = true;
+  if (chatWelcome) chatWelcome.hidden = true;
   const message = document.querySelector('#message').value.trim();
   if (!message) return;
   const send = document.querySelector('#send');
   const startedAt = performance.now();
   send.disabled = true;
-  send.textContent = 'Waiting…';
+  send.textContent = currentLocale === 'tr' ? 'Yanıt bekleniyor…' : 'Thinking…';
   reportDiagnosticEvent('ui.chat.request_started', `input_chars=${message.length}; stream=false`);
   try {
     const result = await api('/v1/chat/completions', {
@@ -1066,7 +1260,21 @@ document.querySelector('#chat-form').addEventListener('submit', async (event) =>
     ].join('; '));
   } finally {
     send.disabled = false;
-    send.textContent = 'Send message';
+    send.textContent = translation('chat.send', 'Send');
+  }
+});
+
+document.querySelectorAll('[data-prompt]').forEach((button) => {
+  button.addEventListener('click', () => {
+    const messageBox = document.querySelector('#message');
+    messageBox.value = button.dataset.prompt || '';
+    messageBox.focus();
+  });
+});
+document.querySelector('#message').addEventListener('keydown', (event) => {
+  if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+    event.preventDefault();
+    if (!chatSendButton.disabled) document.querySelector('#chat-form').requestSubmit();
   }
 });
 
@@ -1130,3 +1338,4 @@ setInterval(() => { if (Date.now() - lastUpdateCheckAt > 6 * 60 * 60 * 1000) che
 setInterval(refreshHealth, 5000);
 setInterval(refreshEngines, 5000);
 setInterval(refreshDownloads, 2000);
+setInterval(() => { if (currentView === 'activity') refreshActivitySnapshot(); }, 5000);

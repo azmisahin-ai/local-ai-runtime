@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local-ai-runtime.example/schemas/activity-v1.schema.json",
+  "title": "Local AI Runtime Activity Snapshot",
+  "description": "A loopback-only snapshot of active download/update jobs and configured engine states. This is not a durable event history.",
+  "type": "object",
+  "required": ["schema_version", "snapshot", "data", "summary"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "snapshot": { "const": true },
+    "data": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id", "type", "kind", "component_id", "state", "phase", "message",
+          "version", "progress_percent", "completed_bytes", "total_bytes", "cancellable"
+        ],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "type": { "enum": ["component", "update", "engine"] },
+          "kind": { "type": "string", "minLength": 1 },
+          "component_id": { "type": "string" },
+          "state": { "type": "string", "minLength": 1 },
+          "phase": { "type": "string" },
+          "message": { "type": "string" },
+          "version": { "type": "string" },
+          "progress_percent": { "type": ["integer", "null"], "minimum": 0 },
+          "completed_bytes": { "type": "integer", "minimum": 0 },
+          "total_bytes": { "type": "integer", "minimum": 0 },
+          "cancellable": { "type": "boolean" }
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "required": ["active_jobs", "ready_engines", "engine_count"],
+      "properties": {
+        "active_jobs": { "type": "integer", "minimum": 0 },
+        "ready_engines": { "type": "integer", "minimum": 0 },
+        "engine_count": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

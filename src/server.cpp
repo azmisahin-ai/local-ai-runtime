@@ -567,6 +567,92 @@ std::string engine_status_json(const EngineStatus& engine) {
     return out.str();
 }
 
+std::string activity_snapshot_json(const std::vector<EngineStatus>& engines,
+                                   const std::string& jobs_json) {
+    std::ostringstream out;
+    std::size_t active_jobs = 0;
+    std::size_t ready_engines = 0;
+    out << "{\"schema_version\":1,\"snapshot\":true,\"data\":[";
+    bool first = true;
+    try {
+        std::istringstream input(jobs_json);
+        boost::property_tree::ptree jobs_root;
+        boost::property_tree::read_json(input, jobs_root);
+        if (const auto jobs = jobs_root.get_child_optional("data")) {
+            for (const auto& entry : *jobs) {
+                const auto& job = entry.second;
+                const auto state = job.get<std::string>("state", "unknown");
+                const auto kind = job.get<std::string>("kind", "component");
+                const bool cancellable = state == "queued" || state == "downloading" ||
+                    state == "verifying" || state == "extracting" || state == "configuring";
+                if (cancellable) ++active_jobs;
+                if (!first) out << ',';
+                first = false;
+                out << "{\"id\":" << json_quoted("job:" + job.get<std::string>("id", "unknown"))
+                    << ",\"type\":" << json_quoted(kind == "update" ? "update" : "component")
+                    << ",\"kind\":" << json_quoted(kind)
+                    << ",\"component_id\":" << json_quoted(job.get<std::string>("item_id", ""))
+                    << ",\"state\":" << json_quoted(state)
+                    << ",\"phase\":" << json_quoted(job.get<std::string>("phase", state))
+                    << ",\"message\":" << json_quoted(job.get<std::string>("error", ""))
+                    << ",\"version\":" << json_quoted(job.get<std::string>("version", ""))
+                    << ",\"progress_percent\":" << job.get<unsigned int>("progress_percent", 0U)
+                    << ",\"completed_bytes\":" << job.get<std::uint64_t>("downloaded_bytes", 0ULL)
+                    << ",\"total_bytes\":" << job.get<std::uint64_t>("total_bytes", 0ULL)
+                    << ",\"cancellable\":" << (cancellable ? "true" : "false") << '}';
+            }
+        }
+    } catch (const std::exception&) {
+        // DownloadManager owns the canonical job serializer. An invalid internal
+        // snapshot must not make the health/runtime status APIs unavailable.
+    }
+
+    for (const auto& engine : engines) {
+        const bool chat_capable = std::find(engine.config.capabilities.begin(), engine.config.capabilities.end(), "chat") != engine.config.capabilities.end();
+        const bool model_missing = chat_capable && engine.config.model_path.empty();
+        const bool ready = !model_missing && upstream_is_ready(engine);
+        std::string state = "stopped";
+        std::string phase = "stopped";
+        std::string message = "Engine is stopped.";
+        if (engine.config.executable_path.empty()) {
+            state = "not-configured";
+            phase = "configuration";
+            message = "Engine executable is not configured.";
+        } else if (model_missing) {
+            state = "not-configured";
+            phase = "model-configuration";
+            message = "A model file is not configured for this chat engine.";
+        } else if (engine.state == ProcessState::failed) {
+            state = "failed";
+            phase = "process";
+            message = engine.last_error;
+        } else if (engine.state == ProcessState::running && ready) {
+            state = "ready";
+            phase = "health-check";
+            message = "The local model server is healthy and ready.";
+            ++ready_engines;
+        } else if (engine.state == ProcessState::running) {
+            state = "loading";
+            phase = "health-check";
+            message = "The process is running; waiting for the local model server to become ready.";
+        }
+        if (!first) out << ',';
+        first = false;
+        out << "{\"id\":" << json_quoted("engine:" + engine.config.id)
+            << ",\"type\":\"engine\",\"kind\":\"engine\""
+            << ",\"component_id\":" << json_quoted(engine.config.id)
+            << ",\"state\":" << json_quoted(state)
+            << ",\"phase\":" << json_quoted(phase)
+            << ",\"message\":" << json_quoted(message)
+            << ",\"version\":\"\",\"progress_percent\":null"
+            << ",\"completed_bytes\":0,\"total_bytes\":0,\"cancellable\":false}";
+    }
+    out << "],\"summary\":{\"active_jobs\":" << active_jobs
+        << ",\"ready_engines\":" << ready_engines
+        << ",\"engine_count\":" << engines.size() << "}}";
+    return out.str();
+}
+
 http::response<http::string_body> json_response(http::status status, unsigned version,
                                                 const std::string& body) {
     http::response<http::string_body> response{status, version};
@@ -879,6 +965,20 @@ http::response<http::string_body> handle_request(const http::request<http::strin
         response.prepare_payload();
         return response;
     }
+    if (request.method() == http::verb::get &&
+        (target == "/locales/en.json" || target == "/locales/tr.json")) {
+        const auto locale_file = target == "/locales/tr.json" ? "tr.json" : "en.json";
+        const auto body = read_text_file(web_dir / "locales" / locale_file);
+        if (body.empty()) return error_response(http::status::not_found, version, "Language resource not found.");
+        http::response<http::string_body> response{http::status::ok, version};
+        response.set(http::field::content_type, "application/json; charset=utf-8");
+        response.set("X-Content-Type-Options", "nosniff");
+        response.set("Cache-Control", "no-store");
+        response.body() = body;
+        response.keep_alive(false);
+        response.prepare_payload();
+        return response;
+    }
     if (request.method() == http::verb::get && target == "/health") {
         return json_response(http::status::ok, version,
             "{\"status\":\"ok\",\"version\":" + json_quoted(LAR_VERSION) + ",\"bind\":\"loopback\"}");
@@ -1107,6 +1207,10 @@ http::response<http::string_body> handle_request(const http::request<http::strin
     }
     if (request.method() == http::verb::get && target == "/v1/downloads") {
         return json_response(http::status::ok, version, downloads.jobs_json());
+    }
+    if (request.method() == http::verb::get && target == "/v1/activity") {
+        return json_response(http::status::ok, version,
+            activity_snapshot_json(engines.statuses(), downloads.jobs_json()));
     }
     constexpr std::string_view download_prefix = "/v1/downloads/";
     if (target.rfind(download_prefix, 0) == 0 && target.size() > download_prefix.size()) {

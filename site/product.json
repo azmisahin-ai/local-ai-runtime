@@ -24,6 +24,11 @@
       "status": "preview"
     },
     {
+      "name": "Five-area workspace dashboard",
+      "description": "A task-first Overview, dedicated Chat, Models library, Activity and Settings destinations replace the developer-oriented single-page panel. English and Turkish static interface resources are available with a locally persisted language preference; dynamic catalogue and hardware strings are still being localized.",
+      "status": "preview"
+    },
+    {
       "name": "Local device inventory",
       "description": "The dashboard reports local OS/architecture, logical CPU count, total/available system RAM, free user-data disk space and graphics adapters when the platform probe supports them (Windows DXGI and Linux DRM/sysfs). This information stays on the computer. Detecting a GPU or installing a CUDA package is not proof that inference used the GPU.",
       "status": "preview"
@@ -41,6 +46,11 @@
     {
       "name": "Engine lifecycle",
       "description": "Start and stop explicitly configured engine processes, inspect process state, and keep per-engine logs. A real inference engine and model must be installed separately in this alpha.",
+      "status": "preview"
+    },
+    {
+      "name": "Unified Activity snapshot",
+      "description": "A loopback-only activity-v1 API combines current component download/update jobs and engine readiness in one snapshot for the Activity view. It is a point-in-time state view, not a durable event timeline.",
       "status": "preview"
     },
     {
@@ -108,7 +118,7 @@
     "Only localhost/loopback is supported by default.",
     "The built-in component downloader accepts only reviewed catalog IDs, uses HTTPS-only transfer, validates expected size and SHA-256, checks the GGUF header, and rejects archive traversal/link/special-file entries. It does not accept arbitrary URLs.",
     "Engine release SHA-256 metadata is fetched from the official upstream GitHub API; this verifies integrity against that metadata but is not a cryptographic signature or independent publisher attestation.",
-    "No usage telemetry or silent executable replacement is enabled. Update checks request public release metadata from GitHub. Windows portable-release updates require user confirmation and a verified local rollback copy; Linux/macOS currently require manual application archive replacement after verification. SHA-256 checks do not replace publisher signatures or provenance attestation.",
+    "No usage telemetry or silent executable replacement is enabled. Update checks request public release metadata from GitHub. Windows portable ZIP and installed desktop updates require user confirmation and use verified local rollback data; Linux/macOS currently require manual application archive replacement after verification. SHA-256 checks do not replace publisher signatures or provenance attestation.",
     "The API has no authentication. Do not expose the runtime or setup API to a LAN or public internet.",
     "The Windows alpha installer is not code-signed and may trigger an unknown-publisher/SmartScreen warning. Do not bypass Windows protection to disguise this; release signing requires a real publisher certificate, secure CI key custody and timestamping."
   ]

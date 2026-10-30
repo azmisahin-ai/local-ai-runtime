@@ -35,6 +35,8 @@ async function main() {
   const siteHtml = fs.readFileSync(path.join(root, 'site/index.html'), 'utf8');
   const dashboardHtml = fs.readFileSync(path.join(root, 'web/index.html'), 'utf8');
   const dashboardScript = fs.readFileSync(path.join(root, 'web/app.js'), 'utf8');
+  const englishUi = JSON.parse(fs.readFileSync(path.join(root, 'web/locales/en.json'), 'utf8'));
+  const turkishUi = JSON.parse(fs.readFileSync(path.join(root, 'web/locales/tr.json'), 'utf8'));
   const windowsLauncher = fs.readFileSync(path.join(root, 'scripts/Start-LocalAIRuntime.ps1'), 'utf8');
   const assets = [
     'local-ai-runtime-windows-x64-setup.exe',
@@ -112,13 +114,33 @@ async function main() {
   assert(product.features.some((feature) => feature.name === 'Portable package launch (alpha)' && feature.status === 'preview'), 'product manifest should accurately describe the current portable launch flow');
   assert(product.features.some((feature) => feature.name === 'Windows desktop installer' && feature.status === 'preview'), 'product manifest should expose the CI-built Windows desktop installer as preview');
   assert(product.features.some((feature) => feature.name === 'Local device inventory' && feature.status === 'preview'), 'product manifest should expose local device inventory as preview');
+  assert(product.features.some((feature) => feature.name === 'Five-area workspace dashboard' && feature.status === 'preview'), 'product manifest should describe the new user-first dashboard');
+  assert(product.features.some((feature) => feature.name === 'Unified Activity snapshot' && feature.status === 'preview'), 'product manifest should describe the current Activity snapshot honestly');
   assert(product.features.some((feature) => feature.name === 'Hardware-aware model setup' && feature.status === 'planned'), 'product manifest must not claim recommendations are already available');
   assert(siteHtml.includes('From download to a local answer.'), 'site should explain a user-first first-run path');
   assert(siteHtml.includes('When the selected Windows release includes the desktop setup installer'), 'site should explain installer and portable fallback selection');
   assert(siteHtml.includes('Start-LocalAIRuntime.cmd') && siteHtml.includes('Start-LocalAIRuntime.command'), 'site should explain the platform launchers');
   assert(siteHtml.includes('Moving from the portable archive:'), 'site should explain migration from a portable package to the installed desktop app');
   assert(dashboardHtml.includes('id="check-updates"'), 'dashboard should expose a manual update check');
-  assert(dashboardHtml.includes('id="device-panel"') && dashboardHtml.includes('Your device &amp; model fit'), 'dashboard should expose a local hardware inventory panel');
+  for (const view of ['overview', 'chat', 'models', 'activity', 'settings']) {
+    assert(dashboardHtml.includes(`id="view-${view}"`) && dashboardHtml.includes(`data-view-target="${view}"`), `dashboard should expose the ${view} workspace`);
+  }
+  assert(dashboardHtml.includes('id="language-select"') && dashboardScript.includes('/locales/'), 'dashboard should expose persisted English/Turkish language selection');
+  assert.deepEqual(Object.keys(englishUi).sort(), Object.keys(turkishUi).sort(), 'English and Turkish UI resources must expose identical keys');
+  const localeAttributes = ['data-i18n', 'data-i18n-placeholder', 'data-i18n-aria', 'data-i18n-title'];
+  for (const attribute of localeAttributes) {
+    const keys = [...dashboardHtml.matchAll(new RegExp(`${attribute}=\"([^\"]+)\"`, 'g'))].map((match) => match[1]);
+    for (const key of keys) {
+      assert(Object.prototype.hasOwnProperty.call(englishUi, key), `English UI resource is missing ${key} (${attribute})`);
+      assert(Object.prototype.hasOwnProperty.call(turkishUi, key), `Turkish UI resource is missing ${key} (${attribute})`);
+    }
+  }
+  assert.equal(englishUi['page.overview.title'], 'Overview');
+  assert.equal(turkishUi['page.overview.title'], 'Genel Bakış');
+  assert(dashboardScript.includes('setActiveView') && dashboardScript.includes("localStorage.setItem('lar.locale'"), 'dashboard should persist navigation and locale preferences');
+  assert(dashboardScript.includes("window.addEventListener('popstate'") && dashboardScript.includes("window.addEventListener('hashchange'") && dashboardScript.includes("'catalog-panel': 'models'"), 'dashboard should preserve navigation history, direct hash navigation and legacy section links');
+  assert(dashboardScript.includes("api('/v1/activity')"), 'dashboard should consume the shared activity snapshot API');
+  assert(dashboardHtml.includes('id="device-panel"') && dashboardHtml.includes('Device &amp; model fit'), 'dashboard should expose a local hardware inventory panel');
   assert(dashboardScript.includes('/v1/system/hardware') && dashboardScript.includes('GPU execution not verified'), 'dashboard should distinguish detected hardware from verified GPU execution');
   assert(dashboardScript.includes('renderHardwareRecommendations') && dashboardScript.includes('info.recommendations'), 'dashboard should render structured hardware-aware starter recommendations');
   assert(dashboardScript.includes('GPU candidate · not verified'), 'dashboard must label GPU recommendations as candidates, not supported profiles');
@@ -128,6 +150,7 @@ async function main() {
   assert(dashboardScript.includes('/v1/diagnostics/gpu-observation') && dashboardScript.includes('ui.gpu_observation.completed'), 'GPU observation should run through the local API and record privacy-safe summary metrics');
   assert(windowsLauncher.includes('function Test-PortCanBind') && windowsLauncher.includes('launcher.port_owner_unresolved_but_bindable'), 'Windows launcher should reuse a configured port when a direct bind probe succeeds despite an unresolved listener owner');
   assert(dashboardHtml.includes('Chat with your model'), 'dashboard should present chat as a user task, not a developer test');
+  assert(dashboardHtml.includes('data-i18n="chat.composerHint"') && dashboardHtml.includes('data-prompt='), 'chat should include keyboard guidance and useful starter prompts');
   assert(dashboardScript.includes('setInterval(() => { if (Date.now() - lastUpdateCheckAt > 6 * 60 * 60 * 1000) checkForUpdates(); }'), 'dashboard should refresh update metadata periodically');
   assert(collectText(grid.afterChildren[0]).includes('SHA256SUMS.txt'));
   process.stdout.write('Site smoke test passed: four platform assets, checksums, and user-first launch/update flow.\n');

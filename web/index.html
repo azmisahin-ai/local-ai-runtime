@@ -3,165 +3,252 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="dark light">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#10151d">
+  <meta name="description" content="A private, local-first workspace for running AI models on your own computer.">
   <title>Local AI Runtime</title>
   <link rel="stylesheet" href="/style.css">
   <script src="/app.js" defer></script>
 </head>
 <body>
-  <main class="shell">
-    <header class="topbar">
-      <div>
-        <p class="eyebrow">LOCAL-FIRST · OPEN SOURCE</p>
-        <h1>Local AI Runtime</h1>
-        <p class="subtitle">Manage local AI engine processes from one place.</p>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Application navigation" data-i18n-aria="accessibility.applicationNavigation">
+      <div class="brand-lockup">
+        <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
+        <div class="brand-copy"><strong>LOCAL AI</strong><span>RUNTIME</span></div>
       </div>
-      <div class="topbar-tools">
-        <div class="status-pill"><span id="api-dot" class="dot"></span><span id="api-status">Checking API…</span></div>
-        <button id="check-updates" class="button secondary" type="button">Check for updates</button>
-        <p id="update-check-status" class="hint" role="status" aria-live="polite">Checking on startup</p>
-      </div>
-    </header>
 
-    <nav class="dashboard-nav" aria-label="Dashboard sections">
-      <a href="#device-panel">Your device</a>
-      <a href="#catalog-panel">Component library</a>
-      <a href="#runtime-panel">Installed engines</a>
-      <a href="#chat-panel">Chat with your model</a>
-    </nav>
+      <div class="sidebar-label" data-i18n="nav.workspace">WORKSPACE</div>
+      <nav class="primary-nav" aria-label="Main navigation" data-i18n-aria="accessibility.mainNavigation">
+        <button class="nav-item active" type="button" data-view-target="overview" aria-current="page">
+          <span class="nav-icon" aria-hidden="true">⌂</span><span data-i18n="nav.overview">Overview</span>
+        </button>
+        <button class="nav-item" type="button" data-view-target="chat">
+          <span class="nav-icon" aria-hidden="true">▤</span><span data-i18n="nav.chat">Chat</span>
+        </button>
+        <button class="nav-item" type="button" data-view-target="models">
+          <span class="nav-icon" aria-hidden="true">◫</span><span data-i18n="nav.models">Models</span>
+          <span class="nav-count" id="model-count" hidden></span>
+        </button>
+        <button class="nav-item" type="button" data-view-target="activity">
+          <span class="nav-icon" aria-hidden="true">◷</span><span data-i18n="nav.activity">Activity</span>
+          <span class="nav-count" id="activity-count" hidden></span>
+        </button>
+      </nav>
 
-    <section id="workspace-panel" class="workspace-panel" aria-labelledby="workspace-title">
-      <div class="workspace-heading"><div><p class="eyebrow">AI WORKSPACES</p><h2 id="workspace-title">Choose what you want to create</h2></div><p class="hint">Workspaces describe tasks. The component library below supplies the engines and models that power them.</p></div>
-      <div class="workspace-grid">
-        <a class="workspace-card available" href="#chat-panel" aria-label="Language and chat, available">
-          <span class="workspace-icon" aria-hidden="true">Aa</span><span class="workspace-copy"><strong>Language &amp; chat</strong><small>Local chat and text tasks</small></span><span class="workspace-state available-state">Available</span>
-        </a>
-        <article class="workspace-card planned"><span class="workspace-icon" aria-hidden="true">◈</span><span class="workspace-copy"><strong>Image generation</strong><small>Text-to-image and image editing</small></span><span class="workspace-state">Planned</span></article>
-        <article class="workspace-card planned"><span class="workspace-icon" aria-hidden="true">▧</span><span class="workspace-copy"><strong>Vision &amp; OCR</strong><small>Image understanding and text extraction</small></span><span class="workspace-state">Planned</span></article>
-        <article class="workspace-card planned"><span class="workspace-icon" aria-hidden="true">≋</span><span class="workspace-copy"><strong>Speech &amp; audio</strong><small>Transcription, speech recognition and voice</small></span><span class="workspace-state">Planned</span></article>
-        <article class="workspace-card planned"><span class="workspace-icon" aria-hidden="true">♫</span><span class="workspace-copy"><strong>Music &amp; SFX</strong><small>Music, loops and sound effects</small></span><span class="workspace-state">Planned</span></article>
-        <article class="workspace-card planned"><span class="workspace-icon" aria-hidden="true">▤</span><span class="workspace-copy"><strong>Video</strong><small>Video understanding and generation</small></span><span class="workspace-state">Planned</span></article>
-        <article class="workspace-card planned"><span class="workspace-icon" aria-hidden="true">⌕</span><span class="workspace-copy"><strong>Knowledge &amp; search</strong><small>Embeddings, reranking and local retrieval</small></span><span class="workspace-state">Planned</span></article>
-        <article class="workspace-card planned"><span class="workspace-icon" aria-hidden="true">⌘</span><span class="workspace-copy"><strong>Automation &amp; tools</strong><small>Workflows and local integrations</small></span><span class="workspace-state">Planned</span></article>
-      </div>
-      <p class="hint workspace-footnote">Only Language &amp; chat is implemented in this alpha. Planned areas are shown to explain the product structure, not to imply that those features are already supported.</p>
-    </section>
+      <div class="sidebar-spacer"></div>
+      <div class="sidebar-label" data-i18n="nav.manage">MANAGE</div>
+      <nav class="primary-nav">
+        <button class="nav-item" type="button" data-view-target="settings">
+          <span class="nav-icon" aria-hidden="true">⚙</span><span data-i18n="nav.settings">Settings</span>
+        </button>
+      </nav>
 
-    <section id="device-panel" class="panel device-panel" aria-labelledby="device-title">
-      <div class="section-heading">
-        <div><p class="eyebrow">LOCAL HARDWARE</p><h2 id="device-title">Your device &amp; model fit</h2></div>
-        <button id="hardware-refresh" class="button secondary" type="button">Refresh device info</button>
+      <div class="sidebar-bottom">
+        <div class="local-badge"><span class="local-indicator"></span><span data-i18n="common.localOnly">Runs on this device</span></div>
+        <div class="sidebar-version"><span>Local AI Runtime</span><strong id="runtime-version">checking…</strong></div>
       </div>
-      <p class="hint">This information is detected on this computer only. It is not uploaded. Hardware detection is not a compatibility guarantee; the selected engine, driver, model, quantization and context must still be tested together.</p>
-      <div id="hardware-summary" class="hardware-summary" aria-live="polite"><div class="empty">Checking local device information…</div></div>
-      <div class="gpu-observation-control">
-        <button id="gpu-observation-run" class="button secondary" type="button" disabled>Measure GPU during a local test</button>
-        <p id="gpu-observation-status" class="hint" role="status" aria-live="polite">Select and start a CUDA-enabled chat engine to measure NVIDIA GPU activity during a real local request. Measurements are local and may include other applications.</p>
-      </div>
-      <p id="hardware-error" class="error" role="status" aria-live="polite"></p>
-    </section>
+    </aside>
 
-    <section id="update-notice" class="update-notice" role="status" aria-live="polite" hidden>
-      <div><p class="eyebrow">SOFTWARE UPDATE</p><h2 id="update-title">Checking for updates…</h2><p id="update-copy" class="hint"></p></div>
-      <div class="update-actions">
-        <a id="update-link" class="button secondary" href="https://github.com/azmisahin-ai/local-ai-runtime/releases" target="_blank" rel="noopener noreferrer">Release notes</a>
-        <button id="update-download" class="button primary" type="button" hidden>Download &amp; verify package</button>
-        <button id="update-apply" class="button primary" type="button" hidden>Apply update &amp; restart</button>
-      </div>
-    </section>
-
-    <section id="catalog-panel" class="panel catalog-panel">
-      <div class="section-heading">
-        <div><p class="eyebrow">MANAGED COMPONENTS</p><h2>Install an AI engine and model</h2></div>
-        <button id="catalog-refresh" class="button secondary" type="button">Refresh catalog</button>
-      </div>
-      <p class="hint">Search and filter the library, review the license, then install. Engines and model weights are separate downloads and remain in your local user-data folder. Packages are verified before activation.</p>
-      <p class="hint">First test: install the llama.cpp CPU runtime and Qwen2.5 1.5B Q4_K_M model (about 1.12 GB). NVIDIA users can select a CUDA runtime when compatible. If upstream has no stable binary for your platform, the installer will clearly identify an official prerelease build.</p>
-      <div class="catalog-toolbar">
-        <label for="catalog-search">Search components</label>
-        <input id="catalog-search" type="search" autocomplete="off" spellcheck="false" placeholder="Name, task, backend or license…">
-        <div id="catalog-filters" class="catalog-filters" role="group" aria-label="Filter components by type">
-          <button class="filter-chip active" type="button" data-catalog-filter="all" data-label="All components" aria-pressed="true">All components</button>
-          <button class="filter-chip" type="button" data-catalog-filter="engine" data-label="Engine runtimes" aria-pressed="false">Engine runtimes</button>
-          <button class="filter-chip" type="button" data-catalog-filter="model" data-label="Models" aria-pressed="false">Models</button>
+    <div class="main-column">
+      <header class="topbar">
+        <div class="page-intro">
+          <p class="eyebrow" data-i18n="header.eyebrow">PRIVATE AI WORKSPACE</p>
+          <h1 id="page-title" data-i18n="page.overview.title">Overview</h1>
+          <p id="page-description" class="page-description" data-i18n="page.overview.description">Your local models, hardware and recent activity in one place.</p>
         </div>
-        <p id="catalog-summary" class="hint catalog-summary" aria-live="polite">Loading components…</p>
-      </div>
-      <div id="catalog-list" class="catalog-list"><div class="empty">Loading the built-in component catalog…</div></div>
-      <div class="section-heading jobs-heading">
-        <h3>Downloads and installation jobs</h3>
-        <div class="jobs-actions">
-          <button id="downloads-refresh" class="button secondary" type="button">Refresh job status</button>
-          <button id="diagnostics-export" class="button secondary" type="button">Export diagnostics</button>
-        </div>
-      </div>
-      <p class="hint">Job status refreshes automatically. “Refresh catalog” only reloads the component list. Export diagnostics creates a local file you can review and share when reporting a problem; nothing is sent automatically.</p>
-      <label class="diagnostics-option"><input id="include-engine-logs" type="checkbox"> Include engine process logs (optional; upstream logs may contain prompts or local paths).</label>
-      <div id="download-list" class="download-list"><div class="empty">No downloads started.</div></div>
-      <p id="catalog-error" class="error" role="status" aria-live="polite"></p>
-      <p id="diagnostics-status" class="status-message" role="status" aria-live="polite"></p>
-    </section>
-
-    <section class="panel setup-panel">
-      <details class="setup-details">
-        <summary><span class="eyebrow">ADVANCED OPTION</span><span class="setup-summary-title">Configure an existing llama.cpp manually</span><span class="hint">Only needed when you already have a llama-server executable and GGUF model.</span></summary>
-        <p class="hint">For the one-click verified starter setup, use the component library above. Windows Explorer “Copy as path” quotes are accepted.</p>
-      <form id="llama-setup-form">
-        <label for="llama-executable">llama-server executable path</label>
-        <input id="llama-executable" name="executable_path" type="text" required autocomplete="off" spellcheck="false" placeholder="C:\AI\llama.cpp\llama-server.exe or /usr/local/bin/llama-server">
-        <label for="llama-model">GGUF model file path</label>
-        <input id="llama-model" name="model_path" type="text" required autocomplete="off" spellcheck="false" placeholder="C:\AI\models\model.gguf or /home/user/models/model.gguf">
-        <div class="setup-grid">
-          <div>
-            <label for="llama-backend">Backend</label>
-            <select id="llama-backend" name="backend">
-              <option value="cpu">CPU — baseline, most compatible</option>
-              <option value="gpu">NVIDIA GPU — requires a CUDA-enabled llama-server</option>
-            </select>
+        <div class="topbar-tools">
+          <div class="topbar-status-row">
+            <div class="status-pill"><span id="api-dot" class="dot"></span><span id="api-status">Checking API…</span></div>
+            <label class="language-picker" for="language-select">
+              <span class="visually-hidden" data-i18n="settings.language">Language</span>
+              <select id="language-select" aria-label="Language" data-i18n-aria="settings.language">
+                <option value="en">EN</option>
+                <option value="tr">TR</option>
+              </select>
+            </label>
           </div>
-          <div>
-            <label for="llama-context">Context size (tokens)</label>
-            <input id="llama-context" name="context_size" type="number" min="512" max="32768" step="256" value="2048" required>
-          </div>
-          <div>
-            <label for="llama-port">Engine port</label>
-            <input id="llama-port" name="engine_port" type="number" min="1024" max="65535" step="1" value="8081" required>
-          </div>
+          <button id="check-updates" class="button secondary" type="button" data-i18n="common.checkUpdates">Check for updates</button>
+          <p id="update-check-status" class="hint" role="status" aria-live="polite" data-i18n="common.checkingUpdates">Checking on startup</p>
         </div>
-        <div class="form-footer">
-          <span class="hint">GPU mode uses llama.cpp automatic GPU-layer placement; it may need adjustment for your model and VRAM.</span>
-          <button id="save-llama-setup" class="button primary" type="submit">Save engine setup</button>
-        </div>
-      </form>
-      <p id="setup-status" class="status-message" role="status" aria-live="polite"></p>
-        <p class="hint setup-links">Downloads: <a href="https://github.com/ggml-org/llama.cpp/releases" target="_blank" rel="noopener noreferrer">official llama.cpp releases</a> · Models: <a href="https://huggingface.co/models?library=gguf" target="_blank" rel="noopener noreferrer">GGUF model catalog</a>. Review each model's license before downloading.</p>
-      </details>
-    </section>
+      </header>
 
-    <section id="runtime-panel" class="panel">
-      <div class="section-heading">
-        <div><p class="eyebrow">RUNTIME</p><h2>Engines</h2></div>
-        <button id="refresh" class="button secondary" type="button">Refresh</button>
-      </div>
-      <p class="hint">Engine state and readiness are checked separately: a process may still be loading its model after it starts.</p>
-      <div id="engine-list" class="engine-list"><div class="empty">Loading engines…</div></div>
-      <p id="engine-error" class="error" role="status" aria-live="polite"></p>
-    </section>
+      <main class="content-area">
+        <section id="view-overview" class="app-view active" data-view="overview" aria-labelledby="page-title">
+          <section class="welcome-card">
+            <div class="welcome-copy">
+              <p class="eyebrow" data-i18n="overview.eyebrow">YOUR PRIVATE AI SPACE</p>
+              <h2 data-i18n="overview.title">Your AI. Your machine.</h2>
+              <p data-i18n="overview.subtitle">Chat with local models, keep your data on your device, and choose the setup that fits your hardware.</p>
+              <div class="welcome-actions">
+                <button class="button primary" type="button" data-view-target="chat"><span aria-hidden="true">✦</span> <span data-i18n="overview.openChat">Open chat</span></button>
+                <button class="button secondary" type="button" data-view-target="models" data-i18n="overview.exploreModels">Explore models</button>
+              </div>
+            </div>
+            <div class="welcome-art" aria-hidden="true">
+              <div class="orbit orbit-one"></div><div class="orbit orbit-two"></div><div class="orbit-core">AI</div>
+              <span class="orbit-node node-one"></span><span class="orbit-node node-two"></span><span class="orbit-node node-three"></span>
+            </div>
+          </section>
 
-    <section id="chat-panel" class="panel chat-panel">
-      <div class="section-heading"><div><p class="eyebrow">YOUR LOCAL MODEL</p><h2>Chat with your model</h2></div></div>
-      <p id="chat-readiness" class="hint">Install an engine and model in the component library above. Chat becomes available when the local model is ready.</p>
-      <p class="hint">To confirm your setup works, send a simple message such as “Sadece 2+2 işleminin sonucunu yaz.” Your prompt is sent to the configured model on this computer; prompts and responses are not uploaded by the runtime.</p>
-      <form id="chat-form">
-        <label for="message">Message</label>
-        <textarea id="message" rows="3" required maxlength="12000" placeholder="Ask your local model something…"></textarea>
-        <div class="form-footer"><span class="hint">Non-streaming test request</span><button id="send" class="button primary" type="submit">Send message</button></div>
-      </form>
-      <p id="chat-error" class="error" role="status" aria-live="polite"></p>
-      <div id="answer-wrap" class="answer-wrap" hidden><h3>Model response</h3><pre id="answer"></pre></div>
-    </section>
+          <div class="overview-stats" aria-label="Local runtime summary">
+            <article class="summary-card"><div class="summary-icon">◉</div><div><span data-i18n="overview.runtime">Runtime</span><strong id="overview-runtime-state" data-i18n="common.checking">Checking…</strong><small id="overview-runtime-detail" data-i18n="overview.runtimeChecking">Checking local engine status</small></div></article>
+            <article class="summary-card"><div class="summary-icon">▤</div><div><span data-i18n="overview.chatModel">Chat model</span><strong id="overview-model-state" data-i18n="overview.modelChecking">Looking for a model</strong><small id="overview-model-detail" data-i18n="overview.modelDetail">Your model stays on this device</small></div></article>
+            <article class="summary-card"><div class="summary-icon">⌘</div><div><span data-i18n="overview.device">Device</span><strong id="overview-device-state" data-i18n="overview.deviceChecking">Detecting hardware</strong><small id="overview-device-detail" data-i18n="overview.deviceDetail">Local hardware profile</small></div></article>
+          </div>
 
-    <footer><span>Local AI Runtime · <span id="runtime-version">checking version…</span></span><span>Loopback only · No telemetry</span></footer>
-  </main>
+          <section id="workspace-panel" class="workspace-panel" aria-labelledby="workspace-title">
+            <div class="section-heading workspace-heading">
+              <div><p class="eyebrow" data-i18n="overview.workspacesEyebrow">WHAT YOU CAN DO</p><h2 id="workspace-title" data-i18n="overview.workspacesTitle">Choose a workspace</h2></div>
+              <p class="hint" data-i18n="overview.workspacesDescription">Start with chat today. More local AI workflows will appear here as they become ready.</p>
+            </div>
+            <div class="workspace-grid">
+              <button class="workspace-card available" type="button" data-view-target="chat">
+                <span class="workspace-icon" aria-hidden="true">Aa</span><span class="workspace-copy"><strong data-i18n="workspace.chat">Language &amp; chat</strong><small data-i18n="workspace.chatDescription">Ask questions and work with text</small></span><span class="workspace-state available-state" data-i18n="common.available">Available</span>
+              </button>
+              <article class="workspace-card planned"><span class="workspace-icon" aria-hidden="true">◈</span><span class="workspace-copy"><strong data-i18n="workspace.image">Image generation</strong><small data-i18n="workspace.imageDescription">Create and edit images</small></span><span class="workspace-state" data-i18n="common.comingSoon">Coming later</span></article>
+              <article class="workspace-card planned"><span class="workspace-icon" aria-hidden="true">▧</span><span class="workspace-copy"><strong data-i18n="workspace.vision">Vision &amp; OCR</strong><small data-i18n="workspace.visionDescription">Understand images and documents</small></span><span class="workspace-state" data-i18n="common.comingSoon">Coming later</span></article>
+              <article class="workspace-card planned"><span class="workspace-icon" aria-hidden="true">≋</span><span class="workspace-copy"><strong data-i18n="workspace.audio">Speech &amp; audio</strong><small data-i18n="workspace.audioDescription">Transcribe and work with voice</small></span><span class="workspace-state" data-i18n="common.comingSoon">Coming later</span></article>
+            </div>
+            <p class="hint workspace-footnote" data-i18n="overview.workspaceNote">Only available workspaces are interactive. Planned areas are not presented as working features.</p>
+          </section>
+
+          <section id="device-panel" class="panel device-panel" aria-labelledby="device-title">
+            <div class="section-heading">
+              <div><p class="eyebrow" data-i18n="device.eyebrow">YOUR HARDWARE</p><h2 id="device-title" data-i18n="device.title">Device &amp; model fit</h2></div>
+              <button id="hardware-refresh" class="button secondary" type="button" data-i18n="device.refresh">Refresh device info</button>
+            </div>
+            <p class="hint" data-i18n="device.privacy">Hardware details are detected on this computer only. Detection is a starting point, not a compatibility guarantee.</p>
+            <div id="hardware-summary" class="hardware-summary" aria-live="polite"><div class="empty" data-i18n="device.loading">Checking local device information…</div></div>
+            <div class="gpu-observation-control">
+              <button id="gpu-observation-run" class="button secondary" type="button" disabled data-i18n="device.measureGpu">Measure GPU during a local test</button>
+              <p id="gpu-observation-status" class="hint" role="status" aria-live="polite" data-i18n="device.gpuHint">Start a CUDA-enabled chat engine before measuring GPU activity during a real local request.</p>
+            </div>
+            <p id="hardware-error" class="error" role="status" aria-live="polite"></p>
+          </section>
+        </section>
+
+        <section id="view-chat" class="app-view" data-view="chat" aria-labelledby="page-title" hidden>
+          <section id="chat-panel" class="panel chat-panel chat-workspace">
+            <div class="chat-heading">
+              <div><p class="eyebrow" data-i18n="chat.eyebrow">LOCAL CONVERSATION</p><h2 data-i18n="chat.title">Chat with your model</h2><p id="chat-readiness" class="hint" data-i18n="chat.notReady">Install and start a chat model to begin.</p></div>
+              <div class="chat-private-badge"><span class="local-indicator"></span><span data-i18n="common.privateSession">Private local session</span></div>
+            </div>
+            <div class="chat-welcome" id="chat-welcome">
+              <div class="chat-welcome-icon" aria-hidden="true">✦</div>
+              <h3 data-i18n="chat.welcomeTitle">What would you like to work on?</h3>
+              <p data-i18n="chat.welcomeDescription">Your prompt is sent to the model running on this computer. Nothing is uploaded by Local AI Runtime.</p>
+              <div class="prompt-suggestions">
+                <button type="button" class="suggestion" data-prompt="Explain a complex idea in simple terms."><span>✧</span><span data-i18n="chat.suggestionExplain">Explain something clearly</span></button>
+                <button type="button" class="suggestion" data-prompt="Help me plan a small project step by step."><span>↗</span><span data-i18n="chat.suggestionPlan">Plan a project</span></button>
+                <button type="button" class="suggestion" data-prompt="Review this text and suggest improvements."><span>✎</span><span data-i18n="chat.suggestionWrite">Improve a piece of writing</span></button>
+              </div>
+            </div>
+            <form id="chat-form" class="chat-composer">
+              <label class="visually-hidden" for="message" data-i18n="chat.messageLabel">Message your local model</label>
+              <textarea id="message" rows="3" required maxlength="12000" data-i18n-placeholder="chat.placeholder" placeholder="Message your local model…"></textarea>
+              <div class="composer-footer"><span class="hint" data-i18n="chat.composerHint">Enter to send · Shift + Enter for a new line</span><button id="send" class="button primary" type="submit" disabled><span data-i18n="chat.send">Send</span><span aria-hidden="true">↑</span></button></div>
+            </form>
+            <p id="chat-error" class="error" role="status" aria-live="polite"></p>
+            <div id="answer-wrap" class="answer-wrap" hidden><div class="answer-heading"><h3 data-i18n="chat.response">Model response</h3><span class="tag" data-i18n="common.generatedLocally">Generated locally</span></div><pre id="answer"></pre></div>
+          </section>
+        </section>
+
+        <section id="view-models" class="app-view" data-view="models" aria-labelledby="page-title" hidden>
+          <section id="catalog-panel" class="panel catalog-panel">
+            <div class="section-heading">
+              <div><p class="eyebrow" data-i18n="models.eyebrow">COMPONENT LIBRARY</p><h2 data-i18n="models.title">Find your next model</h2></div>
+              <button id="catalog-refresh" class="button secondary" type="button" data-i18n="common.refreshCatalog">Refresh catalog</button>
+            </div>
+            <p class="hint" data-i18n="models.description">Browse reviewed models and the runtimes that power them. Model files and engine packages are installed separately and remain in your local user-data folder.</p>
+            <div class="catalog-toolbar">
+              <label for="catalog-search" data-i18n="models.searchLabel">Search models and engines</label>
+              <input id="catalog-search" type="search" autocomplete="off" spellcheck="false" data-i18n-placeholder="models.searchPlaceholder" placeholder="Search by name, family, task or license…">
+              <div id="catalog-filters" class="catalog-filters" role="group" aria-label="Filter components by type" data-i18n-aria="accessibility.componentFilters">
+                <button class="filter-chip active" type="button" data-catalog-filter="all" data-label="All components" data-label-key="models.filterAll" aria-pressed="true" data-i18n="models.filterAll">All components</button>
+                <button class="filter-chip" type="button" data-catalog-filter="engine" data-label="Engine runtimes" data-label-key="models.filterEngines" aria-pressed="false" data-i18n="models.filterEngines">Engines</button>
+                <button class="filter-chip" type="button" data-catalog-filter="model" data-label="Models" data-label-key="models.filterModels" aria-pressed="false" data-i18n="models.filterModels">Models</button>
+                <button class="filter-chip" type="button" data-catalog-filter="installed" data-label="Installed" data-label-key="models.filterInstalled" aria-pressed="false" data-i18n="models.filterInstalled">Installed</button>
+              </div>
+              <p id="catalog-summary" class="hint catalog-summary" aria-live="polite" data-i18n="models.loading">Loading components…</p>
+            </div>
+            <div id="catalog-list" class="catalog-list"><div class="empty" data-i18n="models.loading">Loading the component library…</div></div>
+            <p id="catalog-error" class="error" role="status" aria-live="polite"></p>
+          </section>
+        </section>
+
+        <section id="view-activity" class="app-view" data-view="activity" aria-labelledby="page-title" hidden>
+          <div class="activity-summary" id="activity-summary" aria-live="polite">
+            <article><strong id="activity-active-jobs">–</strong><span data-i18n="activity.activeJobs">Active jobs</span></article>
+            <article><strong id="activity-ready-engines">–</strong><span data-i18n="activity.readyEngines">Ready engines</span></article>
+            <article><strong id="activity-total-engines">–</strong><span data-i18n="activity.totalEngines">Configured engines</span></article>
+          </div>
+          <section id="runtime-panel" class="panel">
+            <div class="section-heading">
+              <div><p class="eyebrow" data-i18n="activity.runtimeEyebrow">RUNTIME STATUS</p><h2 data-i18n="activity.enginesTitle">Installed engines</h2></div>
+              <button id="refresh" class="button secondary" type="button" data-i18n="common.refresh">Refresh</button>
+            </div>
+            <p class="hint" data-i18n="activity.enginesDescription">A running process becomes ready only after its local model server passes a health check.</p>
+            <div id="engine-list" class="engine-list"><div class="empty" data-i18n="activity.loadingEngines">Loading engine status…</div></div>
+            <p id="engine-error" class="error" role="status" aria-live="polite"></p>
+          </section>
+
+          <section id="activity-jobs" class="panel">
+            <div class="section-heading jobs-heading">
+              <div><p class="eyebrow" data-i18n="activity.jobsEyebrow">LOCAL JOBS</p><h2 data-i18n="activity.jobsTitle">Downloads &amp; setup</h2></div>
+              <div class="jobs-actions">
+                <button id="downloads-refresh" class="button secondary" type="button" data-i18n="common.refresh">Refresh</button>
+                <button id="diagnostics-export" class="button secondary" type="button" data-i18n="activity.exportDiagnostics">Export diagnostics</button>
+              </div>
+            </div>
+            <p class="hint" data-i18n="activity.jobsDescription">Track package downloads, verification, installation and recovery. Diagnostics are created locally and are never uploaded automatically.</p>
+            <label class="diagnostics-option"><input id="include-engine-logs" type="checkbox"><span data-i18n="activity.includeLogs">Include engine process logs (may contain prompts or local paths).</span></label>
+            <div id="download-list" class="download-list"><div class="empty" data-i18n="activity.noJobs">No downloads or setup jobs yet.</div></div>
+            <p id="diagnostics-status" class="status-message" role="status" aria-live="polite"></p>
+          </section>
+        </section>
+
+        <section id="view-settings" class="app-view" data-view="settings" aria-labelledby="page-title" hidden>
+          <section id="update-settings-panel" class="panel">
+            <div class="section-heading"><div><p class="eyebrow" data-i18n="settings.eyebrow">PREFERENCES &amp; UPDATES</p><h2 data-i18n="settings.updatesTitle">Updates</h2></div></div>
+            <section id="update-notice" class="update-notice" role="status" aria-live="polite" hidden>
+              <div><p class="eyebrow" data-i18n="settings.updateEyebrow">SOFTWARE UPDATE</p><h2 id="update-title">Checking for updates…</h2><p id="update-copy" class="hint"></p></div>
+              <div class="update-actions">
+                <a id="update-link" class="button secondary" href="https://github.com/azmisahin-ai/local-ai-runtime/releases" target="_blank" rel="noopener noreferrer" data-i18n="settings.releaseNotes">Release notes</a>
+                <button id="update-download" class="button primary" type="button" hidden data-i18n="settings.downloadUpdate">Download &amp; verify package</button>
+                <button id="update-apply" class="button primary" type="button" hidden data-i18n="settings.applyUpdate">Apply update &amp; restart</button>
+              </div>
+            </section>
+            <div class="settings-row"><div><strong data-i18n="settings.languageTitle">App language</strong><p class="hint" data-i18n="settings.languageDescription">Choose the language used for Local AI Runtime controls and guidance.</p></div><select id="settings-language-select" aria-label="App language" data-i18n-aria="settings.languageTitle"><option value="en">English</option><option value="tr">Türkçe</option></select></div>
+            <div class="settings-row"><div><strong data-i18n="settings.checkForUpdates">Check for updates</strong><p class="hint" data-i18n="settings.updateDescription">Release checks use the official GitHub release feed. Downloads require your confirmation.</p></div><button class="button secondary" type="button" data-view-action="check-updates" data-i18n="common.checkNow">Check now</button></div>
+          </section>
+
+          <section class="panel setup-panel">
+            <details class="setup-details">
+              <summary><span class="eyebrow" data-i18n="settings.advanced">ADVANCED</span><span class="setup-summary-title" data-i18n="settings.manualSetup">Configure an existing llama.cpp manually</span><span class="hint" data-i18n="settings.manualSetupDescription">Only needed if you already have a llama-server executable and a GGUF model.</span></summary>
+              <p class="hint" data-i18n="settings.manualSetupPrivacy">This writes a local engine configuration. No model file is uploaded.</p>
+              <form id="llama-setup-form">
+                <label for="llama-executable" data-i18n="settings.executablePath">llama-server executable path</label>
+                <input id="llama-executable" name="executable_path" type="text" required autocomplete="off" spellcheck="false" placeholder="C:\AI\llama.cpp\llama-server.exe or /usr/local/bin/llama-server">
+                <label for="llama-model" data-i18n="settings.modelPath">GGUF model file path</label>
+                <input id="llama-model" name="model_path" type="text" required autocomplete="off" spellcheck="false" placeholder="C:\AI\models\model.gguf or /home/user/models/model.gguf">
+                <div class="setup-grid">
+                  <div><label for="llama-backend" data-i18n="settings.backend">Backend</label><select id="llama-backend" name="backend"><option value="cpu">CPU — baseline, most compatible</option><option value="gpu">NVIDIA GPU — requires a CUDA-enabled llama-server</option></select></div>
+                  <div><label for="llama-context" data-i18n="settings.context">Context size (tokens)</label><input id="llama-context" name="context_size" type="number" min="512" max="32768" step="256" value="2048" required></div>
+                  <div><label for="llama-port" data-i18n="settings.port">Engine port</label><input id="llama-port" name="engine_port" type="number" min="1024" max="65535" step="1" value="8081" required></div>
+                </div>
+                <div class="form-footer"><span class="hint" data-i18n="settings.backendHint">GPU placement is not guaranteed. Verify it with a real local request.</span><button id="save-llama-setup" class="button primary" type="submit" data-i18n="settings.saveSetup">Save engine setup</button></div>
+              </form>
+              <p id="setup-status" class="status-message" role="status" aria-live="polite"></p>
+              <p class="hint setup-links"><a href="https://github.com/ggml-org/llama.cpp/releases" target="_blank" rel="noopener noreferrer">llama.cpp releases</a> · <a href="https://huggingface.co/models?library=gguf" target="_blank" rel="noopener noreferrer">GGUF model catalog</a></p>
+            </details>
+          </section>
+          <section class="panel privacy-panel"><p class="eyebrow" data-i18n="settings.privacyEyebrow">PRIVACY</p><h2 data-i18n="settings.privacyTitle">Your data stays yours</h2><p class="hint" data-i18n="settings.privacyDescription">Models, configuration and logs stay in your local user-data folder. Local AI Runtime does not upload prompts, responses or hardware inventory.</p></section>
+        </section>
+      </main>
+
+      <footer class="app-footer"><span>Local AI Runtime · <span id="footer-version">local-first</span></span><span data-i18n="common.localFooter">Loopback only · No telemetry</span></footer>
+    </div>
+  </div>
 </body>
 </html>
