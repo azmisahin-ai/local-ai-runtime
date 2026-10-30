@@ -1,7 +1,8 @@
-# Changelog
+﻿# Changelog
 
 ## Unreleased
 
+- Fix the Windows desktop shell build by disambiguating recovery/update local variables and qualifying shared window-title references from the dashboard form.
 - Fix the Windows desktop shell compile failure in the interrupted-update recovery message by escaping the documented user-data backup path correctly in the C# string literal.
 - Add user-confirmed in-app updates for installed Windows desktop builds using the full official setup installer, GitHub SHA-256/size verification, detached PowerShell 5.1 hand-off, whole-install backup, post-install runtime/data-root identity verification, automatic rollback and interruption recovery that waits for an active installer to finish.
 - Add Windows CI fault-injection coverage for failed setup rollback, forced process interruption recovery, desktop payload validation and preservation of user settings/engine/model data.

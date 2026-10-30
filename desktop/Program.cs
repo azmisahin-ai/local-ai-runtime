@@ -92,10 +92,10 @@ internal static class Program
             {
                 using var helper = Process.GetProcessById(activeHelperPid);
                 var expectedStage = Environment.GetEnvironmentVariable("LOCAL_AI_RUNTIME_DESKTOP_UPDATE_STAGE");
-                var updatesRoot = Path.Combine(dataRoot, "updates");
+                var helperUpdatesRoot = Path.Combine(dataRoot, "updates");
                 if (helper.ProcessName.Equals("powershell", StringComparison.OrdinalIgnoreCase) &&
                     !string.IsNullOrWhiteSpace(expectedStage) && Directory.Exists(expectedStage) &&
-                    Path.GetDirectoryName(Path.GetFullPath(expectedStage))!.Equals(updatesRoot, StringComparison.OrdinalIgnoreCase) &&
+                    Path.GetDirectoryName(Path.GetFullPath(expectedStage))!.Equals(helperUpdatesRoot, StringComparison.OrdinalIgnoreCase) &&
                     (File.GetAttributes(expectedStage) & FileAttributes.ReparsePoint) == 0)
                 {
                     var statusPath = Path.Combine(expectedStage, "desktop-update-status.json");
@@ -663,7 +663,7 @@ internal sealed class DashboardForm : Form
             if (latest is null)
             {
                 SetUpdateProgress("You’re up to date", $"This desktop installation is running {_runtimeVersion}. No newer release is available in the selected channel.");
-                MessageBox.Show($"Local AI Runtime {_runtimeVersion} is up to date.", WindowTitle,
+                MessageBox.Show($"Local AI Runtime {_runtimeVersion} is up to date.", Program.WindowTitle,
                     MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
@@ -681,16 +681,16 @@ internal sealed class DashboardForm : Form
                 foreach (var asset in assets.EnumerateArray())
                 {
                     if (!asset.TryGetProperty("name", out var name)) continue;
-                    var assetName = name.GetString();
-                    if (string.Equals(assetName, _desktopInstallerAssetName, StringComparison.Ordinal)) installerAsset = asset;
-                    else if (string.Equals(assetName, "SHA256SUMS.txt", StringComparison.Ordinal)) checksumAsset = asset;
+                    var candidateAssetName = name.GetString();
+                    if (string.Equals(candidateAssetName, _desktopInstallerAssetName, StringComparison.Ordinal)) installerAsset = asset;
+                    else if (string.Equals(candidateAssetName, "SHA256SUMS.txt", StringComparison.Ordinal)) checksumAsset = asset;
                 }
             }
             if (installerAsset is null)
             {
                 var answer = MessageBox.Show(
                     $"Release {tagName} is available, but it does not contain the official Windows desktop installer. Open the release page?",
-                    WindowTitle, MessageBoxButtons.YesNo, MessageBoxIcon.Information);
+                    Program.WindowTitle, MessageBoxButtons.YesNo, MessageBoxIcon.Information);
                 if (answer == DialogResult.Yes && !string.IsNullOrWhiteSpace(releaseUrl)) OpenExternalUri(releaseUrl);
                 return;
             }
@@ -705,7 +705,7 @@ internal sealed class DashboardForm : Form
             {
                 var answer = MessageBox.Show(
                     $"Release {tagName} is available, but its installer does not have the expected official URL, asset name or supported size. Open the official release page to review it manually?",
-                    WindowTitle, MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+                    Program.WindowTitle, MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
                 if (answer == DialogResult.Yes && !string.IsNullOrWhiteSpace(releaseUrl)) OpenExternalUri(releaseUrl);
                 return;
             }
@@ -736,7 +736,7 @@ internal sealed class DashboardForm : Form
             var sizeMiB = size / 1024d / 1024d;
             var confirmation = MessageBox.Show(
                 $"Local AI Runtime {_runtimeVersion} can be updated to {tagName}.\n\nThe complete Windows desktop installer ({sizeMiB:F1} MiB) will be downloaded and verified against GitHub’s SHA-256 digest. The desktop window and local engines will close briefly. Settings, engines, downloaded models and logs are stored separately and will be preserved. A full application-folder backup will be retained for rollback.\n\nInstall this update now?",
-                WindowTitle, MessageBoxButtons.YesNo, MessageBoxIcon.Information);
+                Program.WindowTitle, MessageBoxButtons.YesNo, MessageBoxIcon.Information);
             if (confirmation != DialogResult.Yes)
             {
                 SetUpdateProgress("Update postponed", $"{tagName} remains available from the official release page.");
@@ -851,7 +851,7 @@ internal sealed class DashboardForm : Form
             SetUpdateProgress("Update could not be installed", "Your current application and user data have not been intentionally changed. Review the local desktop-update.log if the problem continues.");
             MessageBox.Show(
                 $"The desktop update could not be prepared. Your current installation remains available.\n\n{ex.Message}",
-                WindowTitle, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                Program.WindowTitle, MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
         finally
         {
