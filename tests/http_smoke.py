@@ -654,11 +654,30 @@ def main():
             assert first_stream_bytes == b"data: ", first_stream_bytes
             assert incremental_elapsed < 1.0, f"First SSE bytes were buffered ({incremental_elapsed:.2f}s)"
             incremental_connection.close()  # Exercise client-side cancellation/disconnect.
-            time.sleep(0.4)
-            status, jobs_raw, _ = request(base + "/v1/jobs")
-            stream_operation_jobs = [job for job in json.loads(jobs_raw)["data"] if job["kind"] == "inference"]
-            assert status == 200 and len(stream_operation_jobs) >= 3, stream_operation_jobs
-            assert stream_operation_jobs[-1]["state"] in ("canceled", "failed", "succeeded"), stream_operation_jobs[-1]
+            # TCP close notification can arrive after the client close() call,
+            # and the fake upstream deliberately emits several delayed SSE
+            # chunks. Poll for the operation to settle instead of assuming a
+            # fixed 400 ms is sufficient on every CI runner/OS scheduler.
+            def incremental_stream_terminal_job():
+                status, jobs_raw, _ = request(base + "/v1/jobs")
+                if status != 200:
+                    return None
+                stream_operation_jobs = [
+                    job for job in json.loads(jobs_raw)["data"]
+                    if job["kind"] == "inference"
+                ]
+                if len(stream_operation_jobs) < 3:
+                    return None
+                latest_stream_job = stream_operation_jobs[-1]
+                return latest_stream_job if latest_stream_job["state"] in (
+                    "canceled", "failed", "succeeded"
+                ) else None
+
+            settled_stream_job = wait_until(
+                incremental_stream_terminal_job, 3,
+                "disconnected streaming inference to reach a terminal state",
+            )
+            assert settled_stream_job["state"] in ("canceled", "failed", "succeeded"), settled_stream_job
 
             # A running streaming inference exposes an explicit cancellation
             # request through the shared jobs API, independent of socket close.

@@ -14,6 +14,7 @@
 - Add core, HTTP integration, schema, recovery, and explicit streaming-cancellation regression coverage for the unified Activity path.
 - Keep streamed-inference cancellation compatible with the Boost.Asio timer API exposed by Windows and macOS dependency versions; use the non-error-code timer cancellation overload.
 - Use the Microsoft secure environment-variable API for the runtime data-root identity on MSVC builds.
+- Make the streamed-client-disconnect HTTP smoke test wait for a terminal job state instead of relying on a fixed delay, avoiding scheduler-dependent failures on macOS runners.
 
 
 ## Unreleased
