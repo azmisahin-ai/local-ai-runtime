@@ -193,8 +193,20 @@ function New-VerifiedBackup {
             Copy-Item -LiteralPath $source -Destination $destination -Force
             if ((Get-Sha256 $destination) -cne [string]$entry.sha256) { throw "Backup copy failed SHA-256 verification for '$($entry.path)'." }
         }
+        # Use an envelope instead of a top-level JSON array. Windows PowerShell
+        # 5.1 can unwrap arrays while passing values through the pipeline; an
+        # explicit file_count plus files property makes the persisted shape
+        # unambiguous and lets recovery detect truncation or shape changes.
+        $manifestFiles = [System.Collections.Generic.List[object]]::new()
+        foreach ($entry in $entries) { [void]$manifestFiles.Add($entry) }
+        $backupManifest = [ordered]@{
+            schema_version = 1
+            file_count = $manifestFiles.Count
+            files = $manifestFiles.ToArray()
+        }
+        $manifestJson = ConvertTo-Json -InputObject $backupManifest -Depth 5
         [System.IO.File]::WriteAllText((Join-Path $backup 'backup-manifest.json'),
-            (ConvertTo-Json -InputObject @($entries) -Depth 4), [System.Text.UTF8Encoding]::new($false))
+            $manifestJson, [System.Text.UTF8Encoding]::new($false))
         return $backup
     } catch {
         Remove-Item -LiteralPath $backup -Recurse -Force -ErrorAction SilentlyContinue
@@ -238,8 +250,17 @@ function Restore-VerifiedBackup([string]$Backup) {
             throw "Refusing to restore a backup containing a symbolic link or junction: $($backupItem.FullName)"
         }
     }
-    $entries = @(Get-Content -LiteralPath $manifestPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop)
-    if ($entries.Count -lt 4 -or $entries.Count -gt 4096) { throw 'The desktop update backup manifest has an invalid file count.' }
+    $backupManifest = Get-Content -LiteralPath $manifestPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    if ([int]$backupManifest.schema_version -ne 1 -or $null -eq $backupManifest.files) {
+        throw 'The desktop update backup manifest has an unsupported schema or is missing its files collection.'
+    }
+    $entries = [System.Collections.Generic.List[object]]::new()
+    foreach ($entry in @($backupManifest.files)) { [void]$entries.Add($entry) }
+    $declaredFileCount = 0
+    if (-not [int]::TryParse([string]$backupManifest.file_count, [ref]$declaredFileCount) -or
+        $declaredFileCount -ne $entries.Count -or $entries.Count -lt 4 -or $entries.Count -gt 4096) {
+        throw "The desktop update backup manifest has an invalid file count (declared=$($backupManifest.file_count), parsed=$($entries.Count))."
+    }
     $seenPaths = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach ($entry in $entries) {
         $relative = [string]$entry.path

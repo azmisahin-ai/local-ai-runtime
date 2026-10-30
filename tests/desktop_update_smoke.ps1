@@ -93,6 +93,15 @@ try {
     Invoke-DesktopUpdater ($common + @('-TestForceFailureAfterInstall')) 0 | Out-Null
     $status = Get-Content -LiteralPath (Join-Path $stageRoot 'desktop-update-status.json') -Raw | ConvertFrom-Json -ErrorAction Stop
     if ([string]$status.state -ne 'rolled_back') { throw "Forced setup failure did not roll back: state=$($status.state) message=$($status.message)" }
+    $backupManifestPath = Join-Path ([string]$status.backup_path) 'backup-manifest.json'
+    if (-not (Test-Path -LiteralPath $backupManifestPath -PathType Leaf)) { throw 'The completed desktop rollback did not retain its backup manifest.' }
+    $backupManifest = Get-Content -LiteralPath $backupManifestPath -Raw | ConvertFrom-Json -ErrorAction Stop
+    $backupEntries = @($backupManifest.files)
+    if ([int]$backupManifest.schema_version -ne 1 -or
+        [int]$backupManifest.file_count -ne $backupEntries.Count -or
+        $backupEntries.Count -lt 4 -or $backupEntries.Count -gt 4096) {
+        throw "Desktop rollback manifest round-trip failed: schema=$($backupManifest.schema_version) declared=$($backupManifest.file_count) parsed=$($backupEntries.Count)."
+    }
     if ([System.IO.File]::ReadAllText($readmePath) -cne $failureSentinel) { throw 'The full-install rollback did not restore the pre-update application file.' }
     if ([System.IO.File]::ReadAllText($dataSentinel) -cne 'settings-engines-models-must-survive') { throw 'The failed desktop update changed user data.' }
 
