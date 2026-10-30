@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://azmisahin-ai.github.io/local-ai-runtime/schemas/resources-v1.schema.json",
+  "title": "Local AI Runtime Resource Snapshot v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "platform", "captured_at", "logical_cpu_count",
+    "cpu_utilization_percent", "total_memory_bytes", "available_memory_bytes",
+    "used_memory_bytes", "memory_utilization_percent", "memory_pressure",
+    "gpu_telemetry", "engines"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "platform": { "type": "string", "minLength": 1 },
+    "captured_at": { "type": "integer", "minimum": 0 },
+    "logical_cpu_count": { "type": "integer", "minimum": 1 },
+    "cpu_utilization_percent": { "type": ["number", "null"], "minimum": 0, "maximum": 100 },
+    "total_memory_bytes": { "type": "integer", "minimum": 0 },
+    "available_memory_bytes": { "type": "integer", "minimum": 0 },
+    "used_memory_bytes": { "type": "integer", "minimum": 0 },
+    "memory_utilization_percent": { "type": ["number", "null"], "minimum": 0, "maximum": 100 },
+    "memory_pressure": { "enum": ["normal", "constrained", "critical", "unknown"] },
+    "gpu_telemetry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "message", "scope", "devices"],
+      "properties": {
+        "status": { "enum": ["available", "unavailable"] },
+        "message": { "type": "string" },
+        "scope": { "const": "system-wide" },
+        "devices": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["index", "utilization_percent", "memory_used_bytes", "memory_total_bytes"],
+            "properties": {
+              "index": { "type": "integer", "minimum": 0 },
+              "utilization_percent": { "type": ["integer", "null"], "minimum": 0, "maximum": 100 },
+              "memory_used_bytes": { "type": ["integer", "null"], "minimum": 0 },
+              "memory_total_bytes": { "type": ["integer", "null"], "minimum": 0 }
+            }
+          }
+        }
+      }
+    },
+    "engines": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["engine_id", "state", "cpu_percent", "resident_memory_bytes"],
+        "properties": {
+          "engine_id": { "type": "string", "minLength": 1 },
+          "state": { "enum": ["stopped", "running", "failed"] },
+          "cpu_percent": { "type": ["number", "null"], "minimum": 0, "maximum": 100 },
+          "resident_memory_bytes": { "type": ["integer", "null"], "minimum": 0 }
+        }
+      }
+    }
+  }
+}

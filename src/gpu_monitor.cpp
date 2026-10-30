@@ -274,6 +274,16 @@ void apply_after(std::map<int, DeviceAggregate>& aggregate, const std::vector<Nv
 }
 } // namespace
 
+bool read_nvidia_gpu_snapshot(std::vector<NvidiaGpuSample>& samples) {
+    const auto snapshot = current_snapshot();
+    if (!snapshot) {
+        samples.clear();
+        return false;
+    }
+    samples = *snapshot;
+    return true;
+}
+
 bool parse_nvidia_smi_snapshot(std::string_view output, std::vector<NvidiaGpuSample>& samples) {
     samples.clear();
     if (output.size() > max_snapshot_bytes) return false;

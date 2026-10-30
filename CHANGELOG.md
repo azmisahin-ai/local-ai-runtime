@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased — live runtime resource manager
+
+- Add `GET /v1/system/resources` with a versioned `resources-v1` snapshot for system CPU/memory pressure, managed engine process CPU/RSS, and available NVIDIA system-wide utilization/VRAM telemetry.
+- Add the Activity resource monitor with live local readings and English/Turkish labels; first CPU samples remain unavailable until a second sample establishes a delta.
+- Report memory pressure as a transparent heuristic (`normal`, `constrained`, `critical`, `unknown`); do not automatically stop engines, kill processes, or change CPU/GPU backend settings.
+- Expose GPU telemetry only when the NVIDIA adapter and `nvidia-smi` provider are both available; explicitly label measurements as system-wide and do not infer per-engine GPU use.
+- Keep resource samples transient and local; do not persist prompts, responses, command lines, process paths, or hardware inventory.
+- Add process-level resource sampling for managed engine processes on Windows, macOS, and Linux, plus the `resources-v1` schema and HTTP/UI regression coverage.
+
 ## Unreleased — unified Activity and runtime-operation jobs
 
 - Forward OpenAI-compatible chat `stream:true` responses as chunked Server-Sent Events so tokens reach the UI as they are generated.

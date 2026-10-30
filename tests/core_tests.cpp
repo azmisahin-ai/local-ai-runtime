@@ -7,6 +7,7 @@
 #include "lar/process.hpp"
 #include "lar/backend_evidence.hpp"
 #include "lar/gpu_monitor.hpp"
+#include "lar/resource_monitor.hpp"
 
 #include <algorithm>
 #include <filesystem>
@@ -78,6 +79,21 @@ int main() {
         require(!lar::catalog::is_supported_engine_archive(
                     "llama-b11982-bin-win-cuda-12.4-x64.zip", "cuda12", "windows", "arm64"),
                 "an x64 CUDA package must not be offered to ARM64");
+
+        stage("live resource snapshot contract");
+        const auto resource_snapshot = lar::collect_resource_snapshot({});
+        require(!resource_snapshot.platform.empty(), "resource snapshot did not report its platform");
+        require(resource_snapshot.logical_cpu_count >= 1, "resource snapshot reported an invalid CPU count");
+        require(resource_snapshot.total_memory_bytes >= resource_snapshot.available_memory_bytes,
+                "resource snapshot available memory exceeded total memory");
+        require(resource_snapshot.memory_pressure == "normal" || resource_snapshot.memory_pressure == "constrained" ||
+                resource_snapshot.memory_pressure == "critical" || resource_snapshot.memory_pressure == "unknown",
+                "resource snapshot reported an unknown memory pressure state");
+        const auto resource_json = lar::resource_snapshot_json(resource_snapshot);
+        require(resource_json.find("\"schema_version\":1") != std::string::npos,
+                "resource snapshot JSON omitted its schema version");
+        require(resource_json.find("\"gpu_telemetry\"") != std::string::npos,
+                "resource snapshot JSON omitted GPU telemetry status");
 
         stage("archive path safety");
         // Engine archives are untrusted inputs; extraction must reject paths that

@@ -140,6 +140,8 @@ async function main() {
   assert(dashboardScript.includes('setActiveView') && dashboardScript.includes("localStorage.setItem('lar.locale'"), 'dashboard should persist navigation and locale preferences');
   assert(dashboardScript.includes("window.addEventListener('popstate'") && dashboardScript.includes("window.addEventListener('hashchange'") && dashboardScript.includes("'catalog-panel': 'models'"), 'dashboard should preserve navigation history, direct hash navigation and legacy section links');
   assert(dashboardScript.includes("api('/v1/activity')"), 'dashboard should consume the shared activity snapshot API');
+  assert(dashboardHtml.includes('id="resource-monitor-panel"') && dashboardHtml.includes('id="resources-summary"'), 'Activity should expose the live resource monitor');
+  assert(dashboardScript.includes("api('/v1/system/resources')") && dashboardScript.includes('renderResources'), 'Activity should render live system and engine resource metrics from the local API');
   assert(dashboardHtml.includes('id="device-panel"') && dashboardHtml.includes('Device &amp; model fit'), 'dashboard should expose a local hardware inventory panel');
   assert(dashboardScript.includes('/v1/system/hardware') && dashboardScript.includes('GPU execution not verified'), 'dashboard should distinguish detected hardware from verified GPU execution');
   assert(dashboardScript.includes('renderHardwareRecommendations') && dashboardScript.includes('info.recommendations'), 'dashboard should render structured hardware-aware starter recommendations');

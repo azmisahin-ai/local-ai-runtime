@@ -38,6 +38,10 @@ struct NvidiaGpuObservation {
 // represented as -1; malformed output is rejected rather than guessed.
 bool parse_nvidia_smi_snapshot(std::string_view output, std::vector<NvidiaGpuSample>& samples);
 
+// Reads one current NVIDIA system-wide sample when nvidia-smi is available.
+// Raw command output is discarded; only parsed numeric metrics are returned.
+bool read_nvidia_gpu_snapshot(std::vector<NvidiaGpuSample>& samples);
+
 // Executes a caller-supplied local task while sampling NVIDIA system-wide
 // utilization/memory. The process is launched without a shell, has a timeout,
 // and never returns raw command output. The task's text/result is not recorded.

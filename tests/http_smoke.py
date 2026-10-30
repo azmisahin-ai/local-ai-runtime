@@ -328,6 +328,23 @@ def main():
             assert hardware_info["gpu_probe_status"] in ("complete", "partial", "unsupported")
             assert isinstance(hardware_info["gpus"], list)
             assert hardware_info["gpu_use_requires_validation"] is True
+            status, resources_raw, resources_type = request(base + "/v1/system/resources")
+            resources_info = json.loads(resources_raw)
+            resources_schema_path = Path(__file__).resolve().parents[1] / "catalog" / "schemas" / "resources-v1.schema.json"
+            resources_schema = json.loads(resources_schema_path.read_text(encoding="utf-8"))
+            resources_errors = validate_catalog_schema(resources_info, resources_schema)
+            assert status == 200 and "application/json" in resources_type
+            assert not resources_errors, "Resource API did not satisfy resources-v1 schema: " + "; ".join(resources_errors[:12])
+            assert resources_info["schema_version"] == 1 and resources_info["platform"] == hardware_info["platform"]
+            assert resources_info["logical_cpu_count"] >= 1
+            assert resources_info["total_memory_bytes"] >= resources_info["available_memory_bytes"]
+            assert resources_info["used_memory_bytes"] == resources_info["total_memory_bytes"] - resources_info["available_memory_bytes"]
+            assert resources_info["memory_pressure"] in ("normal", "constrained", "critical", "unknown")
+            assert resources_info["gpu_telemetry"]["scope"] == "system-wide"
+            assert len(resources_info["engines"]) == 1
+            assert resources_info["engines"][0]["engine_id"] == "fake-engine"
+            assert resources_info["engines"][0]["state"] == "stopped"
+            assert resources_info["engines"][0]["resident_memory_bytes"] is None
             hardware_recommendations = hardware_info.get("recommendations")
             assert isinstance(hardware_recommendations, list) and len(hardware_recommendations) >= 2
             cpu_recommendation = next((item for item in hardware_recommendations if item.get("id") == "starter-chat-cpu"), None)
@@ -510,6 +527,13 @@ def main():
             assert start_job_status == 200 and engine_start_job["kind"] == "engine-start"
             assert engine_start_job["item_id"] == "fake-engine" and engine_start_job["state"] == "succeeded"
             assert engine_start_job["retryable"] is False and engine_start_job["duration_ms"] >= 0
+            time.sleep(0.15)
+            resource_status, active_resources_raw, _ = request(base + "/v1/system/resources")
+            active_resources = json.loads(active_resources_raw)
+            assert resource_status == 200
+            managed_process = next((item for item in active_resources["engines"] if item["engine_id"] == "fake-engine"), None)
+            assert managed_process is not None and managed_process["state"] == "running", active_resources
+            assert isinstance(managed_process["resident_memory_bytes"], int) and managed_process["resident_memory_bytes"] > 0, managed_process
             try:
                 request(base + f"/v1/jobs/{engine_start_job_id}/retry", method="POST", body={})
                 raise AssertionError("Engine lifecycle operations must not be replayed")

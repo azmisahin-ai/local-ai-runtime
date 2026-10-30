@@ -206,6 +206,16 @@
             <p id="engine-error" class="error" role="status" aria-live="polite"></p>
           </section>
 
+          <section id="resource-monitor-panel" class="panel">
+            <div class="section-heading">
+              <div><p class="eyebrow" data-i18n="activity.resourcesEyebrow">LIVE RESOURCES</p><h2 data-i18n="activity.resourcesTitle">Resource monitor</h2></div>
+              <button id="resources-refresh" class="button secondary" type="button" data-i18n="activity.resourcesRefresh">Refresh metrics</button>
+            </div>
+            <p class="hint" data-i18n="activity.resourcesDescription">Live CPU and memory readings are local. Engine usage is process-level; NVIDIA GPU readings are system-wide and may include other apps.</p>
+            <div id="resources-summary" class="resource-summary" aria-live="polite"><div class="empty" data-i18n="activity.resourcesLoading">Sampling local system resources…</div></div>
+            <p id="resources-error" class="error" role="status" aria-live="polite"></p>
+          </section>
+
           <section id="activity-jobs" class="panel">
             <div class="section-heading jobs-heading">
               <div><p class="eyebrow" data-i18n="activity.jobsEyebrow">LOCAL JOBS</p><h2 data-i18n="activity.jobsTitle">Downloads &amp; setup</h2></div>

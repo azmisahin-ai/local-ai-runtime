@@ -45,6 +45,9 @@ const activityCountBadge = document.querySelector('#activity-count');
 const activityActiveJobs = document.querySelector('#activity-active-jobs');
 const activityReadyEngines = document.querySelector('#activity-ready-engines');
 const activityTotalEngines = document.querySelector('#activity-total-engines');
+const resourcesSummary = document.querySelector('#resources-summary');
+const resourcesError = document.querySelector('#resources-error');
+const resourcesRefreshButton = document.querySelector('#resources-refresh');
 const chatWelcome = document.querySelector('#chat-welcome');
 const chatMessages = document.querySelector('#chat-messages');
 const chatConversationList = document.querySelector('#chat-conversation-list');
@@ -918,6 +921,109 @@ async function refreshDownloads() {
   }
 }
 
+function renderResources(snapshot) {
+  resourcesSummary.replaceChildren();
+  const facts = make('div', 'resource-facts');
+  const addFact = (label, value, detail = '') => {
+    const card = make('article', 'resource-fact');
+    card.append(make('span', 'resource-label', label));
+    card.append(make('strong', '', value));
+    if (detail) card.append(make('small', '', detail));
+    facts.append(card);
+  };
+  const cpu = typeof snapshot.cpu_utilization_percent === 'number' && Number.isFinite(snapshot.cpu_utilization_percent)
+    ? `${snapshot.cpu_utilization_percent.toFixed(1)}%`
+    : translation('activity.resourcesSampling', 'Sampling…');
+  const memory = typeof snapshot.memory_utilization_percent === 'number' && Number.isFinite(snapshot.memory_utilization_percent)
+    ? `${snapshot.memory_utilization_percent.toFixed(1)}%`
+    : translation('activity.resourcesUnavailable', 'Not available');
+  const pressureLabels = {
+    normal: translation('activity.pressureNormal', 'Normal'),
+    constrained: translation('activity.pressureConstrained', 'Constrained'),
+    critical: translation('activity.pressureCritical', 'Critical'),
+    unknown: translation('activity.pressureUnknown', 'Unknown'),
+  };
+  addFact(translation('activity.resourcesCpu', 'System CPU'), cpu,
+    `${Number(snapshot.logical_cpu_count || 0)} ${translation('activity.resourcesLogicalCpus', 'logical CPUs')}`);
+  addFact(translation('activity.resourcesMemory', 'Memory used'), memory,
+    `${formatBytes(snapshot.used_memory_bytes)} / ${formatBytes(snapshot.total_memory_bytes)}`);
+  addFact(translation('activity.resourcesAvailable', 'Available RAM'), formatBytes(snapshot.available_memory_bytes));
+  addFact(translation('activity.resourcesPressure', 'Memory pressure'), pressureLabels[snapshot.memory_pressure] || pressureLabels.unknown);
+  resourcesSummary.append(facts);
+
+  const systemMemoryPercent = snapshot.memory_utilization_percent;
+  if (typeof systemMemoryPercent === 'number' && Number.isFinite(systemMemoryPercent)) {
+    const meter = document.createElement('progress');
+    meter.className = 'resource-meter';
+    meter.max = 100;
+    meter.value = Math.max(0, Math.min(100, systemMemoryPercent));
+    meter.setAttribute('aria-label', translation('activity.resourcesMemory', 'Memory used'));
+    resourcesSummary.append(meter);
+  }
+
+  const processSection = make('section', 'resource-section');
+  processSection.append(make('h3', '', translation('activity.resourcesEngines', 'Managed engine processes')));
+  const engines = Array.isArray(snapshot.engines) ? snapshot.engines : [];
+  if (!engines.length) {
+    processSection.append(make('p', 'hint', translation('activity.resourcesNoEngines', 'No managed engines are configured.')));
+  } else {
+    const processList = make('div', 'resource-process-list');
+    for (const engine of engines) {
+      const item = make('article', 'resource-process');
+      const heading = make('div', 'resource-process-heading');
+      heading.append(make('strong', '', engine.engine_id || translation('activity.resourcesEngine', 'Engine')));
+      heading.append(make('span', 'tag', engine.state || 'unknown'));
+      item.append(heading);
+      const cpuValue = typeof engine.cpu_percent === 'number' && Number.isFinite(engine.cpu_percent)
+        ? `${engine.cpu_percent.toFixed(1)}%`
+        : translation('activity.resourcesSampling', 'Sampling…');
+      item.append(make('p', '', `${translation('activity.resourcesProcessCpu', 'CPU share')}: ${cpuValue}`));
+      item.append(make('p', '', `${translation('activity.resourcesProcessMemory', 'Resident memory')}: ${formatBytes(engine.resident_memory_bytes)}`));
+      processList.append(item);
+    }
+    processSection.append(processList);
+  }
+  resourcesSummary.append(processSection);
+
+  const gpuSection = make('section', 'resource-section');
+  gpuSection.append(make('h3', '', translation('activity.resourcesGpu', 'GPU telemetry')));
+  const gpuTelemetry = snapshot.gpu_telemetry || {};
+  if (gpuTelemetry.status === 'available' && Array.isArray(gpuTelemetry.devices) && gpuTelemetry.devices.length) {
+    const gpuList = make('div', 'resource-process-list');
+    for (const gpu of gpuTelemetry.devices) {
+      const item = make('article', 'resource-process');
+      item.append(make('strong', '', `${translation('activity.resourcesGpuDevice', 'GPU')} ${Number(gpu.index)}`));
+      const utilization = typeof gpu.utilization_percent === 'number' && Number.isFinite(gpu.utilization_percent)
+        ? `${gpu.utilization_percent}%` : translation('activity.resourcesUnavailable', 'Not available');
+      item.append(make('p', '', `${translation('activity.resourcesGpuUtilization', 'Utilization')}: ${utilization}`));
+      item.append(make('p', '', `${translation('activity.resourcesGpuMemory', 'VRAM')}: ${formatBytes(gpu.memory_used_bytes)} / ${formatBytes(gpu.memory_total_bytes)}`));
+      gpuList.append(item);
+    }
+    gpuSection.append(gpuList);
+  } else {
+    gpuSection.append(make('p', 'hint', gpuTelemetry.message || translation('activity.resourcesGpuUnavailable', 'Live GPU telemetry is unavailable on this device.')));
+  }
+  gpuSection.append(make('p', 'hint', translation('activity.resourcesGpuScope', 'GPU readings are system-wide and do not prove that a particular engine uses the GPU.')));
+  resourcesSummary.append(gpuSection);
+}
+
+async function refreshResources() {
+  if (!resourcesSummary) return;
+  resourcesError.textContent = '';
+  resourcesRefreshButton.disabled = true;
+  try {
+    const snapshot = await api('/v1/system/resources');
+    if (snapshot.schema_version !== 1 || !snapshot.platform || !Array.isArray(snapshot.engines) || !snapshot.gpu_telemetry) {
+      throw new Error('The live resource snapshot response is invalid.');
+    }
+    renderResources(snapshot);
+  } catch (error) {
+    resourcesError.textContent = error.message;
+  } finally {
+    resourcesRefreshButton.disabled = false;
+  }
+}
+
 async function refreshActivitySnapshot() {
   try {
     const result = await api('/v1/activity');
@@ -1631,6 +1737,7 @@ gpuObservationButton.addEventListener('click', async () => {
 });
 
 hardwareRefreshButton.addEventListener('click', refreshHardware);
+resourcesRefreshButton.addEventListener('click', refreshResources);
 updateDownloadButton.addEventListener('click', stageRuntimeUpdate);
 checkUpdatesButton.addEventListener('click', () => checkForUpdates(true));
 updateApplyButton.addEventListener('click', applyRuntimeUpdate);
@@ -1638,6 +1745,7 @@ updateApplyButton.addEventListener('click', applyRuntimeUpdate);
 chatSendButton.disabled = true;
 refreshHealth();
 refreshHardware();
+refreshResources();
 refreshEngines();
 refreshCatalog();
 refreshDownloads();
@@ -1647,4 +1755,4 @@ setInterval(() => { if (Date.now() - lastUpdateCheckAt > 6 * 60 * 60 * 1000) che
 setInterval(refreshHealth, 5000);
 setInterval(refreshEngines, 5000);
 setInterval(refreshDownloads, 2000);
-setInterval(() => { if (currentView === 'activity') refreshActivitySnapshot(); }, 5000);
+setInterval(() => { if (currentView === 'activity') { refreshActivitySnapshot(); refreshResources(); } }, 5000);

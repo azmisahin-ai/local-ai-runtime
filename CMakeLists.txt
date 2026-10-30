@@ -41,12 +41,13 @@ add_library(lar_core
     src/hardware.cpp
     src/backend_evidence.cpp
     src/gpu_monitor.cpp
+    src/resource_monitor.cpp
 )
 target_include_directories(lar_core PUBLIC include ${Boost_INCLUDE_DIRS})
 target_compile_definitions(lar_core PUBLIC BOOST_ERROR_CODE_HEADER_ONLY BOOST_SYSTEM_NO_DEPRECATED)
 target_link_libraries(lar_core PUBLIC Threads::Threads ${LAR_CURL_TARGET} LibArchive::LibArchive OpenSSL::Crypto)
 if(WIN32)
-    target_link_libraries(lar_core PUBLIC ws2_32 dxgi)
+    target_link_libraries(lar_core PUBLIC ws2_32 dxgi Psapi)
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     # Expose glibc's posix_spawn_file_actions_addchdir_np declaration.
     target_compile_definitions(lar_core PRIVATE _GNU_SOURCE)

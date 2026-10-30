@@ -5,6 +5,7 @@
 #include "lar/hardware.hpp"
 #include "lar/backend_evidence.hpp"
 #include "lar/gpu_monitor.hpp"
+#include "lar/resource_monitor.hpp"
 
 #ifndef LAR_VERSION
 #define LAR_VERSION "0.1.0-dev"
@@ -1423,6 +1424,10 @@ http::response<http::string_body> handle_request(const http::request<http::strin
         response.keep_alive(false);
         response.prepare_payload();
         return response;
+    }
+    if (request.method() == http::verb::get && target == "/v1/system/resources") {
+        const auto snapshot = collect_resource_snapshot(engines.statuses());
+        return json_response(http::status::ok, version, resource_snapshot_json(snapshot));
     }
     if (request.method() == http::verb::get && target == "/v1/system/hardware") {
         const auto hardware = detect_hardware(DownloadManager::user_data_directory());
