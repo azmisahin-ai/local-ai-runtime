@@ -55,9 +55,16 @@ const chatNewButton = document.querySelector('#chat-new');
 const chatClearHistoryButton = document.querySelector('#chat-clear-history');
 const chatStopButton = document.querySelector('#chat-stop');
 const chatMessageInput = document.querySelector('#message');
+const firstRunPanel = document.querySelector('#first-run-panel');
+const firstRunProgress = document.querySelector('#first-run-progress');
+const firstRunProgressLabel = document.querySelector('#first-run-progress-label');
+const firstRunStatus = document.querySelector('#first-run-status');
+const firstRunDismissButton = document.querySelector('#first-run-dismiss');
+const onboardingShowButton = document.querySelector('#onboarding-show');
 
 const SUPPORTED_LOCALES = ['en', 'tr'];
 const CHAT_HISTORY_KEY = 'lar.chat.history.v1';
+const ONBOARDING_DISMISSED_KEY = 'lar.onboarding.dismissed.v1';
 const MAX_CHAT_CONVERSATIONS = 24;
 const MAX_CHAT_MESSAGES = 80;
 const MAX_CHAT_CONTEXT_MESSAGES = 24;
@@ -76,9 +83,24 @@ let chatConversations = [];
 let activeChatId = null;
 let activeChatController = null;
 let activeAssistantMessageElement = null;
+let hardwareInventoryLoaded = false;
+let engineSnapshot = [];
+let onboardingDismissed = (() => { try { return localStorage.getItem(ONBOARDING_DISMISSED_KEY) === '1'; } catch (_) { return false; } })();
+if (firstRunPanel) firstRunPanel.hidden = onboardingDismissed;
+let localeInitialized = false;
 
 function translation(key, fallback = key) {
   return Object.prototype.hasOwnProperty.call(localeMessages, key) ? localeMessages[key] : fallback;
+}
+
+function formatMessage(key, values = {}, fallback = key) {
+  return String(translation(key, fallback)).replace(/\{([a-zA-Z0-9_]+)\}/g, (match, name) =>
+    Object.prototype.hasOwnProperty.call(values, name) ? String(values[name]) : match);
+}
+
+function formatError(error) {
+  const detail = String(error && error.message ? error.message : error || translation('common.unknownError', 'Unknown error'));
+  return formatMessage('common.errorDetails', { detail }, `Details: ${detail}`);
 }
 
 function applyLocale() {
@@ -110,6 +132,70 @@ function applyLocale() {
     const key = button.dataset.labelKey;
     if (key) button.dataset.label = translation(key, button.dataset.label || key);
   }
+  updateFirstRunGuide();
+}
+
+function updateFirstRunGuide() {
+  if (!firstRunPanel) return;
+  firstRunPanel.hidden = onboardingDismissed;
+  if (onboardingDismissed) return;
+
+  const hasInstalledModel = Array.isArray(catalogItems) && catalogItems.some((item) =>
+    item && item.type === 'model' && item.installed);
+  const hasReadyChatEngine = engineSnapshot.some((engine) => engine && engine.default_for_chat && engine.ready);
+  const hasCompletedChat = Array.isArray(chatConversations) && chatConversations.some((conversation) =>
+    Array.isArray(conversation.messages) && conversation.messages.some((message) =>
+      message.role === 'assistant' && message.state === 'complete' && String(message.content || '').trim().length > 0));
+  const steps = [
+    { id: 'device', complete: hardwareInventoryLoaded },
+    { id: 'model', complete: hasInstalledModel },
+    { id: 'engine', complete: hasReadyChatEngine },
+    { id: 'chat', complete: hasCompletedChat },
+  ];
+  const completed = steps.filter((step) => step.complete).length;
+  if (firstRunProgress) {
+    firstRunProgress.value = completed;
+    firstRunProgress.setAttribute('aria-valuenow', String(completed));
+    firstRunProgress.setAttribute('aria-valuetext', formatMessage('onboarding.progress', { completed, total: steps.length }, `${completed} of ${steps.length} steps complete`));
+  }
+  if (firstRunProgressLabel) firstRunProgressLabel.textContent = formatMessage('onboarding.progress', { completed, total: steps.length }, `${completed} of ${steps.length} steps complete`);
+  for (let index = 0; index < steps.length; index += 1) {
+    const step = steps[index];
+    const item = firstRunPanel.querySelector(`[data-first-run-step="${step.id}"]`);
+    if (!item) continue;
+    item.classList.toggle('is-complete', step.complete);
+    item.classList.toggle('is-current', !step.complete && steps.slice(0, index).every((previous) => previous.complete));
+    if (step.complete) item.removeAttribute('aria-current');
+    else if (steps.slice(0, index).every((previous) => previous.complete)) item.setAttribute('aria-current', 'step');
+    else item.removeAttribute('aria-current');
+    const status = item.querySelector('[data-first-run-status]');
+    if (status) status.textContent = translation(step.complete ? 'onboarding.stepComplete' : 'onboarding.stepPending', step.complete ? 'Complete' : 'Not completed');
+    const action = item.querySelector('[data-first-run-action]');
+    if (action) action.setAttribute('aria-label', translation(`onboarding.${step.id}ActionLabel`, action.textContent));
+  }
+  if (firstRunStatus) {
+    firstRunStatus.className = completed === steps.length ? 'status-message success' : 'status-message';
+    firstRunStatus.textContent = completed === steps.length
+      ? translation('onboarding.allComplete', 'Your local chat setup is complete. You can hide this guide or reopen it from Settings.')
+      : translation('onboarding.optional', 'This guide is optional. You can skip any step and return later.');
+  }
+}
+
+function dismissFirstRunGuide() {
+  onboardingDismissed = true;
+  try { localStorage.setItem(ONBOARDING_DISMISSED_KEY, '1'); } catch (_) { /* The guide remains dismissible for this session. */ }
+  updateFirstRunGuide();
+  const pageTitle = document.querySelector('#page-title');
+  if (pageTitle) pageTitle.focus();
+}
+
+function showFirstRunGuide() {
+  onboardingDismissed = false;
+  try { localStorage.removeItem(ONBOARDING_DISMISSED_KEY); } catch (_) { /* In-memory visibility is sufficient for this session. */ }
+  setActiveView('overview');
+  updateFirstRunGuide();
+  if (firstRunPanel && typeof firstRunPanel.scrollIntoView === 'function') firstRunPanel.scrollIntoView({ block: 'start', behavior: 'auto' });
+  if (document.querySelector('#first-run-title')) document.querySelector('#first-run-title').focus();
 }
 
 async function setLocale(locale) {
@@ -120,11 +206,21 @@ async function setLocale(locale) {
     const messages = await response.json();
     if (!messages || typeof messages !== 'object' || Array.isArray(messages)) throw new Error('Language resource is invalid.');
     localeMessages = messages;
+    const changed = localeInitialized && currentLocale !== requested;
     currentLocale = requested;
+    localeInitialized = true;
     try { localStorage.setItem('lar.locale', requested); } catch (_) { /* Preference persistence is optional. */ }
     applyLocale();
     renderCatalog();
     renderChatWorkspace();
+    updateFirstRunGuide();
+    if (changed) {
+      void refreshEngines();
+      void refreshHardware();
+      void refreshResources();
+      void refreshDownloads();
+      void checkForUpdates();
+    }
     reportDiagnosticEvent('ui.locale.changed', `locale=${requested}`);
   } catch (error) {
     if (requested !== 'en') {
@@ -193,6 +289,30 @@ const initialLocale = (() => {
 })();
 if (languageSelect) languageSelect.addEventListener('change', () => setLocale(languageSelect.value));
 if (settingsLanguageSelect) settingsLanguageSelect.addEventListener('change', () => setLocale(settingsLanguageSelect.value));
+if (firstRunDismissButton) firstRunDismissButton.addEventListener('click', dismissFirstRunGuide);
+if (onboardingShowButton) onboardingShowButton.addEventListener('click', showFirstRunGuide);
+for (const button of document.querySelectorAll('[data-first-run-action]')) {
+  button.addEventListener('click', () => {
+    const action = button.dataset.firstRunAction;
+    if (action === 'device') {
+      setActiveView('overview');
+      void refreshHardware();
+      const target = document.querySelector('#device-panel');
+      if (target && typeof target.scrollIntoView === 'function') target.scrollIntoView({ block: 'start' });
+      const heading = document.querySelector('#device-title');
+      if (heading) heading.focus();
+    } else if (action === 'models') {
+      setActiveView('models');
+      document.querySelector('#page-title').focus();
+    } else if (action === 'activity') {
+      setActiveView('activity');
+      document.querySelector('#page-title').focus();
+    } else if (action === 'chat') {
+      setActiveView('chat');
+      if (chatMessageInput) chatMessageInput.focus();
+    }
+  });
+}
 activateHashView();
 void setLocale(initialLocale);
 const completedDownloadJobs = new Set();
@@ -293,8 +413,8 @@ async function checkForUpdates(manual = false) {
   lastUpdateCheckAt = Date.now();
   if (manual) {
     checkUpdatesButton.disabled = true;
-    checkUpdatesButton.textContent = 'Checking…';
-    updateCheckStatus.textContent = 'Checking the official release channel…';
+    checkUpdatesButton.textContent = translation('updates.checking', 'Checking…');
+    updateCheckStatus.textContent = translation('updates.checkingChannel', 'Checking the official release channel…');
   }
   try {
     const local = await api('/version');
@@ -316,26 +436,26 @@ async function checkForUpdates(manual = false) {
       .sort((left, right) => compareVersions(right.tag_name, left.tag_name))[0];
 
     if (!latest || compareVersions(latest.tag_name, current) <= 0) {
-      updateCheckStatus.textContent = `Up to date · ${current}`;
+      updateCheckStatus.textContent = formatMessage('updates.upToDate', { version: current }, `Up to date · ${current}`);
       availableRuntimeUpdate = null;
       updateDownloadButton.hidden = true;
       updateDownloadButton.disabled = true;
       updateApplyButton.hidden = true;
       updateNotice.hidden = !manual;
       if (manual) {
-        updateTitle.textContent = 'You’re up to date';
-        updateCopy.textContent = `This installation is running ${current}. No newer version is available in the selected release channel. Your local models and settings are unchanged.`;
+        updateTitle.textContent = translation('updates.upToDateTitle', 'You’re up to date');
+        updateCopy.textContent = formatMessage('updates.upToDateCopy', { version: current });
         updateLink.href = REPOSITORY_RELEASES;
-        updateLink.textContent = 'All releases';
+        updateLink.textContent = translation('updates.allReleases', 'All releases');
         updateNotice.hidden = false;
-        updateCheckStatus.textContent = `Up to date · ${current}`;
+        updateCheckStatus.textContent = formatMessage('updates.upToDate', { version: current });
       }
       return;
     }
 
-    updateTitle.textContent = `Version ${latest.tag_name} is available`;
+    updateTitle.textContent = formatMessage('updates.versionAvailable', { version: latest.tag_name }, `Version ${latest.tag_name} is available`);
     updateLink.href = safeHttpsUrl(latest.html_url) || REPOSITORY_RELEASES;
-    updateLink.textContent = 'Release notes';
+    updateLink.textContent = translation('updates.releaseNotes', 'Release notes');
     availableRuntimeUpdate = null;
     updateDownloadButton.hidden = true;
     updateDownloadButton.disabled = true;
@@ -347,15 +467,15 @@ async function checkForUpdates(manual = false) {
         ? latest.assets.find((candidate) => candidate.name === installerName)
         : null;
       updateLink.href = safeHttpsUrl(latest.html_url) || REPOSITORY_RELEASES;
-      updateLink.textContent = installer ? 'Release notes' : 'Open official releases';
+      updateLink.textContent = installer ? translation('updates.releaseNotes', 'Release notes') : translation('updates.openOfficial', 'Open official releases');
       updateDownloadButton.hidden = false;
       updateDownloadButton.disabled = !installer;
-      updateDownloadButton.textContent = 'Download & install desktop update';
+      updateDownloadButton.textContent = translation('updates.desktopDownload', 'Download & install desktop update');
       updateCopy.textContent = installer
-        ? `The complete desktop update (${latest.tag_name}) is available. The desktop shell will verify the official Windows setup installer against GitHub's SHA-256 digest, create a full application backup, update the shell and runtime together, and check local health before keeping the update. Settings, engines, models and logs remain in your user-data folder.`
-        : `A newer release (${latest.tag_name}) is available, but its Windows desktop installer is not attached yet. The current installation will not be changed.`;
+        ? formatMessage('updates.desktopCopy', { version: latest.tag_name })
+        : formatMessage('updates.desktopMissing', { version: latest.tag_name });
       updateNotice.hidden = false;
-      updateCheckStatus.textContent = `Desktop app update available · ${latest.tag_name}`;
+      updateCheckStatus.textContent = formatMessage('updates.desktopAvailable', { version: latest.tag_name });
       return;
     }
 
@@ -377,41 +497,41 @@ async function checkForUpdates(manual = false) {
         digest,
         size,
       };
-      updateDownloadButton.textContent = 'Download & verify update';
+      updateDownloadButton.textContent = translation('updates.downloadVerify', 'Download & verify update');
       updateDownloadButton.hidden = false;
       updateDownloadButton.disabled = false;
       const applyGuidance = updateApplySupported
-        ? 'After verification, choose Apply update & restart. The previous files are kept for rollback.'
+        ? translation('updates.applyDesktop', 'After verification, choose Apply update & restart. The previous files are kept for rollback.')
         : /windows-x64\.zip$/i.test(asset.name)
-          ? 'This installation cannot safely replace itself in place. Use the release download to extract the verified package into a new application folder, then start it there. Your settings, engines and models remain in the separate user-data folder.'
-          : 'This platform currently verifies the official package in the app but does not yet install it in place. Close the app, extract the new archive into a new folder, and start it again; settings, engines and models remain in your user-data folder.';
-      updateCopy.textContent = `You are using ${current}. Downloading stores the official ${latest.tag_name} package under your Local AI Runtime user-data folder and checks its advertised size and SHA-256 digest. ${applyGuidance}`;
+          ? translation('updates.applyWindowsArchive', 'This installation cannot safely replace itself in place.')
+          : translation('updates.applyManualArchive', 'This platform verifies the official package but does not yet install it in place.');
+      updateCopy.textContent = formatMessage('updates.downloadIntro', { current, version: latest.tag_name, guidance: applyGuidance });
       const stagedStatus = await getStagedUpdateStatus(latest.tag_name).catch(() => null);
       if (stagedStatus?.staged) showStagedUpdateStatus(stagedStatus, current);
     } else {
-      updateCopy.textContent = `You are using ${current}. A newer release exists, but the official release metadata does not include a supported package and SHA-256 digest for this computer. Open the release notes to download manually; automatic staging is disabled.`;
+      updateCopy.textContent = formatMessage('updates.unsupportedPackage', { current });
     }
     updateNotice.hidden = false;
-    updateCheckStatus.textContent = `Update available · ${latest.tag_name}`;
+    updateCheckStatus.textContent = formatMessage('updates.available', { version: latest.tag_name });
   } catch (error) {
     // Offline use is expected. Keep local inference usable when GitHub is unreachable.
     console.info('Update check skipped:', error.message);
-    if (!manual) updateCheckStatus.textContent = 'Could not check for updates · local app remains available';
+    if (!manual) updateCheckStatus.textContent = translation('updates.unavailableBackground', 'Could not check for updates · local app remains available');
     if (manual) {
-      updateTitle.textContent = 'Could not check for updates';
-      updateCopy.textContent = 'Local AI Runtime is still available. Check your internet connection or open GitHub Releases to check the current version manually.';
+      updateTitle.textContent = translation('updates.failedTitle', 'Could not check for updates');
+      updateCopy.textContent = translation('updates.failedCopy', 'Local AI Runtime is still available. Check your internet connection or open GitHub Releases to check manually.');
       updateLink.href = REPOSITORY_RELEASES;
-      updateLink.textContent = 'Open GitHub Releases';
+      updateLink.textContent = translation('updates.openGithub', 'Open GitHub Releases');
       updateDownloadButton.hidden = true;
       updateApplyButton.hidden = true;
       updateNotice.hidden = false;
-      updateCheckStatus.textContent = 'Update check failed · local app remains available';
+      updateCheckStatus.textContent = translation('updates.checkFailed', 'Update check failed · local app remains available');
     }
   } finally {
     updateCheckInProgress = false;
     if (manual) {
       checkUpdatesButton.disabled = false;
-      checkUpdatesButton.textContent = 'Check for updates';
+      checkUpdatesButton.textContent = translation('common.checkUpdates', 'Check for updates');
     }
   }
 }
@@ -428,35 +548,35 @@ function showStagedUpdateStatus(status, currentVersion) {
   updateApplyButton.disabled = true;
   if (!status || !status.staged) return;
   const tagName = status.tag_name || availableRuntimeUpdate?.tag_name || 'the selected release';
-  updateCopy.textContent = `Verified package ${tagName} is staged (${formatBytes(status.size_bytes)}). Its size and SHA-256 were checked again on this device. Your running application, settings, engines and models have not been changed.`;
+  updateCopy.textContent = formatMessage('updates.staged', { version: tagName, size: formatBytes(status.size_bytes) });
   const state = String(status.apply_state || '');
   if (['applying', 'stopping', 'replacing', 'awaiting_health'].includes(state)) {
-    updateTitle.textContent = `Applying update ${tagName}`;
+    updateTitle.textContent = formatMessage('updates.applying', { version: tagName });
     updateApplyButton.hidden = true;
     updateCopy.textContent = state === 'awaiting_health'
-      ? 'Application files were replaced and the new runtime is being checked. If the update helper stops unexpectedly, the launcher will restore the verified backup before starting the app.'
-      : 'The update helper is applying the verified package. The runtime will restart; keep this folder and the user-data folder in place. If the operation is interrupted, the launcher will attempt verified backup recovery.';
+      ? translation('updates.awaitingHealth', 'Application files were replaced and the new runtime is being checked.')
+      : translation('updates.applyingCopy', 'The update helper is applying the verified package. The runtime will restart.');
     return;
   }
   if (state === 'rolled_back') {
-    updateCopy.textContent += ` Previous update attempt was rolled back: ${String(status.apply_message || '').slice(0, 500)}`;
+    updateCopy.textContent += ` ${formatMessage('updates.rolledBack', { detail: String(status.apply_message || '').slice(0, 500) })}`;
   } else if (state === 'rollback_failed') {
-    updateTitle.textContent = `Manual recovery needed for ${tagName}`;
-    updateCopy.textContent = `${String(status.apply_message || 'Automatic rollback failed.').slice(0, 700)} Check the local update log before attempting another update.`;
+    updateTitle.textContent = formatMessage('updates.manualRecovery', { version: tagName });
+    updateCopy.textContent = `${String(status.apply_message || translation('updates.rollbackFailed', 'Automatic rollback failed.')).slice(0, 700)} ${translation('updates.rollbackFailed', 'Check the local update log before attempting another update.')}`;
     return;
   } else if (state === 'failed') {
-    updateCopy.textContent += ` Last apply attempt failed: ${String(status.apply_message || '').slice(0, 500)}`;
+    updateCopy.textContent += ` ${formatMessage('updates.applyFailed', { detail: String(status.apply_message || '').slice(0, 500) })}`;
   }
   if (updateApplySupported && status.apply_supported && !updateApplyInProgress) {
     updateApplyButton.hidden = false;
     updateApplyButton.disabled = false;
-    updateApplyButton.textContent = 'Apply update & restart';
+    updateApplyButton.textContent = translation('updates.applyRestart', 'Apply update & restart');
   } else if (!updateApplySupported) {
-    updateCopy.textContent += /windows-x64\.zip$/i.test(status.asset_name || availableRuntimeUpdate?.asset_name || '')
-      ? ' This installation cannot safely apply updates in place. No application files were changed; download the verified release and extract it into a new application folder. Your user-data folder is preserved.'
-      : ' This platform verifies update packages in-app but does not yet install them in place. After verification, close the app and replace the application archive; settings, engines and models remain in your user-data folder.';
+    updateCopy.textContent += ` ${/windows-x64\.zip$/i.test(status.asset_name || availableRuntimeUpdate?.asset_name || '')
+      ? translation('updates.applyWindowsArchive', 'This installation cannot safely replace itself in place.')
+      : translation('updates.applyManualArchive', 'This platform verifies the official package but does not yet install it in place.')}`;
   } else if (!status.apply_supported) {
-    updateCopy.textContent += ' Apply-and-restart is not supported by this installation. The verified package is kept staged and no files were changed.';
+    updateCopy.textContent += ` ${translation('updates.applyUnsupported', 'Apply-and-restart is not supported by this installation.')}`;
   }
 }
 
@@ -464,18 +584,18 @@ if (window.chrome?.webview?.addEventListener) {
   window.chrome.webview.addEventListener('message', (event) => {
     if (event.data && typeof event.data === 'object' && event.data.type === 'desktop-update-progress') {
       updateNotice.hidden = false;
-      updateTitle.textContent = String(event.data.title || 'Desktop update');
+      updateTitle.textContent = String(event.data.title || translation('updates.desktopTitle', 'Desktop update'));
       updateCopy.textContent = String(event.data.detail || '');
       if (updateDownloadButton && desktopShellInstalled) {
         updateDownloadButton.disabled = true;
-        updateDownloadButton.textContent = String(event.data.title || 'Updating…').slice(0, 64);
+        updateDownloadButton.textContent = String(event.data.title || translation('updates.updating', 'Updating…')).slice(0, 64);
       }
       return;
     }
     if (event.data !== 'desktop-update-check-finished') return;
     if (desktopShellInstalled && updateDownloadButton) {
       updateDownloadButton.disabled = false;
-      updateDownloadButton.textContent = 'Download & install desktop update';
+      updateDownloadButton.textContent = translation('updates.desktopDownload', 'Download & install desktop update');
     }
   });
 }
@@ -485,18 +605,18 @@ async function stageRuntimeUpdate() {
     const bridge = window.chrome?.webview;
     if (bridge && typeof bridge.postMessage === 'function') {
       updateDownloadButton.disabled = true;
-      updateDownloadButton.textContent = 'Checking desktop update…';
+      updateDownloadButton.textContent = translation('updates.checking', 'Checking desktop update…');
       bridge.postMessage('check-for-desktop-updates');
     } else {
-      updateCopy.textContent = 'The secure in-app installer is available in the Windows desktop shell. Use the Local AI Runtime notification-area icon and choose “Check for updates”.';
+      updateCopy.textContent = translation('updates.desktopShellHint', 'The secure in-app installer is available in the Windows desktop shell. Use the notification-area icon and choose “Check for updates”.');
     }
     return;
   }
   if (!availableRuntimeUpdate || updateStageJobId) return;
   updateDownloadButton.disabled = true;
-  updateDownloadButton.textContent = 'Starting download…';
-  updateTitle.textContent = `Preparing ${availableRuntimeUpdate.tag_name}`;
-  updateCopy.textContent = 'Requesting the official platform package. No running files will be changed.';
+  updateDownloadButton.textContent = translation('updates.startingDownload', 'Starting download…');
+  updateTitle.textContent = formatMessage('updates.preparing', { version: availableRuntimeUpdate.tag_name });
+  updateCopy.textContent = translation('updates.requestPackage', 'Requesting the official platform package. No running files will be changed.');
   reportDiagnosticEvent('ui.update.stage_started', `version=${availableRuntimeUpdate.tag_name}; asset=${availableRuntimeUpdate.asset_name}`);
   try {
     const started = await api('/v1/updates/stage', {
@@ -510,11 +630,11 @@ async function stageRuntimeUpdate() {
       const downloaded = Number(job.downloaded_bytes || 0);
       const total = Number(job.total_bytes || 0);
       updateCopy.textContent = total > 0
-        ? `${job.phase || job.state} · ${formatBytes(downloaded)} of ${formatBytes(total)} (${progress}%). Your current installation and user data are unchanged.`
-        : `${job.phase || job.state}. Your current installation and user data are unchanged.`;
+        ? formatMessage('updates.downloadProgress', { phase: translateJobPhase(job.phase || job.state), downloaded: formatBytes(downloaded), total: formatBytes(total), percent: progress })
+        : formatMessage('updates.downloadProgressUnknown', { phase: translateJobPhase(job.phase || job.state) });
       if (job.state === 'succeeded') {
-        updateTitle.textContent = `Verified update ${job.version} is ready`;
-        updateCopy.textContent = `The ${job.version} package was downloaded and its SHA-256 digest matched GitHub release metadata. It is staged in the Local AI Runtime user-data folder. Nothing has been changed.`;
+        updateTitle.textContent = formatMessage('updates.verifiedReady', { version: job.version });
+        updateCopy.textContent = formatMessage('updates.verifiedReadyCopy', { version: job.version });
         reportDiagnosticEvent('ui.update.stage_succeeded', `version=${job.version}; bytes=${downloaded}; sha256_verified=true; install=not_performed`);
         const stagedStatus = await getStagedUpdateStatus(job.version).catch(() => null);
         if (stagedStatus?.staged) showStagedUpdateStatus(stagedStatus, runtimeVersion.textContent);
@@ -522,21 +642,21 @@ async function stageRuntimeUpdate() {
       }
       if (job.state === 'failed' || job.state === 'canceled') {
         const message = job.error || job.phase || job.state;
-        updateTitle.textContent = job.state === 'canceled' ? 'Update download canceled' : 'Update download failed';
-        updateCopy.textContent = `${message} Your current installation and user data are unchanged.`;
+        updateTitle.textContent = translation(job.state === 'canceled' ? 'updates.downloadCanceled' : 'updates.downloadFailed', job.state === 'canceled' ? 'Update download canceled' : 'Update download failed');
+        updateCopy.textContent = formatMessage('updates.downloadFailedCopy', { detail: message });
         reportDiagnosticEvent(`ui.update.stage_${job.state}`, `version=${availableRuntimeUpdate.tag_name}; http_status=0`);
         break;
       }
       await new Promise((resolve) => setTimeout(resolve, 450));
     }
   } catch (error) {
-    updateTitle.textContent = 'Update could not be staged';
-    updateCopy.textContent = `${error.message} Your current installation and user data are unchanged.`;
+    updateTitle.textContent = translation('updates.couldNotStage', 'Update could not be staged');
+    updateCopy.textContent = formatMessage('updates.downloadFailedCopy', { detail: error.message });
     reportDiagnosticEvent('ui.update.stage_failed', `http_status=${Number.isInteger(error?.httpStatus) ? error.httpStatus : 0}; error_type=${String(error?.name || 'Error').slice(0, 40)}`);
   } finally {
     updateStageJobId = null;
     updateDownloadButton.disabled = !availableRuntimeUpdate;
-    updateDownloadButton.textContent = 'Download & verify package';
+    updateDownloadButton.textContent = translation('updates.downloadVerify', 'Download & verify update');
     await refreshDownloads();
   }
 }
@@ -544,16 +664,14 @@ async function stageRuntimeUpdate() {
 async function applyRuntimeUpdate() {
   if (!availableRuntimeUpdate || !updateApplySupported || updateApplyInProgress) return;
   const tagName = availableRuntimeUpdate.tag_name;
-  const accepted = window.confirm(
-    `Apply ${tagName} and restart Local AI Runtime?\n\nThe current runtime and managed AI engines will stop briefly. User settings, downloaded engines and model files are stored separately and will not be replaced. A backup will be kept for rollback. Do not close this folder or shut down the computer during the update.`
-  );
+  const accepted = window.confirm(formatMessage('updates.confirmApply', { version: tagName }));
   if (!accepted) return;
 
   updateApplyInProgress = true;
   updateApplyButton.disabled = true;
   updateDownloadButton.disabled = true;
-  updateTitle.textContent = `Applying ${tagName}`;
-  updateCopy.textContent = 'The update helper is verifying the staged package once more, preparing a backup, and will restart the runtime. The dashboard may briefly disconnect.';
+  updateTitle.textContent = formatMessage('updates.applying', { version: tagName });
+  updateCopy.textContent = translation('updates.applyStarting', 'The update helper is verifying the staged package once more, preparing a backup, and will restart the runtime.');
   reportDiagnosticEvent('ui.update.apply_requested', `version=${tagName}; confirmation=accepted`);
   const previousVersion = runtimeVersion.textContent;
   try {
@@ -561,11 +679,11 @@ async function applyRuntimeUpdate() {
       method: 'POST',
       body: JSON.stringify({ tag_name: tagName }),
     });
-    updateCopy.textContent = 'Update accepted. Waiting for the runtime to stop and return. The page will reload when the apply result is available.';
+    updateCopy.textContent = translation('updates.applyAccepted', 'Update accepted. Waiting for the runtime to stop and return.');
     await waitForUpdateRestart(tagName, previousVersion);
   } catch (error) {
-    updateTitle.textContent = `Could not apply ${tagName}`;
-    updateCopy.textContent = `${error.message} The verified package remains staged; no update is reported as successful unless the restarted runtime passes its health check.`;
+    updateTitle.textContent = formatMessage('updates.applyCouldNot', { version: tagName });
+    updateCopy.textContent = formatMessage('updates.applyCouldNotCopy', { detail: error.message });
     reportDiagnosticEvent('ui.update.apply_failed', `version=${tagName}; http_status=${Number.isInteger(error?.httpStatus) ? error.httpStatus : 0}; error_type=${String(error?.name || 'Error').slice(0, 40)}`);
     updateApplyInProgress = false;
     updateApplyButton.disabled = false;
@@ -595,30 +713,20 @@ async function waitForUpdateRestart(tagName, previousVersion) {
     }
     await new Promise((resolve) => setTimeout(resolve, 750));
   }
-  updateTitle.textContent = `Update status for ${tagName} is taking longer than expected`;
-  updateCopy.textContent = 'The runtime has not returned to a verifiable state yet. Do not delete the rollback folder. Inspect %LOCALAPPDATA%/LocalAIRuntime/logs/update-apply.log and apply-status.json before retrying.';
+  updateTitle.textContent = formatMessage('updates.takingLong', { version: tagName });
+  updateCopy.textContent = translation('updates.takingLongCopy', 'The runtime has not returned to a verifiable state yet. Do not delete the rollback folder. Inspect the local update log and status file before retrying.');
   updateApplyInProgress = false;
 }
 
 async function refreshHealth() {
   try {
     const data = await api('/health');
-    apiStatus.textContent = `API online · ${data.version}`;
+    apiStatus.textContent = formatMessage('api.online', { version: data.version }, `API online · ${data.version}`);
     apiDot.className = 'dot good';
   } catch (error) {
-    apiStatus.textContent = 'API unavailable';
+    apiStatus.textContent = translation('api.unavailable', 'API unavailable');
     apiDot.className = 'dot bad';
   }
-}
-
-function formatBytes(bytes) {
-  const value = Number(bytes || 0);
-  if (!Number.isFinite(value) || value <= 0) return 'Size resolved and verified during download';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  let size = value;
-  let unit = 0;
-  while (size >= 1000 && unit < units.length - 1) { size /= 1000; unit += 1; }
-  return `${size.toFixed(unit >= 2 ? 2 : 0)} ${units[unit]}`;
 }
 
 function safeHttpsUrl(value) {
@@ -634,35 +742,35 @@ function catalogItemCard(item) {
   const card = make('article', 'catalog-card');
   const info = make('div');
   info.append(make('h3', '', item.name || item.id));
-  info.append(make('p', '', item.description || 'Reviewed catalog component.'));
+  info.append(make('p', '', item.description || translation('models.reviewedComponent', 'Reviewed catalog component.')));
   const meta = make('div', 'engine-meta');
   meta.append(make('span', 'tag', item.type || 'component'));
   if (item.backend) meta.append(make('span', 'tag', String(item.backend).toUpperCase()));
   if (item.version) {
-    const versionLabel = item.version === 'latest-compatible' ? 'latest compatible build' : (item.version === 'latest-stable' ? 'latest stable' : `revision ${String(item.version).slice(0, 12)}`);
+    const versionLabel = item.version === 'latest-compatible' ? translation('models.latestCompatible', 'latest compatible build') : (item.version === 'latest-stable' ? translation('models.latestStable', 'latest stable') : formatMessage('models.revision', { revision: String(item.version).slice(0, 12) }, `revision ${String(item.version).slice(0, 12)}`));
     meta.append(make('span', 'tag', versionLabel));
   }
-  meta.append(make('span', 'tag', item.installed ? 'installed' : formatBytes(item.size_bytes)));
-  if (item.installed) meta.append(make('span', 'tag ready', 'verified file present'));
+  meta.append(make('span', 'tag', item.installed ? translation('models.installed', 'installed') : formatBytes(item.size_bytes)));
+  if (item.installed) meta.append(make('span', 'tag ready', translation('models.verifiedFile', 'verified file present')));
   info.append(meta);
   const licenseUrl = safeHttpsUrl(item.license_url);
   const license = make('p', 'catalog-license');
-  license.append(document.createTextNode(`License: ${item.license || 'Not specified'} · `));
+  license.append(document.createTextNode(formatMessage('models.license', { license: item.license || translation('common.notSpecified', 'Not specified') })));
   if (licenseUrl) {
-    const link = make('a', '', 'review license');
+    const link = make('a', '', translation('models.reviewLicense', 'review license'));
     link.href = licenseUrl;
     link.target = '_blank';
     link.rel = 'noopener noreferrer';
     license.append(link);
   } else {
-    license.append(document.createTextNode('license URL unavailable'));
+    license.append(document.createTextNode(translation('models.licenseUnavailable', 'license URL unavailable')));
   }
   info.append(license);
-  if (item.sha256) info.append(make('p', 'hint', `Pinned SHA-256: ${item.sha256}`));
+  if (item.sha256) info.append(make('p', 'hint', formatMessage('models.pinnedSha', { digest: item.sha256 })));
   if (item.source_url) {
     const sourceUrl = safeHttpsUrl(item.source_url);
     if (sourceUrl) {
-      const source = make('a', 'catalog-source', 'Open official model source');
+      const source = make('a', 'catalog-source', translation('models.openOfficialSource', 'Open official model source'));
       source.href = sourceUrl;
       source.target = '_blank';
       source.rel = 'noopener noreferrer';
@@ -677,40 +785,40 @@ function catalogItemCard(item) {
   const evidence = item.evidence && typeof item.evidence === 'object' ? item.evidence : null;
   if (compatibility || resources || provenance || evidence) {
     const details = make('details', 'catalog-details');
-    details.append(make('summary', '', 'Compatibility & requirements'));
+    details.append(make('summary', '', translation('models.compatibility', 'Compatibility & requirements')));
     if (compatibility) {
       const targets = Array.isArray(compatibility.targets) ? compatibility.targets : [];
       if (targets.length) {
         const targetText = targets.map((target) => `${String(target.platform || 'unknown')} ${String(target.architecture || '')}`.trim()).join(' · ');
-        details.append(make('p', 'hint', `Targets: ${targetText}`));
+        details.append(make('p', 'hint', formatMessage('models.targets', { targets: targetText })));
       }
       if (Array.isArray(compatibility.driver_requirements) && compatibility.driver_requirements.length) {
-        details.append(make('p', 'hint', `Prerequisites: ${compatibility.driver_requirements.join('; ')}`));
+        details.append(make('p', 'hint', formatMessage('models.prerequisites', { requirements: compatibility.driver_requirements.join('; ') })));
       }
       if (Array.isArray(compatibility.known_limits) && compatibility.known_limits.length) {
-        details.append(make('p', 'catalog-limit', `Known limits: ${compatibility.known_limits.join(' ')}`));
+        details.append(make('p', 'catalog-limit', formatMessage('models.knownLimits', { limits: compatibility.known_limits.join(' ') })));
       }
     }
     if (resources) {
       const memoryParts = [];
-      if (Number.isFinite(Number(resources.minimum_system_ram_bytes)) && resources.minimum_system_ram_bytes !== null) memoryParts.push(`minimum system RAM ≈ ${formatBytes(resources.minimum_system_ram_bytes)}`);
-      if (Number.isFinite(Number(resources.recommended_system_ram_bytes)) && resources.recommended_system_ram_bytes !== null) memoryParts.push(`recommended ≈ ${formatBytes(resources.recommended_system_ram_bytes)}`);
-      if (Number.isFinite(Number(resources.minimum_vram_bytes)) && resources.minimum_vram_bytes !== null) memoryParts.push(`minimum VRAM ≈ ${formatBytes(resources.minimum_vram_bytes)}`);
-      if (Number.isFinite(Number(resources.recommended_vram_bytes)) && resources.recommended_vram_bytes !== null) memoryParts.push(`recommended VRAM ≈ ${formatBytes(resources.recommended_vram_bytes)}`);
-      if (memoryParts.length) details.append(make('p', 'hint', `Memory guidance (${resources.estimate_confidence || 'unspecified'}): ${memoryParts.join('; ')}. ${resources.notes || ''}`));
+      if (Number.isFinite(Number(resources.minimum_system_ram_bytes)) && resources.minimum_system_ram_bytes !== null) memoryParts.push(formatMessage('models.memoryMinimumRam', { size: formatBytes(resources.minimum_system_ram_bytes) }));
+      if (Number.isFinite(Number(resources.recommended_system_ram_bytes)) && resources.recommended_system_ram_bytes !== null) memoryParts.push(formatMessage('models.memoryRecommendedRam', { size: formatBytes(resources.recommended_system_ram_bytes) }));
+      if (Number.isFinite(Number(resources.minimum_vram_bytes)) && resources.minimum_vram_bytes !== null) memoryParts.push(formatMessage('models.memoryMinimumVram', { size: formatBytes(resources.minimum_vram_bytes) }));
+      if (Number.isFinite(Number(resources.recommended_vram_bytes)) && resources.recommended_vram_bytes !== null) memoryParts.push(formatMessage('models.memoryRecommendedVram', { size: formatBytes(resources.recommended_vram_bytes) }));
+      if (memoryParts.length) details.append(make('p', 'hint', formatMessage('models.memoryGuidance', { confidence: resources.estimate_confidence || translation('common.unspecified', 'unspecified'), guidance: memoryParts.join('; '), notes: resources.notes || '' })));
       else if (resources.notes) details.append(make('p', 'hint', resources.notes));
     }
     if (provenance && Array.isArray(provenance.dependencies) && provenance.dependencies.length) {
       const dependencies = provenance.dependencies.map((dependency) => `${dependency.id} (${dependency.resolution})`);
-      details.append(make('p', 'hint', `Included dependencies: ${dependencies.join('; ')}`));
+      details.append(make('p', 'hint', formatMessage('models.dependencies', { dependencies: dependencies.join('; ') })));
     }
     if (evidence) {
-      details.append(make('p', 'hint', `Evidence: package ${evidence.package_verification || 'unspecified'}; real task ${evidence.real_task_test || 'unspecified'}; hardware profile ${evidence.profile_validation || 'unspecified'}.`));
+      details.append(make('p', 'hint', formatMessage('models.evidence', { package: evidence.package_verification || translation('common.unspecified', 'unspecified'), task: evidence.real_task_test || translation('common.unspecified', 'unspecified'), profile: evidence.profile_validation || translation('common.unspecified', 'unspecified') })));
     }
-    details.append(make('p', 'hint', 'Compatibility and resource estimates are metadata, not a guarantee that this component will work on every machine.'));
+    details.append(make('p', 'hint', translation('models.compatibilityDisclaimer', 'Compatibility and resource estimates are metadata, not a guarantee that this component will work on every machine.')));
     info.append(details);
   }
-  if (item.installed_path) info.append(make('p', 'hint', `Installed at: ${item.installed_path}`));
+  if (item.installed_path) info.append(make('p', 'hint', formatMessage('models.installedAt', { path: item.installed_path })));
 
   const actions = make('div', 'catalog-actions');
   const acknowledgeLabel = make('label', 'license-ack');
@@ -719,10 +827,10 @@ function catalogItemCard(item) {
   acknowledge.id = `license-ack-${String(item.id).replace(/[^a-zA-Z0-9_-]/g, '-')}`;
   acknowledge.checked = false;
   const acknowledgeCopy = make('span', 'license-ack-copy');
-  acknowledgeCopy.append(make('strong', '', 'Required before install'), make('span', '', 'I have reviewed and accept this component’s license.'));
+  acknowledgeCopy.append(make('strong', '', translation('models.requiredBeforeInstall', 'Required before install')), make('span', '', translation('models.acceptLicense', 'I have reviewed and accept this component’s license.')));
   acknowledgeLabel.htmlFor = acknowledge.id;
   acknowledgeLabel.append(acknowledge, acknowledgeCopy);
-  const install = make('button', 'button primary', item.installed ? 'Installed' : 'Download & install');
+  const install = make('button', 'button primary', item.installed ? translation('models.installed', 'Installed') : translation('models.downloadInstall', 'Download & install'));
   install.type = 'button';
   install.disabled = Boolean(item.installed) || !licenseUrl;
   acknowledge.addEventListener('change', () => {
@@ -732,29 +840,29 @@ function catalogItemCard(item) {
   });
   install.addEventListener('click', async () => {
     if (!acknowledge.checked) {
-      catalogError.textContent = 'Before downloading, tick the clearly marked “Required before install” license box on that component card.';
+      catalogError.textContent = translation('models.licenseCheck', 'Before downloading, tick the clearly marked license box on that component card.');
       acknowledge.focus();
       acknowledgeLabel.classList.add('needs-attention');
       return;
     }
     acknowledgeLabel.classList.remove('needs-attention');
-    const sizeHint = Number(item.size_bytes || 0) > 0 ? ` Approximate download: ${formatBytes(item.size_bytes)}.` : ' The exact archive size will be resolved from official release metadata.';
-    if (!window.confirm(`Download and install “${item.name || item.id}”?${sizeHint} Only files verified against the published SHA-256 will be activated.`)) return;
+    const sizeHint = Number(item.size_bytes || 0) > 0 ? formatMessage('models.approxDownload', { size: formatBytes(item.size_bytes) }) : translation('models.resolveSize', 'The exact archive size will be resolved from official release metadata.');
+    if (!window.confirm(formatMessage('models.confirmDownload', { name: item.name || item.id, sizeHint }))) return;
     install.disabled = true;
     catalogError.textContent = '';
     try {
       const started = await api('/v1/jobs', {
         method: 'POST', body: JSON.stringify({ item_id: item.id, accept_license: true }),
       });
-      catalogError.textContent = `Queued ${item.name || item.id} as ${started.job_id}. Follow the installation status below.`;
+      catalogError.textContent = formatMessage('models.queued', { name: item.name || item.id, job: started.job_id });
       await refreshDownloads();
     } catch (error) {
-      catalogError.textContent = error.message;
+      catalogError.textContent = formatError(error);
       install.disabled = Boolean(item.installed) || !licenseUrl;
     }
   });
   actions.append(acknowledgeLabel, install);
-  if (!licenseUrl) actions.append(make('p', 'engine-error', 'Installation is disabled because no safe HTTPS license link is available.'));
+  if (!licenseUrl) actions.append(make('p', 'engine-error', translation('models.installBlocked', 'Installation is disabled because no safe HTTPS license link is available.')));
   card.append(info, actions);
   return card;
 }
@@ -770,7 +878,7 @@ function renderCatalog() {
     return !query || searchable.includes(query);
   });
   catalogList.replaceChildren();
-  catalogSummary.textContent = `Showing ${filtered.length} of ${catalogItems.length} components`;
+  catalogSummary.textContent = formatMessage('models.showing', { visible: filtered.length, total: catalogItems.length }, `Showing ${filtered.length} of ${catalogItems.length} components`);
   for (const button of catalogFilterButtons) {
     const filter = button.dataset.catalogFilter;
     const count = filter === 'all' ? catalogItems.length : (filter === 'installed'
@@ -782,7 +890,7 @@ function renderCatalog() {
     button.setAttribute('aria-pressed', String(selected));
   }
   if (!filtered.length) {
-    catalogList.append(make('div', 'empty', catalogItems.length ? (currentLocale === 'tr' ? 'Bu filtreyle eşleşen bileşen yok. Başka bir tür dene veya aramayı temizle.' : 'No components match this filter. Try another type or clear the search.') : (currentLocale === 'tr' ? 'Bu bilgisayar için henüz uyumlu katalog bileşeni yok.' : 'No compatible catalog components are available for this computer yet.')));
+    catalogList.append(make('div', 'empty', catalogItems.length ? translation('models.noFilterMatch', 'No components match this filter. Try another type or clear the search.') : translation('models.noneAvailable', 'No compatible catalog components are available for this computer yet.')));
     return;
   }
   for (const item of filtered) catalogList.append(catalogItemCard(item));
@@ -793,19 +901,48 @@ async function refreshCatalog() {
   catalogRefreshButton.disabled = true;
   try {
     const result = await api('/v1/catalog');
-    if (!Array.isArray(result.data)) throw new Error('The component catalog response is invalid.');
+    if (!Array.isArray(result.data)) throw new Error(translation('models.catalogInvalid', 'The component catalog response is invalid.'));
     catalogItems = result.data;
     const installedModels = catalogItems.filter((item) => item.type === 'model' && item.installed).length;
+    updateFirstRunGuide();
     if (modelCountBadge) { modelCountBadge.textContent = String(installedModels); modelCountBadge.hidden = installedModels === 0; }
     renderCatalog();
   } catch (error) {
     catalogItems = [];
     renderCatalog();
-    catalogList.replaceChildren(make('div', 'empty', 'Could not load the component catalog.'));
-    catalogError.textContent = error.message;
+    catalogList.replaceChildren(make('div', 'empty', translation('models.catalogCouldNotLoad', 'Could not load the component catalog.')));
+    catalogError.textContent = formatError(error);
   } finally {
     catalogRefreshButton.disabled = false;
   }
+}
+
+function translateJobState(state) {
+  const normalized = String(state || 'unknown').toLowerCase();
+  const known = ['queued', 'running', 'downloading', 'verifying', 'extracting', 'configuring', 'succeeded', 'failed', 'canceled', 'interrupted'];
+  return known.includes(normalized) ? translation(`activity.jobState.${normalized}`, normalized) : normalized;
+}
+
+function translateJobPhase(phase) {
+  const raw = String(phase || '').trim();
+  const normalized = raw.toLowerCase();
+  const patterns = [
+    [/interrupt|not running/, 'interrupted'],
+    [/stream|generat|inference|model output/, 'streaming'],
+    [/download|fetch|transfer/, 'downloading'],
+    [/verif|checksum|hash/, 'verifying'],
+    [/extract|unpack/, 'extracting'],
+    [/install|finaliz|register|configur/, 'installing'],
+    [/start|launch|boot/, 'starting'],
+    [/stop|shut.?down/, 'stopping'],
+    [/cancel/, 'canceled'],
+    [/fail|error/, 'failed'],
+    [/complete|success|ready|finished/, 'completed'],
+    [/queue|pending/, 'queued'],
+    [/^running$/, 'running'],
+  ];
+  const match = patterns.find(([pattern]) => pattern.test(normalized));
+  return match ? translation(`activity.phase.${match[1]}`, raw) : (raw || translation('activity.phase.running', 'Running'));
 }
 
 function downloadJobCard(job) {
@@ -817,40 +954,42 @@ function downloadJobCard(job) {
     inference: translation('activity.operation.inference', 'Chat inference'),
   };
   const isOperation = Object.prototype.hasOwnProperty.call(operationTitles, job.kind);
-  const jobTitle = operationTitles[job.kind] || (job.item_id === 'runtime-update' ? 'Local AI Runtime update' : job.item_id);
-  header.append(make('h3', '', `${jobTitle} · ${job.state}`));
-  header.append(make('span', 'tag', isOperation ? translation('activity.operationTag', 'operation') : (job.kind || 'component')));
+  const jobTitle = operationTitles[job.kind] || (job.item_id === 'runtime-update' ? translation('activity.runtimeUpdate', 'Local AI Runtime update') : job.item_id);
+  const stateLabel = translateJobState(job.state);
+  header.append(make('h3', '', `${jobTitle} · ${stateLabel}`));
+  const kindLabel = translation(`activity.kind.${String(job.kind || 'component').toLowerCase()}`, job.kind || translation('common.component', 'component'));
+  header.append(make('span', 'tag', isOperation ? translation('activity.operationTag', 'operation') : kindLabel));
   card.append(header);
-  card.append(make('p', '', job.phase || job.state));
+  card.append(make('p', '', translateJobPhase(job.phase || job.state)));
   if (Number(job.attempt || 1) > 1) card.append(make('p', 'hint', `${translation('activity.attempt', 'Attempt')} ${job.attempt}`));
   if (isOperation) {
-    if (Number(job.progress_bytes || 0) > 0) card.append(make('p', 'hint', `${formatBytes(Number(job.progress_bytes))} ${translation('activity.outputReceived', 'output received')}`));
+    if (Number(job.progress_bytes || 0) > 0) card.append(make('p', 'hint', formatMessage('activity.outputReceivedBytes', { size: formatBytes(Number(job.progress_bytes)) }, `${formatBytes(Number(job.progress_bytes))} ${translation('activity.outputReceived', 'output received')}`)));
     if (Number(job.duration_ms || 0) > 0) card.append(make('p', 'hint', `${translation('activity.duration', 'Duration')}: ${(Number(job.duration_ms) / 1000).toFixed(2)} s`));
   } else {
     const progress = make('progress', 'download-progress');
     progress.max = 100;
     progress.value = Math.max(0, Math.min(100, Number(job.progress_percent || 0)));
-    progress.setAttribute('aria-label', `Download progress ${progress.value}%`);
+    progress.setAttribute('aria-label', formatMessage('activity.downloadProgress', { percent: progress.value }, `Download progress ${progress.value}%`));
     card.append(progress);
     const total = Number(job.total_bytes || 0);
     const downloaded = Number(job.downloaded_bytes || 0);
-    card.append(make('p', 'hint', total > 0 ? `${formatBytes(downloaded)} of ${formatBytes(total)} (${progress.value}%)` : `${formatBytes(downloaded)} downloaded`));
+    card.append(make('p', 'hint', total > 0 ? formatMessage('activity.downloadedOf', { downloaded: formatBytes(downloaded), total: formatBytes(total), percent: progress.value }) : formatMessage('activity.downloaded', { downloaded: formatBytes(downloaded) })));
   }
-  if (job.version) card.append(make('p', 'hint', `Upstream version: ${job.version}`));
-  if (job.installed_path) card.append(make('p', 'hint', job.kind === 'update' ? `Verified package staged at: ${job.installed_path}` : `Installed at: ${job.installed_path}`));
+  if (job.version) card.append(make('p', 'hint', formatMessage('activity.upstreamVersion', { version: job.version })));
+  if (job.installed_path) card.append(make('p', 'hint', job.kind === 'update' ? formatMessage('activity.verifiedPackageAt', { path: job.installed_path }) : formatMessage('activity.installedAt', { path: job.installed_path })));
   if (job.error) {
     card.append(make('p', 'engine-error', job.error));
     if (String(job.error).includes('verified staging file was kept')) {
-      card.append(make('p', 'recovery-hint', 'The model is already downloaded and verified. Close any app that may be using the model file, confirm the license again, then click Download & install to retry the finalization step without downloading 1.12 GB again.'));
+      card.append(make('p', 'recovery-hint', translation('models.recoveryHint', 'The model is already downloaded and verified. Close any app that may be using the model file, confirm the license again, then retry finalization without downloading it again.')));
     }
   }
   if (job.last_error && !job.error) {
-    card.append(make('p', 'hint', `${translation('activity.previousError', 'Previous attempt')}: ${job.last_error}`));
+    card.append(make('p', 'hint', formatMessage('activity.previousErrorDetail', { detail: job.last_error }, `${translation('activity.previousError', 'Previous attempt')}: ${job.last_error}`)));
   }
   const active = ['queued', 'running', 'downloading', 'verifying', 'extracting', 'configuring'].includes(job.state);
   if (active && (!isOperation || job.cancellable)) {
     const cancel = make('button', 'button secondary', job.cancel_requested
-      ? translation('activity.cancelRequested', 'Cancellation requested…') : 'Cancel');
+      ? translation('activity.cancelRequested', 'Cancellation requested…') : translation('activity.cancel', 'Cancel'));
     cancel.type = 'button';
     cancel.disabled = Boolean(job.cancel_requested);
     cancel.addEventListener('click', async () => {
@@ -859,7 +998,7 @@ function downloadJobCard(job) {
         await api(`/v1/jobs/${encodeURIComponent(job.id)}`, { method: 'DELETE' });
         await refreshDownloads();
       } catch (error) {
-        catalogError.textContent = error.message;
+        catalogError.textContent = formatError(error);
         cancel.disabled = false;
       }
     });
@@ -873,7 +1012,7 @@ function downloadJobCard(job) {
         await api(`/v1/jobs/${encodeURIComponent(job.id)}/retry`, { method: 'POST' });
         await refreshDownloads();
       } catch (error) {
-        catalogError.textContent = error.message;
+        catalogError.textContent = formatError(error);
         retry.disabled = false;
       }
     });
@@ -916,7 +1055,7 @@ async function refreshDownloads() {
     }
     return hasActive;
   } catch (error) {
-    catalogError.textContent = error.message;
+    catalogError.textContent = formatError(error);
     return false;
   }
 }
@@ -972,7 +1111,7 @@ function renderResources(snapshot) {
       const item = make('article', 'resource-process');
       const heading = make('div', 'resource-process-heading');
       heading.append(make('strong', '', engine.engine_id || translation('activity.resourcesEngine', 'Engine')));
-      heading.append(make('span', 'tag', engine.state || 'unknown'));
+      heading.append(make('span', 'tag', translateEngineState(engine.state)));
       item.append(heading);
       const cpuValue = typeof engine.cpu_percent === 'number' && Number.isFinite(engine.cpu_percent)
         ? `${engine.cpu_percent.toFixed(1)}%`
@@ -1018,7 +1157,7 @@ async function refreshResources() {
     }
     renderResources(snapshot);
   } catch (error) {
-    resourcesError.textContent = error.message;
+    resourcesError.textContent = formatError(error);
   } finally {
     resourcesRefreshButton.disabled = false;
   }
@@ -1048,7 +1187,7 @@ async function refreshActivitySnapshot() {
 
 function formatBytes(value) {
   const bytes = Number(value);
-  if (!Number.isFinite(bytes) || bytes <= 0) return 'Not available';
+  if (!Number.isFinite(bytes) || bytes <= 0) return translation('common.notAvailable', 'Not available');
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];
   let amount = bytes;
   let unit = 0;
@@ -1058,24 +1197,24 @@ function formatBytes(value) {
 
 function renderHardwareRecommendations(recommendations) {
   const section = make('section', 'hardware-recommendations');
-  section.append(make('h3', '', 'Recommended starting points'));
-  section.append(make('p', 'hint', 'These are local hardware-based suggestions, not compatibility guarantees. A package being installed or a GPU being detected does not prove that inference uses the GPU.'));
+  section.append(make('h3', '', translation('hardware.recommendationsTitle', 'Recommended starting points')));
+  section.append(make('p', 'hint', translation('hardware.recommendationsDisclaimer', 'These are local hardware-based suggestions, not compatibility guarantees.')));
   const grid = make('div', 'recommendation-grid');
   const labels = {
-    recommended: 'Good starting point',
-    caution: 'Check memory headroom',
-    'resource-constrained': 'Limited memory',
-    'needs-space': 'Free disk space first',
-    unknown: 'Needs manual review',
-    candidate: 'GPU candidate · not verified',
-    review: 'GPU needs review',
-    'not-detected': 'NVIDIA adapter not detected',
+    recommended: translation('hardware.goodStart', 'Good starting point'),
+    caution: translation('hardware.checkMemory', 'Check memory headroom'),
+    'resource-constrained': translation('hardware.limitedMemory', 'Limited memory'),
+    'needs-space': translation('hardware.freeDisk', 'Free disk space first'),
+    unknown: translation('hardware.manualReview', 'Needs manual review'),
+    candidate: translation('hardware.gpuCandidate', 'GPU candidate · not verified'),
+    review: translation('hardware.gpuReview', 'GPU needs review'),
+    'not-detected': translation('hardware.nvidiaMissing', 'NVIDIA adapter not detected'),
   };
   for (const item of Array.isArray(recommendations) ? recommendations : []) {
     const card = make('article', `recommendation-card status-${String(item.status || 'unknown')}`);
     const heading = make('div', 'recommendation-heading');
-    heading.append(make('h4', '', item.title || 'Starting point'));
-    heading.append(make('span', 'recommendation-status', labels[item.status] || 'Needs review'));
+    heading.append(make('h4', '', item.title || translation('hardware.startingPoint', 'Starting point')));
+    heading.append(make('span', 'recommendation-status', labels[item.status] || translation('hardware.manualReview', 'Needs review')));
     card.append(heading);
     if (item.model) card.append(make('p', 'recommendation-model', item.model));
     if (item.engine) card.append(make('p', 'recommendation-engine', item.engine));
@@ -1083,7 +1222,7 @@ function renderHardwareRecommendations(recommendations) {
     const action = document.createElement('a');
     action.className = 'button secondary';
     action.href = '#models';
-    action.textContent = item.id === 'nvidia-cuda-chat' ? 'Review engine options' : 'Browse starter components';
+    action.textContent = item.id === 'nvidia-cuda-chat' ? translation('hardware.reviewEngineOptions', 'Review engine options') : translation('hardware.browseStarter', 'Browse starter components');
     card.append(action);
     grid.append(card);
   }
@@ -1094,8 +1233,8 @@ function renderHardwareRecommendations(recommendations) {
 function renderHardware(info) {
   hardwareSummary.replaceChildren();
   const platformLabel = `${String(info.platform || 'Unknown').toUpperCase()} ${String(info.architecture || '').toUpperCase()}`.trim();
-  if (overviewDeviceState) overviewDeviceState.textContent = platformLabel || (currentLocale === 'tr' ? 'Bilinmiyor' : 'Unknown');
-  if (overviewDeviceDetail) overviewDeviceDetail.textContent = `${Number(info.logical_cpu_count || 0)} ${currentLocale === 'tr' ? 'mantıksal işlemci' : 'logical processors'} · ${formatBytes(info.total_memory_bytes)} RAM`;
+  if (overviewDeviceState) overviewDeviceState.textContent = platformLabel || translation('hardware.unknown', 'Unknown');
+  if (overviewDeviceDetail) overviewDeviceDetail.textContent = `${formatMessage('hardware.processorCount', { count: Number(info.logical_cpu_count || 0) })} · ${formatBytes(info.total_memory_bytes)} RAM`;
 
   const facts = make('div', 'hardware-facts');
   const addFact = (label, value) => {
@@ -1103,36 +1242,36 @@ function renderHardware(info) {
     fact.append(make('strong', '', value), make('span', '', label));
     facts.append(fact);
   };
-  addFact('Platform', `${info.platform || 'Unknown'} ${info.architecture || ''}`.trim());
-  addFact('Logical processors', Number.isFinite(Number(info.logical_cpu_count)) ? String(info.logical_cpu_count) : 'Not available');
-  addFact('System RAM', formatBytes(info.total_memory_bytes));
-  addFact('Available RAM', formatBytes(info.available_memory_bytes));
-  addFact('Free space for models', formatBytes(info.available_disk_bytes));
+  addFact(translation('hardware.platform', 'Platform'), `${info.platform || translation('hardware.unknown', 'Unknown')} ${info.architecture || ''}`.trim());
+  addFact(translation('hardware.logicalProcessors', 'Logical processors'), Number.isFinite(Number(info.logical_cpu_count)) ? String(info.logical_cpu_count) : translation('common.notAvailable', 'Not available'));
+  addFact(translation('hardware.systemRam', 'System RAM'), formatBytes(info.total_memory_bytes));
+  addFact(translation('hardware.availableRam', 'Available RAM'), formatBytes(info.available_memory_bytes));
+  addFact(translation('hardware.freeModelSpace', 'Free space for models'), formatBytes(info.available_disk_bytes));
   hardwareSummary.append(facts);
 
-  const gpuHeading = make('p', 'eyebrow', 'GRAPHICS ADAPTERS');
+  const gpuHeading = make('p', 'eyebrow', translation('hardware.graphicsAdapters', 'GRAPHICS ADAPTERS'));
   hardwareSummary.append(gpuHeading);
   if (Array.isArray(info.gpus) && info.gpus.length) {
     const gpuList = make('div', 'hardware-gpu-list');
     for (const gpu of info.gpus) {
       const item = make('article', 'hardware-gpu');
-      item.append(make('h3', '', gpu.name || `${gpu.vendor || 'Unknown'} graphics adapter`));
-      item.append(make('p', '', `${gpu.vendor || 'Unknown vendor'} · ${gpu.vendor_id || 'Vendor ID unavailable'} / ${gpu.device_id || 'Device ID unavailable'}`));
-      item.append(make('p', '', `Dedicated video memory: ${formatBytes(gpu.dedicated_memory_bytes)}`));
+      item.append(make('h3', '', gpu.name || `${gpu.vendor || translation('hardware.unknownVendor', 'Unknown vendor')} ${translation('hardware.graphicsAdapter', 'graphics adapter')}`));
+      item.append(make('p', '', `${gpu.vendor || translation('hardware.unknownVendor', 'Unknown vendor')} · ${gpu.vendor_id || translation('hardware.vendorIdUnavailable', 'Vendor ID unavailable')} / ${gpu.device_id || translation('hardware.deviceIdUnavailable', 'Device ID unavailable')}`));
+      item.append(make('p', '', formatMessage('hardware.dedicatedMemory', { size: formatBytes(gpu.dedicated_memory_bytes) })));
       gpuList.append(item);
     }
     hardwareSummary.append(gpuList);
   } else {
     const probeMessage = info.gpu_probe_message || (info.gpu_probe_status === 'unsupported'
-      ? 'GPU enumeration is not supported by this build.'
-      : 'No graphics adapter was reported by the operating system.');
+      ? translation('hardware.gpuUnsupported', 'GPU enumeration is not supported by this build.')
+      : translation('hardware.noGpuReported', 'No graphics adapter was reported by the operating system.'));
     hardwareSummary.append(make('p', 'hint', probeMessage));
   }
 
   const guidance = make('div', 'hardware-guidance');
-  guidance.append(make('strong', '', `Starting profile · ${String(info.memory_profile || 'unknown').replaceAll('-', ' ')}`));
-  guidance.append(make('p', '', info.recommendation || 'Start with the CPU baseline and verify each model on this computer.'));
-  guidance.append(make('p', '', 'GPU inference is not automatically confirmed by detecting an adapter or installing a CUDA package. Check engine logs and GPU activity during a real request.'));
+  guidance.append(make('strong', '', formatMessage('hardware.startingProfile', { profile: String(info.memory_profile || translation('hardware.unknown', 'unknown')).replaceAll('-', ' ') })));
+  guidance.append(make('p', '', info.recommendation || translation('hardware.cpuBaseline', 'Start with the CPU baseline and verify each model on this computer.')));
+  guidance.append(make('p', '', translation('hardware.gpuUnverified', 'GPU inference is not automatically confirmed by detecting an adapter or installing a CUDA package.')));
   hardwareSummary.append(guidance);
   hardwareSummary.append(renderHardwareRecommendations(info.recommendations));
 }
@@ -1140,17 +1279,27 @@ function renderHardware(info) {
 async function refreshHardware() {
   hardwareError.textContent = '';
   hardwareRefreshButton.disabled = true;
-  hardwareRefreshButton.textContent = 'Checking…';
+  hardwareRefreshButton.textContent = translation('updates.checking', 'Checking…');
   try {
     const info = await api('/v1/system/hardware');
+    hardwareInventoryLoaded = true;
     renderHardware(info);
+    updateFirstRunGuide();
   } catch (error) {
-    hardwareError.textContent = error.message;
-    hardwareSummary.replaceChildren(make('div', 'empty', 'Device information could not be read. The local model runtime remains available.'));
+    hardwareInventoryLoaded = false;
+    updateFirstRunGuide();
+    hardwareError.textContent = formatError(error);
+    hardwareSummary.replaceChildren(make('div', 'empty', translation('hardware.readFailed', 'Device information could not be read. The local model runtime remains available.')));
   } finally {
     hardwareRefreshButton.disabled = false;
-    hardwareRefreshButton.textContent = 'Refresh device info';
+    hardwareRefreshButton.textContent = translation('device.refresh', 'Refresh device info');
   }
+}
+
+function translateEngineState(state) {
+  const normalized = String(state || 'unknown').toLowerCase();
+  const keys = { running: 'engine.running', starting: 'engine.starting', stopping: 'engine.stopping', stopped: 'engine.stopped', failed: 'engine.failed', ready: 'engine.ready', unknown: 'engine.unknownState' };
+  return translation(keys[normalized] || 'engine.unknownState', normalized);
 }
 
 function engineCard(engine) {
@@ -1159,46 +1308,48 @@ function engineCard(engine) {
   info.append(make('p', 'engine-name', engine.display_name || engine.id));
   const meta = make('div', 'engine-meta');
   const readinessClass = engine.ready ? 'ready' : (engine.status === 'running' ? 'loading' : '');
-  const readinessLabel = engine.ready ? 'ready' : (engine.status === 'running' ? 'loading model' : engine.status);
+  const readinessLabel = engine.ready ? translation('engine.ready', 'ready') : (engine.status === 'running' ? translation('engine.loadingModel', 'loading model') : translateEngineState(engine.status));
   meta.append(make('span', `tag ${readinessClass}`, readinessLabel));
   if (engine.pid) meta.append(make('span', 'tag', `PID ${engine.pid}`));
   for (const capability of (engine.capabilities || [])) meta.append(make('span', 'tag', capability));
   if (engine.backend_package && engine.backend_package !== 'manual-or-unknown-package') {
-    const packageLabel = engine.backend_package === 'cuda12-package' ? 'CUDA 12 package'
-      : engine.backend_package === 'cuda13-package' ? 'CUDA 13 package' : 'CPU package';
+    const packageLabel = engine.backend_package === 'cuda12-package' ? translation('engine.package.cuda12', 'CUDA 12 package')
+      : engine.backend_package === 'cuda13-package' ? translation('engine.package.cuda13', 'CUDA 13 package') : translation('engine.package.cpu', 'CPU package');
     meta.append(make('span', 'tag', packageLabel));
   }
-  if (engine.backend_target === 'gpu-requested') meta.append(make('span', 'tag loading', 'GPU layers requested'));
-  else if (engine.backend_target === 'cpu') meta.append(make('span', 'tag', 'CPU requested'));
+  if (engine.backend_target === 'gpu-requested') meta.append(make('span', 'tag loading', translation('engine.gpuLayersRequested', 'GPU layers requested')));
+  else if (engine.backend_target === 'cpu') meta.append(make('span', 'tag', translation('engine.cpuRequested', 'CPU requested')));
   if (engine.gpu_execution_evidence === 'offload-reported') {
     const count = Number.isInteger(engine.gpu_offloaded_layers) && Number.isInteger(engine.gpu_total_layers)
-      ? `${engine.gpu_offloaded_layers}/${engine.gpu_total_layers} layers reported` : 'offload reported';
-    meta.append(make('span', 'tag ready', `GPU ${count}`));
+      ? formatMessage('engine.offloadLayersReported', { offloaded: engine.gpu_offloaded_layers, total: engine.gpu_total_layers }) : translation('engine.offloadReported', 'offload reported');
+    meta.append(make('span', 'tag ready', formatMessage('engine.gpuEvidence', { detail: count })));
   } else if (engine.gpu_execution_evidence === 'no-layers-offloaded') {
-    meta.append(make('span', 'tag loading', 'No GPU layers reported'));
+    meta.append(make('span', 'tag loading', translation('engine.noGpuLayersReported', 'No GPU layers reported')));
   } else if (engine.gpu_execution_evidence === 'cuda-runtime-reported') {
-    meta.append(make('span', 'tag loading', 'CUDA initialized · offload unknown'));
+    meta.append(make('span', 'tag loading', translation('engine.cudaInitializedUnknown', 'CUDA initialized · offload unknown')));
   } else if (engine.backend_target === 'gpu-requested') {
-    meta.append(make('span', 'tag loading', 'GPU execution not verified'));
+    meta.append(make('span', 'tag loading', translation('engine.gpuExecutionUnverified', 'GPU execution not verified')));
   }
   info.append(meta);
   if (engine.backend_target === 'gpu-requested' || engine.backend_package === 'cuda12-package' || engine.backend_package === 'cuda13-package') {
-    const evidenceSummary = engine.gpu_execution_evidence_summary || 'GPU execution has not been verified from the current engine log.';
+    const evidenceSummary = engine.gpu_execution_evidence_summary || translation('engine.gpuEvidenceMissing', 'GPU execution has not been verified from the current engine log.');
     info.append(make('p', engine.gpu_execution_evidence === 'offload-reported' ? 'engine-loading' : 'hint', evidenceSummary));
     if (engine.gpu_execution_evidence === 'offload-reported') {
-      info.append(make('p', 'hint', 'This confirms that the engine reported layer offload at startup. It does not measure live GPU utilization during inference.'));
+      info.append(make('p', 'hint', translation('engine.gpuEvidenceDisclaimer', 'This confirms that the engine reported layer offload at startup. It does not measure live GPU utilization during inference.')));
     }
   }
   if (engine.last_error) info.append(make('p', 'engine-error', engine.last_error));
-  else if (!engine.executable_configured) info.append(make('p', 'engine-error', 'Configure llama.cpp above or set the engine executable path.'));
-  else if ((engine.capabilities || []).includes('chat') && !engine.model_configured) info.append(make('p', 'engine-error', 'Choose a GGUF model file in the setup form before starting.'));
-  else if (engine.status === 'running' && !engine.ready) info.append(make('p', 'engine-loading', 'The process is running; waiting for the model server to report ready. Large models may take a while to load.'));
+  else if (!engine.executable_configured) info.append(make('p', 'engine-error', translation('engine.configureNeeded', 'Configure llama.cpp above or set the engine executable path.')));
+  else if ((engine.capabilities || []).includes('chat') && !engine.model_configured) info.append(make('p', 'engine-error', translation('engine.modelNeeded', 'Choose a GGUF model file in the setup form before starting.')));
+  else if (engine.status === 'running' && !engine.ready) info.append(make('p', 'engine-loading', translation('engine.waitingReady', 'The process is running; waiting for the model server to report ready. Large models may take a while to load.')));
   const actions = make('div', 'engine-actions');
-  const start = make('button', 'button primary', 'Start');
+  const start = make('button', 'button primary', translation('engine.start', 'Start'));
+  start.setAttribute('aria-label', formatMessage('engine.startAria', { name: engine.display_name || engine.id }, `Start ${engine.display_name || engine.id}`));
   start.type = 'button';
   start.disabled = engine.status === 'running' || !engine.executable_configured || ((engine.capabilities || []).includes('chat') && !engine.model_configured);
   start.addEventListener('click', () => controlEngine(engine.id, 'start', start));
-  const stop = make('button', 'button secondary', 'Stop');
+  const stop = make('button', 'button secondary', translation('engine.stop', 'Stop'));
+  stop.setAttribute('aria-label', formatMessage('engine.stopAria', { name: engine.display_name || engine.id }, `Stop ${engine.display_name || engine.id}`));
   stop.type = 'button';
   stop.disabled = engine.status !== 'running';
   stop.addEventListener('click', () => controlEngine(engine.id, 'stop', stop));
@@ -1211,43 +1362,45 @@ async function refreshEngines() {
   engineError.textContent = '';
   try {
     const result = await api('/v1/engines');
+    engineSnapshot = Array.isArray(result.data) ? result.data : [];
+    updateFirstRunGuide();
     engineList.replaceChildren();
     if (!result.data?.length) {
-      engineList.append(make('div', 'empty', currentLocale === 'tr' ? 'Henüz motor yapılandırılmadı. Modeller bölümünden bir motor kur veya gelişmiş ayarlardan elle yapılandır.' : 'No engines configured yet. Install an engine from Models or configure one manually in Settings.'));
+      engineList.append(make('div', 'empty', translation('engine.setupNeeded', 'No engines configured yet. Install an engine from Models or configure one manually in Settings.')));
       chatSendButton.disabled = true;
       chatReadiness.textContent = translation('chat.notReady', 'Install and start a chat model to begin.');
-      if (overviewRuntimeState) overviewRuntimeState.textContent = currentLocale === 'tr' ? 'Kurulum gerekli' : 'Setup needed';
-      if (overviewRuntimeDetail) overviewRuntimeDetail.textContent = currentLocale === 'tr' ? 'Sohbet motoru yapılandırılmadı' : 'No chat engine is configured';
-      if (overviewModelState) overviewModelState.textContent = currentLocale === 'tr' ? 'Model yok' : 'No model yet';
+      if (overviewRuntimeState) overviewRuntimeState.textContent = translation('engine.setupRequired', 'Setup needed');
+      if (overviewRuntimeDetail) overviewRuntimeDetail.textContent = translation('engine.noChatEngine', 'No chat engine is configured');
+      if (overviewModelState) overviewModelState.textContent = translation('engine.noModel', 'No model yet');
       if (overviewModelDetail) overviewModelDetail.textContent = translation('overview.modelDetail');
       return;
     }
     for (const engine of result.data) engineList.append(engineCard(engine));
     const defaultChat = result.data.find((engine) => engine.default_for_chat);
     if (overviewRuntimeState) overviewRuntimeState.textContent = defaultChat?.ready
-      ? (currentLocale === 'tr' ? 'Hazır' : 'Ready')
-      : (defaultChat?.status === 'running' ? (currentLocale === 'tr' ? 'Yükleniyor' : 'Loading') : (currentLocale === 'tr' ? 'Durduruldu' : 'Stopped'));
+      ? translation('engine.ready', 'Ready')
+      : (defaultChat?.status === 'running' ? translation('engine.loading', 'Loading') : translation('engine.stopped', 'Stopped'));
     if (overviewRuntimeDetail) overviewRuntimeDetail.textContent = defaultChat?.ready
-      ? (currentLocale === 'tr' ? 'Yerel model sunucusu hazır' : 'Local model server is ready')
-      : (defaultChat?.status === 'running' ? (currentLocale === 'tr' ? 'Modelin yüklenmesi bekleniyor' : 'Waiting for the model to load') : (currentLocale === 'tr' ? 'Etkin bir sohbet motoru yok' : 'No active chat engine'));
+      ? translation('engine.serverReady', 'Local model server is ready')
+      : (defaultChat?.status === 'running' ? translation('engine.waitingModel', 'Waiting for the model to load') : translation('engine.noActiveChat', 'No active chat engine'));
     if (overviewModelState) overviewModelState.textContent = defaultChat?.model_configured
-      ? (currentLocale === 'tr' ? 'Yapılandırıldı' : 'Configured')
-      : (currentLocale === 'tr' ? 'Yapılandırılmadı' : 'Not configured');
+      ? translation('engine.configured', 'Configured')
+      : translation('engine.notConfigured', 'Not configured');
     if (overviewModelDetail) overviewModelDetail.textContent = defaultChat?.display_name || translation('overview.modelDetail');
     chatSendButton.disabled = !defaultChat?.ready;
     const gpuReady = Boolean(defaultChat?.ready && defaultChat.backend_target === 'gpu-requested');
     gpuObservationButton.disabled = !gpuReady;
     gpuObservationButton.title = gpuReady
-      ? 'Runs a fixed local chat task and samples NVIDIA system utilization/memory while it runs.'
-      : 'Configure a CUDA-enabled engine with GPU layers set to auto, then start it.';
-    if (!defaultChat) chatReadiness.textContent = 'Configure llama.cpp above, then start the engine.';
-    else if (defaultChat.ready) chatReadiness.textContent = 'Model server ready. Chat requests stay on this machine.';
-    else if (defaultChat.status === 'running') chatReadiness.textContent = 'The model is loading or the server is not ready yet. Chat will enable when its health check succeeds.';
-    else if (!defaultChat.executable_configured || !defaultChat.model_configured) chatReadiness.textContent = 'Complete the llama.cpp setup above, then start the engine.';
-    else chatReadiness.textContent = 'Start the configured engine to enable chat.';
+      ? translation('engine.gpuMeasureTitle', 'Runs a fixed local chat task and samples NVIDIA system utilization/memory while it runs.')
+      : translation('engine.gpuConfigureTitle', 'Configure a CUDA-enabled engine with GPU layers set to auto, then start it.');
+    if (!defaultChat) chatReadiness.textContent = translation('engine.chatConfigure', 'Configure llama.cpp above, then start the engine.');
+    else if (defaultChat.ready) chatReadiness.textContent = translation('engine.chatReady', 'Model server ready. Chat requests stay on this machine.');
+    else if (defaultChat.status === 'running') chatReadiness.textContent = translation('engine.chatLoading', 'The model is loading or the server is not ready yet.');
+    else if (!defaultChat.executable_configured || !defaultChat.model_configured) chatReadiness.textContent = translation('engine.chatCompleteSetup', 'Complete the llama.cpp setup above, then start the engine.');
+    else chatReadiness.textContent = translation('engine.chatStart', 'Start the configured engine to enable chat.');
   } catch (error) {
-    engineError.textContent = error.message;
-    engineList.replaceChildren(make('div', 'empty', 'Could not load engine status.'));
+    engineError.textContent = formatError(error);
+    engineList.replaceChildren(make('div', 'empty', translation('engine.loadFailed', 'Could not load engine status.')));
     gpuObservationButton.disabled = true;
   }
 }
@@ -1257,15 +1410,15 @@ async function waitForEngineReady(id, timeoutMs = 180000) {
   while (Date.now() < deadline) {
     const result = await api('/v1/engines');
     const engine = result.data?.find((entry) => entry.id === id);
-    if (!engine) throw new Error(`Engine '${id}' is not present in the runtime configuration.`);
+    if (!engine) throw new Error(formatMessage('engine.missing', { id }, `Engine '${id}' is not present in the runtime configuration.`));
     if (engine.ready) return;
-    if (engine.status === 'failed') throw new Error(engine.last_error || 'Engine exited before becoming ready. Export diagnostics or inspect the per-user runtime logs.');
+    if (engine.status === 'failed') throw new Error(engine.last_error || translation('engine.exited', 'Engine exited before becoming ready. Export diagnostics or inspect the per-user runtime logs.'));
     engineError.textContent = engine.status === 'running'
-      ? 'Engine started. Waiting for the local model server to become ready…'
-      : 'Waiting for engine startup…';
+      ? translation('engine.waiting', 'Engine started. Waiting for the local model server to become ready…')
+      : translation('engine.waitingStartup', 'Waiting for engine startup…');
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
-  throw new Error('Timed out waiting for the model server. Export diagnostics and check the engine executable/model path.');
+  throw new Error(translation('engine.timeout', 'Timed out waiting for the model server. Export diagnostics and check the engine executable/model path.'));
 }
 
 async function controlEngine(id, action, button) {
@@ -1276,7 +1429,7 @@ async function controlEngine(id, action, button) {
     if (action === 'start') await waitForEngineReady(id);
     await refreshEngines();
   } catch (error) {
-    engineError.textContent = error.message;
+    engineError.textContent = formatError(error);
     await refreshEngines();
   } finally {
     button.disabled = false;
@@ -1286,7 +1439,7 @@ async function controlEngine(id, action, button) {
 llamaSetupForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   setupStatus.className = 'status-message';
-  setupStatus.textContent = 'Validating paths and saving configuration…';
+  setupStatus.textContent = translation('setup.validating', 'Validating paths and saving configuration…');
   const saveButton = document.querySelector('#save-llama-setup');
   saveButton.disabled = true;
   try {
@@ -1299,11 +1452,11 @@ llamaSetupForm.addEventListener('submit', async (event) => {
     };
     const result = await api('/v1/setup/llama-cpp', { method: 'POST', body: JSON.stringify(body) });
     setupStatus.className = 'status-message success';
-    setupStatus.textContent = `Saved ${result.id} configuration (${result.backend.toUpperCase()} backend) to this user's local settings. Start the engine below; no model file was uploaded.`;
+    setupStatus.textContent = formatMessage('setup.saved', { id: result.id, backend: result.backend.toUpperCase() });
     await refreshEngines();
   } catch (error) {
     setupStatus.className = 'status-message failure';
-    setupStatus.textContent = error.message;
+    setupStatus.textContent = formatError(error);
   } finally {
     saveButton.disabled = false;
   }
@@ -1331,11 +1484,11 @@ downloadsRefreshButton.addEventListener('click', async () => {
 diagnosticsExportButton.addEventListener('click', async () => {
   diagnosticsExportButton.disabled = true;
   diagnosticsStatus.className = 'status-message';
-  diagnosticsStatus.textContent = 'Preparing a local diagnostic report…';
+  diagnosticsStatus.textContent = translation('diagnostics.preparing', 'Preparing a local diagnostic report…');
   try {
     const diagnosticsUrl = includeEngineLogsCheckbox.checked ? '/v1/diagnostics/export?include_engine_logs=1' : '/v1/diagnostics/export';
     const response = await fetch(diagnosticsUrl, { cache: 'no-store' });
-    if (!response.ok) throw new Error(`Could not create diagnostic report (HTTP ${response.status}).`);
+    if (!response.ok) throw new Error(formatMessage('diagnostics.httpError', { status: response.status }, `Could not create diagnostic report (HTTP ${response.status}).`));
     const blob = await response.blob();
     const objectUrl = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -1346,10 +1499,10 @@ diagnosticsExportButton.addEventListener('click', async () => {
     link.remove();
     URL.revokeObjectURL(objectUrl);
     diagnosticsStatus.className = 'status-message success';
-    diagnosticsStatus.textContent = 'Diagnostic report created on this device. Review it before sharing; it was not uploaded anywhere.';
+    diagnosticsStatus.textContent = translation('diagnostics.created', 'Diagnostic report created on this device. Review it before sharing; it was not uploaded anywhere.');
   } catch (error) {
     diagnosticsStatus.className = 'status-message failure';
-    diagnosticsStatus.textContent = error.message;
+    diagnosticsStatus.textContent = formatError(error);
     reportDiagnosticEvent('ui.diagnostics.export_failed', error.message);
   } finally {
     diagnosticsExportButton.disabled = false;
@@ -1566,6 +1719,7 @@ async function parseChatError(response) {
 chatConversations = loadChatHistory();
 activeChatId = chatConversations[0]?.id || null;
 renderChatWorkspace();
+updateFirstRunGuide();
 
 if (chatNewButton) chatNewButton.addEventListener('click', createNewConversation);
 if (chatStopButton) chatStopButton.addEventListener('click', stopChatGeneration);
@@ -1653,6 +1807,7 @@ document.querySelector('#chat-form').addEventListener('submit', async (event) =>
     if (!assistantMessage.content) assistantMessage.content = translation('chat.emptyResponse', 'The model returned an empty response.');
     conversation.updated_at = Date.now();
     saveChatHistory();
+    updateFirstRunGuide();
     if (conversation.id === activeChatId) renderChatWorkspace();
     reportDiagnosticEvent('ui.chat.request_succeeded', `elapsed_ms=${Math.round(performance.now() - startedAt)}; input_chars=${messageText.length}; response_chars=${assistantMessage.content.length}; stream=true`);
   } catch (error) {
@@ -1663,7 +1818,7 @@ document.querySelector('#chat-form').addEventListener('submit', async (event) =>
     } else {
       assistantMessage.state = assistantMessage.content ? 'stopped' : 'complete';
       if (!assistantMessage.content) conversation.messages = conversation.messages.filter((item) => item !== assistantMessage);
-      chatError.textContent = error.message;
+      chatError.textContent = formatError(error);
       reportDiagnosticEvent('ui.chat.request_failed', `elapsed_ms=${Math.round(performance.now() - startedAt)}; input_chars=${messageText.length}; error_type=${String(error?.name || 'Error').slice(0, 40)}`);
     }
     conversation.updated_at = Date.now();
@@ -1695,26 +1850,26 @@ chatMessageInput.addEventListener('keydown', (event) => {
 
 gpuObservationButton.addEventListener('click', async () => {
   gpuObservationStatus.className = 'hint';
-  gpuObservationStatus.textContent = 'Running a fixed local inference request and sampling NVIDIA GPU utilization/memory. Other applications may also contribute to these system-wide measurements.';
+  gpuObservationStatus.textContent = translation('gpu.running', 'Running a fixed local inference request and sampling NVIDIA GPU utilization/memory.');
   gpuObservationButton.disabled = true;
   const originalLabel = gpuObservationButton.textContent;
-  gpuObservationButton.textContent = 'Measuring…';
+  gpuObservationButton.textContent = translation('gpu.measuring', 'Measuring…');
   try {
     const result = await api('/v1/diagnostics/gpu-observation', { method: 'POST', body: '{}' });
     const lines = [
       result.task_succeeded
-        ? `Local inference request completed in ${(Number(result.elapsed_ms || 0) / 1000).toFixed(2)} s.`
-        : 'The local inference request did not complete successfully.',
-      result.message || 'No additional measurement details were provided.',
-      `Engine startup evidence: ${String(result.startup_evidence || 'not-verified')}. ${String(result.startup_evidence_summary || '')}`.trim(),
+        ? formatMessage('gpu.requestCompleted', { seconds: (Number(result.elapsed_ms || 0) / 1000).toFixed(2) })
+        : translation('gpu.requestFailed', 'The local inference request did not complete successfully.'),
+      result.message || translation('gpu.noDetails', 'No additional measurement details were provided.'),
+      formatMessage('gpu.startupEvidence', { evidence: String(result.startup_evidence || 'not-verified'), detail: String(result.startup_evidence_summary || '') }),
     ];
     for (const device of Array.isArray(result.devices) ? result.devices : []) {
-      const utilization = Number.isInteger(device.peak_utilization_percent) ? `${device.peak_utilization_percent}%` : 'not available';
-      const before = Number.isInteger(device.memory_before_mib) ? `${device.memory_before_mib} MiB` : 'not available';
-      const peak = Number.isInteger(device.memory_peak_mib) ? `${device.memory_peak_mib} MiB` : 'not available';
-      const after = Number.isInteger(device.memory_after_mib) ? `${device.memory_after_mib} MiB` : 'not available';
+      const utilization = Number.isInteger(device.peak_utilization_percent) ? `${device.peak_utilization_percent}%` : translation('gpu.notAvailable', 'not available');
+      const before = Number.isInteger(device.memory_before_mib) ? `${device.memory_before_mib} MiB` : translation('gpu.notAvailable', 'not available');
+      const peak = Number.isInteger(device.memory_peak_mib) ? `${device.memory_peak_mib} MiB` : translation('gpu.notAvailable', 'not available');
+      const after = Number.isInteger(device.memory_after_mib) ? `${device.memory_after_mib} MiB` : translation('gpu.notAvailable', 'not available');
       const total = Number.isInteger(device.memory_total_mib) ? ` / ${device.memory_total_mib} MiB total` : '';
-      lines.push(`GPU ${device.index}: peak utilization ${utilization}; memory before ${before}, peak ${peak}, after ${after}${total}.`);
+      lines.push(formatMessage('gpu.peakUtilization', { index: device.index, utilization, before, peak, after, total }));
     }
     gpuObservationStatus.className = !result.task_succeeded ? 'status-message failure' : (result.status === 'sampled' ? 'status-message success' : 'hint');
     gpuObservationStatus.textContent = lines.join('\n');
@@ -1728,7 +1883,7 @@ gpuObservationButton.addEventListener('click', async () => {
     ].join('; '));
   } catch (error) {
     gpuObservationStatus.className = 'status-message failure';
-    gpuObservationStatus.textContent = error.message;
+    gpuObservationStatus.textContent = formatError(error);
     reportDiagnosticEvent('ui.gpu_observation.failed', `http_status=${Number.isInteger(error?.httpStatus) ? error.httpStatus : 0}; error_type=${String(error?.name || 'Error').slice(0, 40)}`);
   } finally {
     gpuObservationButton.textContent = originalLabel;

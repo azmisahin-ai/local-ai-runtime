@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased — localized first-run UX and accessibility
+
+- Add a dismissible first-run guide covering local device discovery, model selection, engine readiness, and the first local chat; derive completion from local runtime state and let users reopen the guide from Settings.
+- Add a keyboard skip link to the main landmark, focusable page/section headings for guided navigation, translated accessible names, live progress/status announcements, visible focus states, and reduced-motion support.
+- Expand English/Turkish localization across dynamic update guidance/progress, Activity job states/phases, engine state/package/GPU evidence labels, model resource guidance, and user-facing error framing.
+- Re-render dynamic panels when the locale changes and keep upstream component names, engine capabilities, license text, and source-provided diagnostic details intact.
+- Add CI checks for identical locale keys, matching interpolation placeholders, complete HTML translation attributes and direct JavaScript translation references, plus onboarding/accessibility smoke assertions.
+- Update the roadmap and product documentation to reflect the published `v0.1.16-alpha` baseline and distinguish the current phase-6 candidate from a released milestone.
+
 ## Unreleased — live runtime resource manager
 
 - Add `GET /v1/system/resources` with a versioned `resources-v1` snapshot for system CPU/memory pressure, managed engine process CPU/RSS, and available NVIDIA system-wide utilization/VRAM telemetry.

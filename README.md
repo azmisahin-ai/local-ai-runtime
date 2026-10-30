@@ -8,7 +8,7 @@ Project site: **https://azmisahin-ai.github.io/local-ai-runtime/** (available af
 
 This is an early C++20 alpha. It orchestrates existing model engines; it does not implement inference itself. The product name and API are still evolving.
 
-> **Product status:** `v0.1.15-alpha` is the current published reference release. It includes the Windows per-user desktop installer and a user-confirmed full-installer update path with verified backup and rollback. The user has confirmed a clean install and successful first chat on one Windows environment; broader OS-version acceptance, real GPU inference evidence, signed binaries, complete localization, and broader engine support remain in progress. See the [roadmap](docs/roadmap.md).
+> **Product status:** `v0.1.16-alpha` is the current published reference release. It includes the Windows per-user desktop installer and a user-confirmed full-installer update path with verified backup and rollback. The user has confirmed a clean install and successful first chat on one Windows environment; broader OS-version acceptance, real GPU inference evidence, signed binaries, the guided first-run experience, native screen-reader acceptance, and broader engine support remain in progress. The current phase-6 candidate adds a localized setup guide, accessibility foundations, and expanded dynamic English/Turkish UI labels; it is not released until publisher CI passes. See the [roadmap](docs/roadmap.md).
 
 ## For users
 

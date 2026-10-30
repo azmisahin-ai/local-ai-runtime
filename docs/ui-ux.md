@@ -23,7 +23,7 @@ The app uses five persistent destinations:
 5. Show one cancellable installation job with progress, verification, and actionable recovery.
 6. Open Chat when the model server is ready and provide a simple first prompt.
 
-The first-run flow should not ask ordinary users to locate executables, edit JSON, or choose among duplicate CUDA runtime assets. Those controls belong in Advanced settings.
+The current implementation exposes a dismissible four-step first-run guide (device check, model selection, engine readiness, first chat), with progress derived from local hardware, installed catalog state, engine readiness and local chat history. It can be reopened from Settings. A fully guided install wizard with recommendation-specific recovery remains future work. The flow should not ask ordinary users to locate executables, edit JSON, or choose among duplicate CUDA runtime assets. Those controls belong in Advanced settings.
 
 ## Visual and interaction rules
 
@@ -34,11 +34,11 @@ The first-run flow should not ask ordinary users to locate executables, edit JSO
 - Every asynchronous action needs a visible state: queued, running, verifying, installing, ready, failed, canceled, or recovery required. Preserve user input during errors.
 - Use inline progress for a single small action and Activity for cross-task tracking. Do not create a second, inconsistent progress model in each panel.
 - Use confirmation for destructive actions and explain whether user data is affected.
-- Keyboard navigation, focus visibility, labels, accessible status announcements, reduced-motion support, and non-color-only status indicators are required.
+- Keyboard navigation includes a skip link to the main landmark, visible `:focus-visible` treatment, focusable page/section headings for guided navigation, translated accessible names and progress announcements, and reduced-motion handling. Live updates use status regions; state is conveyed by text as well as color. Native screen-reader testing on Windows/macOS/Linux remains a manual acceptance task.
 
 ## Localization
 
-English and Turkish are the initial locales. All UI-authored strings, dynamic status/error messages, accessible names, progress updates, empty states, and confirmation text must come from locale resources. Engine/catalog metadata remains language-neutral; localize its surrounding UI labels, not upstream names or license text. Language preference is local to the user profile.
+English and Turkish are the initial locales. UI-authored strings, dynamic job/engine states, update guidance/progress, accessible names, first-run statuses, empty states and confirmation text come from English/Turkish locale resources. CI checks resource-key parity, matching interpolation placeholders and referenced HTML/JS keys. Server/API error detail, upstream component names/capabilities and license text are retained as source metadata, with a localized UI label around errors where appropriate. Engine/catalog metadata remains language-neutral; localize its surrounding UI labels, not upstream names or license text. Language preference is local to the user profile.
 
 ## Honest capability presentation
 
@@ -48,7 +48,7 @@ The UI must separate `Listed`, `Package verified`, `Installed`, `Process ready`,
 
 1. Establish the navigation, visual shell, Overview/Chat hierarchy, and EN/TR resource loading.
 2. Unify operation state and progress in the Activity/job contract.
-3. Complete dynamic localization and accessibility.
+3. Complete dynamic localization, first-run onboarding and accessibility; verify assistive technology manually.
 4. Move reviewed engine/model/dependency definitions to a versioned checked-in authoring manifest that generates both catalogue metadata and install allowlists.
 5. Finalize the common engine adapter lifecycle against `llama.cpp`.
 6. Validate real CPU/GPU model profiles and add model-family pilots on the existing engine.

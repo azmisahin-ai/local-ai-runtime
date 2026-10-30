@@ -127,6 +127,28 @@ async function main() {
   }
   assert(dashboardHtml.includes('id="language-select"') && dashboardScript.includes('/locales/'), 'dashboard should expose persisted English/Turkish language selection');
   assert.deepEqual(Object.keys(englishUi).sort(), Object.keys(turkishUi).sort(), 'English and Turkish UI resources must expose identical keys');
+  for (const key of Object.keys(englishUi)) {
+    const tokens = (value) => [...String(value).matchAll(/\{([a-zA-Z0-9_]+)\}/g)].map((match) => match[1]).sort();
+    assert.deepEqual(tokens(englishUi[key]), tokens(turkishUi[key]), `locale placeholders must match for ${key}`);
+  }
+  const dynamicKeys = new Set([
+    ...[...dashboardScript.matchAll(/(?:translation|formatMessage)\('([^']+)'/g)].map((match) => match[1]),
+    'activity.jobState.queued', 'activity.jobState.running', 'activity.jobState.downloading',
+    'activity.jobState.verifying', 'activity.jobState.extracting', 'activity.jobState.configuring',
+    'activity.jobState.succeeded', 'activity.jobState.failed', 'activity.jobState.canceled',
+    'activity.jobState.interrupted', 'activity.phase.interrupted', 'activity.phase.streaming',
+    'activity.phase.downloading', 'activity.phase.verifying', 'activity.phase.extracting',
+    'activity.phase.installing', 'activity.phase.starting', 'activity.phase.stopping',
+    'activity.phase.canceled', 'activity.phase.failed', 'activity.phase.completed',
+    'activity.phase.queued', 'activity.phase.running',
+    'activity.kind.download', 'activity.kind.install', 'activity.kind.update', 'activity.kind.component',
+    'engine.running', 'engine.starting', 'engine.stopping', 'engine.stopped', 'engine.failed', 'engine.ready', 'engine.unknownState',
+    'onboarding.deviceActionLabel', 'onboarding.modelActionLabel', 'onboarding.engineActionLabel', 'onboarding.chatActionLabel',
+  ]);
+  for (const key of dynamicKeys) {
+    assert(Object.prototype.hasOwnProperty.call(englishUi, key), `English UI resource is missing dynamic key ${key}`);
+    assert(Object.prototype.hasOwnProperty.call(turkishUi, key), `Turkish UI resource is missing dynamic key ${key}`);
+  }
   const localeAttributes = ['data-i18n', 'data-i18n-placeholder', 'data-i18n-aria', 'data-i18n-title'];
   for (const attribute of localeAttributes) {
     const keys = [...dashboardHtml.matchAll(new RegExp(`${attribute}=\"([^\"]+)\"`, 'g'))].map((match) => match[1]);
@@ -142,13 +164,24 @@ async function main() {
   assert(dashboardScript.includes("api('/v1/activity')"), 'dashboard should consume the shared activity snapshot API');
   assert(dashboardHtml.includes('id="resource-monitor-panel"') && dashboardHtml.includes('id="resources-summary"'), 'Activity should expose the live resource monitor');
   assert(dashboardScript.includes("api('/v1/system/resources')") && dashboardScript.includes('renderResources'), 'Activity should render live system and engine resource metrics from the local API');
+  assert(dashboardHtml.includes('class="skip-link" href="#main-content"') && dashboardHtml.includes('id="main-content"'), 'dashboard should expose a keyboard skip link and main landmark target');
+  assert(dashboardHtml.includes('id="first-run-panel"') && dashboardHtml.includes('id="first-run-progress"'), 'dashboard should expose a progress-aware first-run guide');
+  assert(dashboardHtml.includes('id="first-run-status" class="status-message" role="status" aria-live="polite"'), 'onboarding state changes should be announced to assistive technology');
+  assert(dashboardHtml.includes('id="device-title" tabindex="-1"') && dashboardHtml.includes('id="page-title" tabindex="-1"'), 'guided navigation should have programmatically focusable headings');
+  for (const step of ['device', 'model', 'engine', 'chat']) assert(dashboardHtml.includes(`data-first-run-step="${step}"`), `first-run guide should include ${step} step`);
+  assert(dashboardHtml.includes('id="onboarding-show"') && dashboardScript.includes('lar.onboarding.dismissed.v1'), 'users should be able to dismiss and reopen the first-run guide');
+  assert(dashboardScript.includes('translateJobState') && dashboardScript.includes('translateJobPhase') && dashboardScript.includes('activity.jobState.'), 'dynamic Activity job states and phases should use locale resources');
+  assert(dashboardScript.includes('engine.package.cuda12') && dashboardScript.includes('engine.gpuEvidenceDisclaimer'), 'engine readiness and GPU evidence labels should be localized');
+  const dashboardCss = fs.readFileSync(path.join(root, 'web/style.css'), 'utf8');
+  assert(dashboardCss.includes('@media (prefers-reduced-motion: reduce)'), 'dashboard should respect reduced-motion preferences');
+  assert(dashboardCss.includes(':focus-visible'), 'dashboard should provide visible keyboard focus styles');
   assert(dashboardHtml.includes('id="device-panel"') && dashboardHtml.includes('Device &amp; model fit'), 'dashboard should expose a local hardware inventory panel');
   assert(dashboardScript.includes('/v1/system/hardware') && dashboardScript.includes('GPU execution not verified'), 'dashboard should distinguish detected hardware from verified GPU execution');
   assert(dashboardScript.includes('renderHardwareRecommendations') && dashboardScript.includes('info.recommendations'), 'dashboard should render structured hardware-aware starter recommendations');
   assert(dashboardScript.includes('GPU candidate · not verified'), 'dashboard must label GPU recommendations as candidates, not supported profiles');
   assert(dashboardScript.includes('renderHardwareRecommendations') && dashboardScript.includes('info.recommendations'), 'dashboard must render the API recommendation cards');
   assert(dashboardHtml.includes('id="gpu-observation-run"') && dashboardHtml.includes('id="gpu-observation-status"'), 'dashboard should expose an opt-in GPU observation control with a visible result area');
-  assert(dashboardScript.includes('Compatibility & requirements') && dashboardScript.includes('Memory guidance') && dashboardScript.includes('Known limits:'), 'catalog cards should reveal platform, resource, and limitation metadata on demand');
+  assert(englishUi['models.compatibility'].includes('Compatibility') && englishUi['models.memoryGuidance'].includes('Memory guidance') && englishUi['models.knownLimits'].includes('Known limits'), 'catalog cards should localize platform, resource, and limitation metadata on demand');
   assert(dashboardScript.includes('/v1/diagnostics/gpu-observation') && dashboardScript.includes('ui.gpu_observation.completed'), 'GPU observation should run through the local API and record privacy-safe summary metrics');
   assert(windowsLauncher.includes('function Test-PortCanBind') && windowsLauncher.includes('launcher.port_owner_unresolved_but_bindable'), 'Windows launcher should reuse a configured port when a direct bind probe succeeds despite an unresolved listener owner');
   assert(dashboardHtml.includes('Chat with your model'), 'dashboard should present chat as a user task, not a developer test');

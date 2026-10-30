@@ -11,6 +11,7 @@
   <script src="/app.js" defer></script>
 </head>
 <body>
+  <a class="skip-link" href="#main-content" data-i18n="accessibility.skipMain">Skip to main content</a>
   <div class="app-shell">
     <aside class="sidebar" aria-label="Application navigation" data-i18n-aria="accessibility.applicationNavigation">
       <div class="brand-lockup">
@@ -54,7 +55,7 @@
       <header class="topbar">
         <div class="page-intro">
           <p class="eyebrow" data-i18n="header.eyebrow">PRIVATE AI WORKSPACE</p>
-          <h1 id="page-title" data-i18n="page.overview.title">Overview</h1>
+          <h1 id="page-title" tabindex="-1" data-i18n="page.overview.title">Overview</h1>
           <p id="page-description" class="page-description" data-i18n="page.overview.description">Your local models, hardware and recent activity in one place.</p>
         </div>
         <div class="topbar-tools">
@@ -62,7 +63,7 @@
             <div class="status-pill"><span id="api-dot" class="dot"></span><span id="api-status">Checking API…</span></div>
             <label class="language-picker" for="language-select">
               <span class="visually-hidden" data-i18n="settings.language">Language</span>
-              <select id="language-select" aria-label="Language" data-i18n-aria="settings.language">
+              <select id="language-select" aria-label="Language" data-i18n-aria="accessibility.language">
                 <option value="en">EN</option>
                 <option value="tr">TR</option>
               </select>
@@ -73,7 +74,7 @@
         </div>
       </header>
 
-      <main class="content-area">
+      <main id="main-content" class="content-area" tabindex="-1">
         <section id="view-overview" class="app-view active" data-view="overview" aria-labelledby="page-title">
           <section class="welcome-card">
             <div class="welcome-copy">
@@ -91,7 +92,45 @@
             </div>
           </section>
 
-          <div class="overview-stats" aria-label="Local runtime summary">
+          <section id="first-run-panel" class="panel first-run-panel" hidden aria-labelledby="first-run-title" aria-describedby="first-run-description">
+            <div class="first-run-heading">
+              <div>
+                <p class="eyebrow" data-i18n="onboarding.eyebrow">GETTING STARTED</p>
+                <h2 id="first-run-title" tabindex="-1" data-i18n="onboarding.title">Your first local answer</h2>
+                <p id="first-run-description" class="hint" data-i18n="onboarding.description">Follow these steps to prepare a model and chat privately on this device. You can return to this guide from Settings.</p>
+              </div>
+              <button id="first-run-dismiss" class="button ghost" type="button" data-i18n="onboarding.dismiss">Hide guide</button>
+            </div>
+            <div class="first-run-progress" aria-live="polite">
+              <progress id="first-run-progress" max="4" value="0" aria-label="Setup progress" data-i18n-aria="onboarding.progressLabel"></progress>
+              <span id="first-run-progress-label" class="hint" data-i18n="onboarding.progressEmpty">0 of 4 steps complete</span>
+            </div>
+            <ol class="first-run-steps" aria-label="First-run setup steps" data-i18n-aria="accessibility.firstRunSteps">
+              <li data-first-run-step="device">
+                <span class="first-run-number" aria-hidden="true">1</span>
+                <div class="first-run-copy"><strong data-i18n="onboarding.deviceTitle">Check this device</strong><p data-i18n="onboarding.deviceDescription">Read local CPU, memory and graphics information before choosing a model.</p><small data-first-run-status data-i18n="onboarding.stepPending">Not completed</small></div>
+                <button class="button secondary" type="button" data-first-run-action="device" data-i18n="onboarding.deviceAction">Review device</button>
+              </li>
+              <li data-first-run-step="model">
+                <span class="first-run-number" aria-hidden="true">2</span>
+                <div class="first-run-copy"><strong data-i18n="onboarding.modelTitle">Choose a model</strong><p data-i18n="onboarding.modelDescription">Browse reviewed components, check the license and install a model for local chat.</p><small data-first-run-status data-i18n="onboarding.stepPending">Not completed</small></div>
+                <button class="button secondary" type="button" data-first-run-action="models" data-i18n="onboarding.modelAction">Browse models</button>
+              </li>
+              <li data-first-run-step="engine">
+                <span class="first-run-number" aria-hidden="true">3</span>
+                <div class="first-run-copy"><strong data-i18n="onboarding.engineTitle">Start the local engine</strong><p data-i18n="onboarding.engineDescription">Start a configured engine and wait for its health check to pass.</p><small data-first-run-status data-i18n="onboarding.stepPending">Not completed</small></div>
+                <button class="button secondary" type="button" data-first-run-action="activity" data-i18n="onboarding.engineAction">Open Activity</button>
+              </li>
+              <li data-first-run-step="chat">
+                <span class="first-run-number" aria-hidden="true">4</span>
+                <div class="first-run-copy"><strong data-i18n="onboarding.chatTitle">Send your first message</strong><p data-i18n="onboarding.chatDescription">Chat with the model. Prompts and responses stay in this browser on this device.</p><small data-first-run-status data-i18n="onboarding.stepPending">Not completed</small></div>
+                <button class="button primary" type="button" data-first-run-action="chat" data-i18n="onboarding.chatAction">Open chat</button>
+              </li>
+            </ol>
+            <p id="first-run-status" class="status-message" role="status" aria-live="polite"></p>
+          </section>
+
+          <div class="overview-stats" aria-label="Local runtime summary" data-i18n-aria="accessibility.runtimeSummary">
             <article class="summary-card"><div class="summary-icon">◉</div><div><span data-i18n="overview.runtime">Runtime</span><strong id="overview-runtime-state" data-i18n="common.checking">Checking…</strong><small id="overview-runtime-detail" data-i18n="overview.runtimeChecking">Checking local engine status</small></div></article>
             <article class="summary-card"><div class="summary-icon">▤</div><div><span data-i18n="overview.chatModel">Chat model</span><strong id="overview-model-state" data-i18n="overview.modelChecking">Looking for a model</strong><small id="overview-model-detail" data-i18n="overview.modelDetail">Your model stays on this device</small></div></article>
             <article class="summary-card"><div class="summary-icon">⌘</div><div><span data-i18n="overview.device">Device</span><strong id="overview-device-state" data-i18n="overview.deviceChecking">Detecting hardware</strong><small id="overview-device-detail" data-i18n="overview.deviceDetail">Local hardware profile</small></div></article>
@@ -115,7 +154,7 @@
 
           <section id="device-panel" class="panel device-panel" aria-labelledby="device-title">
             <div class="section-heading">
-              <div><p class="eyebrow" data-i18n="device.eyebrow">YOUR HARDWARE</p><h2 id="device-title" data-i18n="device.title">Device &amp; model fit</h2></div>
+              <div><p class="eyebrow" data-i18n="device.eyebrow">YOUR HARDWARE</p><h2 id="device-title" tabindex="-1" data-i18n="device.title">Device &amp; model fit</h2></div>
               <button id="hardware-refresh" class="button secondary" type="button" data-i18n="device.refresh">Refresh device info</button>
             </div>
             <p class="hint" data-i18n="device.privacy">Hardware details are detected on this computer only. Detection is a starting point, not a compatibility guarantee.</p>
@@ -138,7 +177,7 @@
               </div>
             </div>
             <div class="chat-session-layout">
-              <aside class="chat-history-panel" aria-label="Conversation history" data-i18n-aria="chat.historyLabel">
+              <aside class="chat-history-panel" aria-label="Conversation history" data-i18n-aria="accessibility.chatHistory">
                 <div class="chat-history-heading"><h3 data-i18n="chat.history">Recent chats</h3><button id="chat-clear-history" class="text-button" type="button" data-i18n="chat.clearHistory">Clear</button></div>
                 <div id="chat-conversation-list" class="chat-conversation-list"></div>
                 <p class="chat-history-note" data-i18n="chat.historyPrivacy">Conversations are stored only in this browser on this device.</p>
@@ -154,10 +193,10 @@
                     <button type="button" class="suggestion" data-prompt-key="chat.promptWrite"><span>✎</span><span data-i18n="chat.suggestionWrite">Improve a piece of writing</span></button>
                   </div>
                 </div>
-                <div id="chat-messages" class="chat-messages" role="log" aria-live="polite" aria-relevant="additions text"></div>
+                <div id="chat-messages" class="chat-messages" role="log" aria-label="Chat messages" data-i18n-aria="accessibility.chatMessages" aria-live="polite" aria-relevant="additions text"></div>
                 <form id="chat-form" class="chat-composer">
                   <label class="visually-hidden" for="message" data-i18n="chat.messageLabel">Message your local model</label>
-                  <textarea id="message" rows="3" required maxlength="12000" data-i18n-placeholder="chat.placeholder" placeholder="Message your local model…"></textarea>
+                  <textarea id="message" rows="3" required maxlength="12000" aria-label="Message composer" data-i18n-aria="accessibility.chatComposer" data-i18n-placeholder="chat.placeholder" placeholder="Message your local model…"></textarea>
                   <div class="composer-footer"><span class="hint" data-i18n="chat.composerHint">Enter to send · Shift + Enter for a new line</span><div class="composer-actions"><button id="chat-stop" class="button secondary" type="button" hidden data-i18n="chat.stop">Stop</button><button id="send" class="button primary" type="submit" disabled><span data-i18n="chat.send">Send</span><span aria-hidden="true">↑</span></button></div></div>
                 </form>
                 <p id="chat-error" class="error" role="status" aria-live="polite"></p>
@@ -243,6 +282,7 @@
               </div>
             </section>
             <div class="settings-row"><div><strong data-i18n="settings.languageTitle">App language</strong><p class="hint" data-i18n="settings.languageDescription">Choose the language used for Local AI Runtime controls and guidance.</p></div><select id="settings-language-select" aria-label="App language" data-i18n-aria="settings.languageTitle"><option value="en">English</option><option value="tr">Türkçe</option></select></div>
+            <div class="settings-row"><div><strong data-i18n="settings.onboardingTitle">First-run guide</strong><p class="hint" data-i18n="settings.onboardingDescription">Reopen the setup steps for device checks, model installation and your first local chat.</p></div><button id="onboarding-show" class="button secondary" type="button" data-i18n="settings.onboardingShow">Show setup guide</button></div>
             <div class="settings-row"><div><strong data-i18n="settings.checkForUpdates">Check for updates</strong><p class="hint" data-i18n="settings.updateDescription">Release checks use the official GitHub release feed. Downloads require your confirmation.</p></div><button class="button secondary" type="button" data-view-action="check-updates" data-i18n="common.checkNow">Check now</button></div>
           </section>
 
