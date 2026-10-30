@@ -382,11 +382,33 @@ bool ManagedProcess::stop(std::string& error) {
     }
     if (!TerminateProcess(process_handle_, 0)) {
         const DWORD code = GetLastError();
+        DWORD observed_exit_code = STILL_ACTIVE;
+        if (GetExitCodeProcess(process_handle_, &observed_exit_code) && observed_exit_code != STILL_ACTIVE) {
+            exit_code_ = static_cast<int>(observed_exit_code);
+            state_ = observed_exit_code == 0 ? ProcessState::stopped : ProcessState::failed;
+            pid_ = 0;
+            close_handles();
+            error.clear();
+            return true;
+        }
         error = "TerminateProcess failed with Windows error " + std::to_string(code);
         return false;
     }
-    (void)WaitForSingleObject(process_handle_, 3000);
-    exit_code_ = 0;
+    const DWORD wait_result = WaitForSingleObject(process_handle_, 5000);
+    if (wait_result != WAIT_OBJECT_0) {
+        if (wait_result == WAIT_TIMEOUT) {
+            error = "Timed out waiting for the engine process to exit after termination.";
+        } else {
+            error = "WaitForSingleObject failed with Windows error " + std::to_string(GetLastError());
+        }
+        return false;
+    }
+    DWORD observed_exit_code = STILL_ACTIVE;
+    if (!GetExitCodeProcess(process_handle_, &observed_exit_code) || observed_exit_code == STILL_ACTIVE) {
+        error = "The engine process handle signaled, but its exit state could not be confirmed.";
+        return false;
+    }
+    exit_code_ = static_cast<int>(observed_exit_code);
     state_ = ProcessState::stopped;
     pid_ = 0;
     close_handles();

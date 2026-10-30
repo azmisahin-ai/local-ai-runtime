@@ -5,6 +5,7 @@ import http.client
 import json
 import os
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -72,6 +73,43 @@ def expect_forbidden(url, headers, description):
             raise AssertionError(f"{description} should return 403, got HTTP {exc.code}") from exc
 
 
+def force_stop_process_tree(pid):
+    """Last-resort cleanup for the exact engine PID started by this smoke test."""
+    if not pid or int(pid) <= 0:
+        return
+    pid = int(pid)
+    if os.name == "nt":
+        # The runtime starts the engine as a child process. If the runtime itself
+        # crashes, taskkill /T also closes descendants and releases inherited log handles.
+        subprocess.run(
+            ["taskkill", "/PID", str(pid), "/T", "/F"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=10,
+        )
+        return
+    try:
+        os.killpg(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    except OSError:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            return
+    time.sleep(0.25)
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    except OSError:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--runtime", required=True)
@@ -87,7 +125,7 @@ def main():
             raise RuntimeError(f"Required smoke-test path does not exist: {path}")
 
     runtime_port, engine_port, setup_engine_port = reserve_distinct_ports()
-    with tempfile.TemporaryDirectory(prefix="lar-http-smoke-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="lar-http-smoke-", ignore_cleanup_errors=(os.name == "nt")) as temporary:
         temp = Path(temporary)
         test_web_dir = temp / "web"
         shutil.copytree(web_dir, test_web_dir)
@@ -193,6 +231,8 @@ def main():
             [runtime, "--config", str(config_path), "--web-dir", web_dir],
             cwd=str(temp), stdout=runtime_log, stderr=subprocess.STDOUT, env=test_env,
         )
+        engine_process_pid = None
+        engine_stop_confirmed = False
         try:
             wait_until(lambda: request(base + "/health")[0] == 200, 15, "runtime health endpoint")
 
@@ -527,6 +567,11 @@ def main():
             assert start_job_status == 200 and engine_start_job["kind"] == "engine-start"
             assert engine_start_job["item_id"] == "fake-engine" and engine_start_job["state"] == "succeeded"
             assert engine_start_job["retryable"] is False and engine_start_job["duration_ms"] >= 0
+            started_engines_status, started_engines_raw, _ = request(base + "/v1/engines")
+            started_engines = json.loads(started_engines_raw)["data"]
+            started_engine = next(item for item in started_engines if item["id"] == "fake-engine")
+            engine_process_pid = started_engine.get("pid")
+            assert started_engines_status == 200 and engine_process_pid, started_engine
             time.sleep(0.15)
             resource_status, active_resources_raw, _ = request(base + "/v1/system/resources")
             active_resources = json.loads(active_resources_raw)
@@ -754,6 +799,7 @@ def main():
             stop_job_status, stop_job_raw, _ = request(base + f"/v1/jobs/{stop_result['job_id']}")
             stop_job = json.loads(stop_job_raw)
             assert stop_job_status == 200 and stop_job["kind"] == "engine-stop" and stop_job["state"] == "succeeded"
+            engine_stop_confirmed = True
             status, engines_raw, _ = request(base + "/v1/engines")
             engines = json.loads(engines_raw)["data"]
             assert status == 200 and engines[0]["status"] == "stopped"
@@ -912,13 +958,57 @@ def main():
                 print(engine_log_path.read_text(encoding="utf-8", errors="replace"), file=sys.stderr)
             raise
         finally:
+            # Prefer the same graceful lifecycle used by the desktop app. In the
+            # previous cleanup path, a failing assertion could hard-kill the
+            # runtime before EngineManager::~EngineManager() stopped its child;
+            # Windows then refused to delete fake-engine.log and masked the real
+            # test failure with PermissionError [WinError 32].
             if process.poll() is None:
-                process.terminate()
+                if not engine_process_pid:
+                    try:
+                        _, engines_raw, _ = request(base + "/v1/engines", timeout=1)
+                        engines = json.loads(engines_raw).get("data", [])
+                        engine = next((item for item in engines if item.get("id") == "fake-engine"), None)
+                        if engine:
+                            engine_process_pid = engine.get("pid")
+                    except Exception:
+                        pass
+                if not engine_stop_confirmed:
+                    try:
+                        stop_status, stop_raw, _ = request(
+                            base + "/v1/engines/fake-engine/stop", method="POST", body={}, timeout=2
+                        )
+                        stop_job_id = json.loads(stop_raw).get("job_id")
+                        if stop_status == 200 and stop_job_id:
+                            cleanup_job_status, cleanup_job_raw, _ = request(base + f"/v1/jobs/{stop_job_id}", timeout=2)
+                            cleanup_job = json.loads(cleanup_job_raw)
+                            engine_stop_confirmed = cleanup_job_status == 200 and cleanup_job.get("state") == "succeeded"
+                    except Exception as cleanup_error:
+                        print(f"Cleanup warning: graceful engine stop failed: {cleanup_error}", file=sys.stderr)
                 try:
-                    process.wait(timeout=5)
+                    request(base + "/v1/runtime/shutdown", method="POST", body={}, timeout=2)
+                except Exception as cleanup_error:
+                    print(f"Cleanup warning: graceful runtime shutdown failed: {cleanup_error}", file=sys.stderr)
+                try:
+                    process.wait(timeout=8)
                 except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait(timeout=5)
+                    print("Cleanup warning: runtime did not exit gracefully; stopping the exact test engine PID.", file=sys.stderr)
+                    if engine_process_pid and not engine_stop_confirmed:
+                        force_stop_process_tree(engine_process_pid)
+                    process.terminate()
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait(timeout=5)
+                if engine_process_pid and not engine_stop_confirmed:
+                    # A failing stop API or a runtime crash must not leave the
+                    # child holding an inherited Windows log handle.
+                    force_stop_process_tree(engine_process_pid)
+            elif engine_process_pid and not engine_stop_confirmed:
+                # The runtime may have crashed before its destructor could stop
+                # the child. Only terminate the PID returned for this test engine.
+                force_stop_process_tree(engine_process_pid)
             runtime_log.close()
 
 

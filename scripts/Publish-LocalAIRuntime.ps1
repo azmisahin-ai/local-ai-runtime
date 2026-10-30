@@ -20,6 +20,14 @@ $apiHeaders = @{
     'User-Agent' = 'LocalAIRuntime-Publisher'
     'X-GitHub-Api-Version' = '2022-11-28'
 }
+# Public repository diagnostics do not require a token. When a user already has
+# a token in the environment, use it to support private forks without prompting.
+$githubToken = if (-not [string]::IsNullOrWhiteSpace($env:GH_TOKEN)) {
+    $env:GH_TOKEN
+} elseif (-not [string]::IsNullOrWhiteSpace($env:GITHUB_TOKEN)) {
+    $env:GITHUB_TOKEN
+} else { $null }
+if ($githubToken) { $apiHeaders['Authorization'] = "Bearer $githubToken" }
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 function Invoke-Git {
@@ -67,6 +75,134 @@ function Get-NextAlphaTag {
     return ('v{0}.{1}.{2}-alpha' -f $latest.Major, $latest.Minor, ($latest.Patch + 1))
 }
 
+function Show-WorkflowFailureDiagnostics {
+    param(
+        [Parameter(Mandatory = $true)]$Run,
+        [Parameter(Mandatory = $true)][string]$StageName
+    )
+
+    $runId = [string]$Run.id
+    if ([string]::IsNullOrWhiteSpace($runId)) {
+        Write-Warning 'GitHub did not return a workflow run ID; automatic log collection is unavailable.'
+        return
+    }
+
+    $downloads = Join-Path $HOME 'Downloads'
+    $diagnosticsRoot = Join-Path $downloads 'local-ai-runtime-ci-diagnostics'
+    $runDirectory = Join-Path $diagnosticsRoot ("run-{0}" -f $runId)
+    New-Item -ItemType Directory -Path $runDirectory -Force | Out-Null
+
+    Write-Host ''
+    Write-Host '================ CI FAILURE DIAGNOSTICS ================' -ForegroundColor Red
+    Write-Host "Stage: $StageName"
+    Write-Host "Workflow run: $($Run.html_url)"
+    Write-Host "Commit: $($Run.head_sha)"
+    Write-Host "Full job logs: $runDirectory" -ForegroundColor Green
+
+    $jobsUri = "https://api.github.com/repos/$repositorySlug/actions/runs/$runId/jobs?filter=latest&per_page=100"
+    try {
+        $jobsResponse = Invoke-RestMethod -Method Get -Uri $jobsUri -Headers $apiHeaders -TimeoutSec 30
+    } catch {
+        Write-Warning "Could not list failed jobs: $($_.Exception.Message)"
+        Write-Warning "Open the run directly: $($Run.html_url)"
+        Write-Host '=========================================================' -ForegroundColor Red
+        return
+    }
+
+    $jobs = @($jobsResponse.jobs)
+    $problemJobs = @($jobs | Where-Object {
+        $_.conclusion -and $_.conclusion -notin @('success', 'skipped', 'neutral')
+    })
+    if ($problemJobs.Count -eq 0) {
+        Write-Warning 'The run failed, but the jobs API did not return a non-success job. Showing all returned jobs.'
+        $problemJobs = $jobs
+    }
+
+    foreach ($job in $problemJobs) {
+        Write-Host ''
+        Write-Host ("[{0}] {1} — {2}" -f $job.conclusion, $job.name, $job.html_url) -ForegroundColor Yellow
+        $failedSteps = @($job.steps | Where-Object {
+            $_.conclusion -and $_.conclusion -notin @('success', 'skipped', 'neutral')
+        })
+        if ($failedSteps.Count -gt 0) {
+            foreach ($step in $failedSteps) {
+                Write-Host ("  Step {0}: {1} ({2})" -f $step.number, $step.name, $step.conclusion) -ForegroundColor Red
+            }
+        } else {
+            Write-Host '  No failed step details were returned by the jobs API.' -ForegroundColor DarkYellow
+        }
+
+        # Check-run annotations often contain compiler/test diagnostics with
+        # file and line numbers, so show them before the raw log excerpt.
+        if (-not [string]::IsNullOrWhiteSpace([string]$job.check_run_url)) {
+            try {
+                $annotationsUri = $job.check_run_url.TrimEnd('/') + '/annotations?per_page=100'
+                $annotations = @(Invoke-RestMethod -Method Get -Uri $annotationsUri -Headers $apiHeaders -TimeoutSec 20)
+                foreach ($annotation in $annotations) {
+                    $location = ''
+                    if ($annotation.path) {
+                        $location = [string]$annotation.path
+                        if ($annotation.start_line) { $location += ":$($annotation.start_line)" }
+                    }
+                    Write-Host ("  Annotation {0} {1}: {2}" -f $annotation.annotation_level, $location, $annotation.message) -ForegroundColor Red
+                }
+            } catch {
+                Write-Host "  Check annotations unavailable: $($_.Exception.Message)" -ForegroundColor DarkYellow
+            }
+        }
+
+        $logPath = Join-Path $runDirectory ("job-{0}.log" -f $job.id)
+        $logUri = "https://api.github.com/repos/$repositorySlug/actions/jobs/$($job.id)/logs"
+        try {
+            # GitHub redirects this endpoint to a short-lived log download URL.
+            # Invoke-WebRequest follows the redirect and writes the plain-text job log.
+            Invoke-WebRequest -Method Get -Uri $logUri -Headers $apiHeaders -OutFile $logPath -UseBasicParsing -TimeoutSec 90 | Out-Null
+            if (-not (Test-Path -LiteralPath $logPath -PathType Leaf)) {
+                throw 'GitHub returned no log file.'
+            }
+            Write-Host "  Saved full log: $logPath" -ForegroundColor Green
+
+            $lines = @(Get-Content -LiteralPath $logPath)
+            $pattern = '(?i)(\berror\b|\bfatal\b|\bfailed\b|\bfailure\b|\bexception\b|\btraceback\b|permissionerror|assertionerror|\bC[0-9]{4}\b|ninja: build stopped|errors while running ctest|process completed with exit code)'
+            $matchIndexes = @()
+            for ($index = 0; $index -lt $lines.Count; $index++) {
+                if ([string]$lines[$index] -match $pattern) { $matchIndexes += $index }
+            }
+            if ($matchIndexes.Count -eq 0) {
+                Write-Host '  No standard error markers found; final log lines:' -ForegroundColor DarkYellow
+                $start = [Math]::Max(0, $lines.Count - 25)
+                for ($index = $start; $index -lt $lines.Count; $index++) {
+                    Write-Host ("    {0,6}: {1}" -f ($index + 1), $lines[$index])
+                }
+            } else {
+                Write-Host '  Relevant error lines (full log is saved above):' -ForegroundColor Cyan
+                $wanted = @{}
+                foreach ($hit in @($matchIndexes | Select-Object -First 60)) {
+                    for ($context = [Math]::Max(0, $hit - 2); $context -le [Math]::Min($lines.Count - 1, $hit + 2); $context++) {
+                        $wanted[$context] = $true
+                    }
+                }
+                $shown = 0
+                foreach ($index in @($wanted.Keys | Sort-Object)) {
+                    Write-Host ("    {0,6}: {1}" -f ([int]$index + 1), $lines[[int]$index])
+                    $shown++
+                    if ($shown -ge 120) {
+                        Write-Host '    ... excerpt capped; inspect the full log file for remaining lines.' -ForegroundColor DarkYellow
+                        break
+                    }
+                }
+            }
+        } catch {
+            Write-Warning "Could not download job $($job.id) log: $($_.Exception.Message)"
+            Write-Warning "Open this job in GitHub: $($job.html_url)"
+        }
+    }
+
+    Write-Host ''
+    Write-Host "CI diagnostics saved under: $runDirectory" -ForegroundColor Green
+    Write-Host '=========================================================' -ForegroundColor Red
+}
+
 function Wait-ForPipelineRun {
     param(
         [Parameter(Mandatory = $true)][string]$ExpectedSha,
@@ -101,10 +237,18 @@ function Wait-ForPipelineRun {
                     Write-Host "$StageName CI passed: $($run.html_url)" -ForegroundColor Green
                     return $run
                 }
-                if ($ExpectedRef -eq 'main') {
-                    throw "Main CI finished with conclusion '$($run.conclusion)'. No release tag was created. Review: $($run.html_url)"
+                try {
+                    Show-WorkflowFailureDiagnostics -Run $run -StageName $StageName
+                } catch {
+                    Write-Warning "Automatic CI diagnostics failed: $($_.Exception.Message)"
+                    Write-Warning "Open GitHub Actions for the full result: $($run.html_url)"
                 }
-                throw "Release CI for $ExpectedRef finished with conclusion '$($run.conclusion)'. The tag remains on GitHub, but a successful Release was not confirmed. Do not move or reuse the tag. Review: $($run.html_url)"
+                if ($ExpectedRef -eq 'main') {
+                    $diagnosticsRoot = Join-Path (Join-Path $HOME 'Downloads') 'local-ai-runtime-ci-diagnostics'
+                    $runDiagnostics = Join-Path $diagnosticsRoot ("run-{0}" -f $run.id)
+                    throw "Main CI finished with conclusion '$($run.conclusion)'. No release tag was created. Diagnostics: $runDiagnostics. Review: $($run.html_url)"
+                }
+                throw "Release CI for $ExpectedRef finished with conclusion '$($run.conclusion)'. The tag remains on GitHub, but a successful Release was not confirmed. Do not move or reuse the tag. Review diagnostics and run: $($run.html_url)"
             }
             $createdAt = [DateTimeOffset]::Parse([string]$run.created_at).ToUniversalTime()
             $elapsed = [DateTimeOffset]::UtcNow - $createdAt

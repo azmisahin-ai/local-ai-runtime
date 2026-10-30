@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased — CI diagnostics and deterministic test-process cleanup
+
+- Extend the bundled PowerShell release gate to list failed GitHub Actions jobs and steps, retrieve check-run annotations, download each failed job log, and print focused error excerpts while preserving the full logs under `Downloads/local-ai-runtime-ci-diagnostics/run-<id>`; public repositories work without a token, while `GH_TOKEN`/`GITHUB_TOKEN` are used when supplied.
+- Keep release safety unchanged: failed main CI creates no version tag; failed tagged CI leaves the pushed tag untouched and reports the collected diagnostics.
+- Make HTTP smoke-test teardown request graceful engine stop and runtime shutdown before terminating the runtime process; retain the exact fake-engine PID for a targeted last-resort cleanup so Windows does not leave child processes holding temporary log files.
+- Prevent temporary-directory cleanup errors on Windows from masking the original HTTP smoke assertion, and verify the runtime confirms child-process termination before reporting a managed engine as stopped.
+
 ## Unreleased — localized first-run UX and accessibility
 
 - Add a dismissible first-run guide covering local device discovery, model selection, engine readiness, and the first local chat; derive completion from local runtime state and let users reopen the guide from Settings.
