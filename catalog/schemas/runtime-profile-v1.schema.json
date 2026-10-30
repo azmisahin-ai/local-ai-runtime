@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local-ai-runtime.dev/catalog/schemas/runtime-profile-v1.schema.json",
+  "title": "Local AI Runtime active runtime profile",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "engine_component_id",
+    "model_component_id",
+    "context_size",
+    "compute_mode",
+    "engine_configured",
+    "model_configured",
+    "can_chat"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "engine_component_id": { "type": "string", "maxLength": 128, "pattern": "^(?:|[A-Za-z0-9][A-Za-z0-9._-]{0,127})$", "description": "Reviewed catalogue engine/backend component ID. Empty only for Advanced/manual configuration." },
+    "model_component_id": { "type": "string", "maxLength": 128, "pattern": "^(?:|[A-Za-z0-9][A-Za-z0-9._-]{0,127})$", "description": "Reviewed catalogue model component ID. Empty only for Advanced/manual configuration." },
+    "context_size": { "type": "integer", "minimum": 512, "maximum": 32768, "description": "Context window requested for the selected llama.cpp profile." },
+    "compute_mode": { "enum": ["cpu", "auto"], "description": "Requested placement policy. Auto is a request to llama.cpp, not evidence of successful GPU offload." },
+    "engine_configured": { "type": "boolean", "description": "An executable path is configured for the active Chat engine." },
+    "model_configured": { "type": "boolean", "description": "A model path is configured for the active Chat engine." },
+    "can_chat": { "type": "boolean", "description": "The engine and model paths are configured. This does not mean the process is running or ready; use /v1/engines for live readiness." }
+  }
+}

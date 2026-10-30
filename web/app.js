@@ -55,6 +55,14 @@ const chatNewButton = document.querySelector('#chat-new');
 const chatClearHistoryButton = document.querySelector('#chat-clear-history');
 const chatStopButton = document.querySelector('#chat-stop');
 const chatMessageInput = document.querySelector('#message');
+const runtimeProfilePanel = document.querySelector('#runtime-profile-panel');
+const runtimeProfileState = document.querySelector('#runtime-profile-state');
+const runtimeProfileSummary = document.querySelector('#runtime-profile-summary');
+const runtimeProfileError = document.querySelector('#runtime-profile-error');
+const runtimeProfileEngineSelect = document.querySelector('#profile-engine');
+const runtimeProfileModelSelect = document.querySelector('#profile-model');
+const runtimeProfileContextSelect = document.querySelector('#profile-context');
+const runtimeProfileApplyButton = document.querySelector('#runtime-profile-apply');
 const firstRunPanel = document.querySelector('#first-run-panel');
 const firstRunProgress = document.querySelector('#first-run-progress');
 const firstRunProgressLabel = document.querySelector('#first-run-progress-label');
@@ -85,6 +93,10 @@ let activeChatController = null;
 let activeAssistantMessageElement = null;
 let hardwareInventoryLoaded = false;
 let engineSnapshot = [];
+let runtimeProfile = null;
+let runtimeProfileDraft = { engine_component_id: '', model_component_id: '', context_size: 2048 };
+let runtimeProfileDraftDirty = false;
+let activeChatEngineReady = false;
 let onboardingDismissed = (() => { try { return localStorage.getItem(ONBOARDING_DISMISSED_KEY) === '1'; } catch (_) { return false; } })();
 if (firstRunPanel) firstRunPanel.hidden = onboardingDismissed;
 let localeInitialized = false;
@@ -101,6 +113,12 @@ function formatMessage(key, values = {}, fallback = key) {
 function formatError(error) {
   const detail = String(error && error.message ? error.message : error || translation('common.unknownError', 'Unknown error'));
   return formatMessage('common.errorDetails', { detail }, `Details: ${detail}`);
+}
+
+function updateChatSendAvailability() {
+  if (!chatSendButton || !chatMessageInput) return;
+  chatSendButton.disabled = Boolean(activeChatController) || !activeChatEngineReady ||
+    chatMessageInput.disabled || chatMessageInput.value.trim().length === 0;
 }
 
 function applyLocale() {
@@ -140,15 +158,14 @@ function updateFirstRunGuide() {
   firstRunPanel.hidden = onboardingDismissed;
   if (onboardingDismissed) return;
 
-  const hasInstalledModel = Array.isArray(catalogItems) && catalogItems.some((item) =>
-    item && item.type === 'model' && item.installed);
-  const hasReadyChatEngine = engineSnapshot.some((engine) => engine && engine.default_for_chat && engine.ready);
+  const hasSelectedModel = Boolean(runtimeProfile?.engine_configured && runtimeProfile?.model_configured);
+  const hasReadyChatEngine = engineSnapshot.some((engine) => engine && engine.default_for_chat && engine.ready && engine.model_configured);
   const hasCompletedChat = Array.isArray(chatConversations) && chatConversations.some((conversation) =>
     Array.isArray(conversation.messages) && conversation.messages.some((message) =>
       message.role === 'assistant' && message.state === 'complete' && String(message.content || '').trim().length > 0));
   const steps = [
     { id: 'device', complete: hardwareInventoryLoaded },
-    { id: 'model', complete: hasInstalledModel },
+    { id: 'model', complete: hasSelectedModel },
     { id: 'engine', complete: hasReadyChatEngine },
     { id: 'chat', complete: hasCompletedChat },
   ];
@@ -894,7 +911,142 @@ function renderCatalog() {
     return;
   }
   for (const item of filtered) catalogList.append(catalogItemCard(item));
+  renderRuntimeProfile();
 }
+
+function renderRuntimeProfile() {
+  if (!runtimeProfilePanel || !runtimeProfileEngineSelect || !runtimeProfileModelSelect) return;
+  const previousEngine = runtimeProfileEngineSelect.value;
+  const previousModel = runtimeProfileModelSelect.value;
+  const installedEngines = catalogItems.filter((item) => item.type === 'engine' && item.installed);
+  const installedModels = catalogItems.filter((item) => item.type === 'model' && item.installed);
+  const selectedEngineId = runtimeProfileDraftDirty
+    ? runtimeProfileDraft.engine_component_id
+    : (runtimeProfile?.engine_component_id || previousEngine || '');
+  const selectedModelId = runtimeProfileDraftDirty
+    ? runtimeProfileDraft.model_component_id
+    : (runtimeProfile?.model_component_id || previousModel || '');
+
+  const fillOptions = (select, placeholderKey, placeholderFallback, items, selectedId) => {
+    select.replaceChildren();
+    const placeholder = make('option', '', translation(placeholderKey, placeholderFallback));
+    placeholder.value = '';
+    select.append(placeholder);
+    for (const item of items) {
+      const option = make('option', '', `${item.name || item.id}${item.backend ? ` · ${String(item.backend).toUpperCase()}` : ''}`);
+      option.value = item.id;
+      select.append(option);
+    }
+    if (selectedId && !items.some((item) => item.id === selectedId)) {
+      const unavailable = make('option', '', `${selectedId} · ${translation('profile.notInstalled', 'not installed')}`);
+      unavailable.value = selectedId;
+      select.append(unavailable);
+    }
+    select.value = selectedId;
+  };
+
+  fillOptions(runtimeProfileEngineSelect, 'profile.noInstalledEngine', 'No installed engine', installedEngines, selectedEngineId);
+  fillOptions(runtimeProfileModelSelect, 'profile.noInstalledModel', 'No installed model', installedModels, selectedModelId);
+  const contextValue = Number(runtimeProfileDraftDirty
+    ? runtimeProfileDraft.context_size
+    : (runtimeProfile?.context_size || 2048));
+  const standardContexts = [2048, 4096, 8192, 16384, 32768];
+  runtimeProfileContextSelect.replaceChildren(...standardContexts.map((size) => {
+    const option = make('option', '', size.toLocaleString(currentLocale === 'tr' ? 'tr-TR' : 'en-US'));
+    option.value = String(size);
+    return option;
+  }));
+  if (!standardContexts.includes(contextValue)) {
+    const custom = make('option', '', contextValue.toLocaleString(currentLocale === 'tr' ? 'tr-TR' : 'en-US'));
+    custom.value = String(contextValue);
+    runtimeProfileContextSelect.append(custom);
+  }
+  runtimeProfileContextSelect.value = String(contextValue);
+
+  const selectedEngine = installedEngines.find((item) => item.id === runtimeProfileEngineSelect.value);
+  const selectedModel = installedModels.find((item) => item.id === runtimeProfileModelSelect.value);
+  const enginesRunning = engineSnapshot.some((engine) => engine.status === 'running');
+  runtimeProfileApplyButton.disabled = !selectedEngine || !selectedModel || enginesRunning;
+  const configured = Boolean(runtimeProfile?.engine_configured && runtimeProfile?.model_configured);
+  const managed = Boolean(runtimeProfile?.engine_component_id && runtimeProfile?.model_component_id);
+  if (runtimeProfileState) {
+    runtimeProfileState.classList.toggle('ready', configured);
+    runtimeProfileState.textContent = configured
+      ? (managed ? translation('profile.configured', 'Profile configured') : translation('profile.customConfigured', 'Custom setup active'))
+      : translation('profile.incomplete', 'Not configured');
+  }
+  if (runtimeProfileSummary) {
+    if (enginesRunning) runtimeProfileSummary.textContent = translation('profile.stopEngineFirst', 'Stop the running engine before changing its active profile.');
+    else if (configured && !managed) runtimeProfileSummary.textContent = translation('profile.customApplied', 'A manually configured engine/model is active. Use Advanced Settings to edit it, or choose an installed catalog profile here.');
+    else if (!installedEngines.length) runtimeProfileSummary.textContent = translation('profile.installEngineFirst', 'Install a compatible engine package below. Installing it will not activate it automatically.');
+    else if (!installedModels.length) runtimeProfileSummary.textContent = translation('profile.installModelFirst', 'Install a model below. Downloading it will not replace the model currently used by Chat.');
+    else if (configured) runtimeProfileSummary.textContent = translation('profile.currentApplied', 'The selected engine and model are saved for Chat. Start the engine from Activity when you are ready.');
+    else runtimeProfileSummary.textContent = translation('profile.chooseAndApply', 'Choose an installed engine and model, then apply the profile. This does not start the engine.');
+  }
+}
+
+async function refreshRuntimeProfile() {
+  try {
+    runtimeProfile = await api('/v1/runtime/profile');
+    if (!runtimeProfileDraftDirty) {
+      runtimeProfileDraft = {
+        engine_component_id: runtimeProfile.engine_component_id || '',
+        model_component_id: runtimeProfile.model_component_id || '',
+        context_size: Number(runtimeProfile.context_size || 2048),
+      };
+    }
+    renderRuntimeProfile();
+    updateFirstRunGuide();
+  } catch (error) {
+    if (runtimeProfileError) runtimeProfileError.textContent = formatError(error);
+  }
+}
+
+for (const control of [runtimeProfileEngineSelect, runtimeProfileModelSelect, runtimeProfileContextSelect]) {
+  control.addEventListener('change', () => {
+    runtimeProfileDraft = {
+      engine_component_id: runtimeProfileEngineSelect.value,
+      model_component_id: runtimeProfileModelSelect.value,
+      context_size: Number(runtimeProfileContextSelect.value),
+    };
+    runtimeProfileDraftDirty = true;
+    renderRuntimeProfile();
+  });
+}
+
+runtimeProfileApplyButton.addEventListener('click', async () => {
+  runtimeProfileError.textContent = '';
+  const engineComponentId = runtimeProfileEngineSelect.value;
+  const modelComponentId = runtimeProfileModelSelect.value;
+  if (!engineComponentId || !modelComponentId) {
+    runtimeProfileError.textContent = translation('profile.selectBoth', 'Select an installed engine package and an installed model.');
+    return;
+  }
+  runtimeProfileApplyButton.disabled = true;
+  try {
+    const result = await api('/v1/runtime/profile', {
+      method: 'POST',
+      body: JSON.stringify({
+        engine_component_id: engineComponentId,
+        model_component_id: modelComponentId,
+        context_size: Number(runtimeProfileContextSelect.value),
+      }),
+    });
+    runtimeProfile = result.profile;
+    runtimeProfileDraftDirty = false;
+    runtimeProfileDraft = {
+      engine_component_id: runtimeProfile.engine_component_id || '',
+      model_component_id: runtimeProfile.model_component_id || '',
+      context_size: Number(runtimeProfile.context_size || 2048),
+    };
+    runtimeProfileSummary.textContent = translation('profile.applied', 'Runtime profile saved. Start the selected engine from Activity to enable Chat.');
+    await Promise.all([refreshEngines(), refreshRuntimeProfile()]);
+  } catch (error) {
+    runtimeProfileError.textContent = formatError(error);
+  } finally {
+    renderRuntimeProfile();
+  }
+});
 
 async function refreshCatalog() {
   catalogError.textContent = '';
@@ -907,6 +1059,7 @@ async function refreshCatalog() {
     updateFirstRunGuide();
     if (modelCountBadge) { modelCountBadge.textContent = String(installedModels); modelCountBadge.hidden = installedModels === 0; }
     renderCatalog();
+    await refreshRuntimeProfile();
   } catch (error) {
     catalogItems = [];
     renderCatalog();
@@ -1340,7 +1493,7 @@ function engineCard(engine) {
   }
   if (engine.last_error) info.append(make('p', 'engine-error', engine.last_error));
   else if (!engine.executable_configured) info.append(make('p', 'engine-error', translation('engine.configureNeeded', 'Configure llama.cpp above or set the engine executable path.')));
-  else if ((engine.capabilities || []).includes('chat') && !engine.model_configured) info.append(make('p', 'engine-error', translation('engine.modelNeeded', 'Choose a GGUF model file in the setup form before starting.')));
+  else if ((engine.capabilities || []).includes('chat') && !engine.model_configured) info.append(make('p', 'engine-error', translation('engine.profileModelNeeded', 'Choose and apply an installed model in Models → Active runtime profile before starting this engine.')));
   else if (engine.status === 'running' && !engine.ready) info.append(make('p', 'engine-loading', translation('engine.waitingReady', 'The process is running; waiting for the model server to report ready. Large models may take a while to load.')));
   const actions = make('div', 'engine-actions');
   const start = make('button', 'button primary', translation('engine.start', 'Start'));
@@ -1366,8 +1519,10 @@ async function refreshEngines() {
     updateFirstRunGuide();
     engineList.replaceChildren();
     if (!result.data?.length) {
+      activeChatEngineReady = false;
       engineList.append(make('div', 'empty', translation('engine.setupNeeded', 'No engines configured yet. Install an engine from Models or configure one manually in Settings.')));
-      chatSendButton.disabled = true;
+      updateChatSendAvailability();
+      renderRuntimeProfile();
       chatReadiness.textContent = translation('chat.notReady', 'Install and start a chat model to begin.');
       if (overviewRuntimeState) overviewRuntimeState.textContent = translation('engine.setupRequired', 'Setup needed');
       if (overviewRuntimeDetail) overviewRuntimeDetail.textContent = translation('engine.noChatEngine', 'No chat engine is configured');
@@ -1387,7 +1542,9 @@ async function refreshEngines() {
       ? translation('engine.configured', 'Configured')
       : translation('engine.notConfigured', 'Not configured');
     if (overviewModelDetail) overviewModelDetail.textContent = defaultChat?.display_name || translation('overview.modelDetail');
-    chatSendButton.disabled = !defaultChat?.ready;
+    activeChatEngineReady = Boolean(defaultChat?.ready && defaultChat?.model_configured);
+    updateChatSendAvailability();
+    renderRuntimeProfile();
     const gpuReady = Boolean(defaultChat?.ready && defaultChat.backend_target === 'gpu-requested');
     gpuObservationButton.disabled = !gpuReady;
     gpuObservationButton.title = gpuReady
@@ -1396,12 +1553,15 @@ async function refreshEngines() {
     if (!defaultChat) chatReadiness.textContent = translation('engine.chatConfigure', 'Configure llama.cpp above, then start the engine.');
     else if (defaultChat.ready) chatReadiness.textContent = translation('engine.chatReady', 'Model server ready. Chat requests stay on this machine.');
     else if (defaultChat.status === 'running') chatReadiness.textContent = translation('engine.chatLoading', 'The model is loading or the server is not ready yet.');
-    else if (!defaultChat.executable_configured || !defaultChat.model_configured) chatReadiness.textContent = translation('engine.chatCompleteSetup', 'Complete the llama.cpp setup above, then start the engine.');
+    else if (!defaultChat.executable_configured || !defaultChat.model_configured) chatReadiness.textContent = translation('engine.chatCompleteSetup', 'Choose an installed engine and model in Models → Active runtime profile, apply it, then start the engine from Activity.');
     else chatReadiness.textContent = translation('engine.chatStart', 'Start the configured engine to enable chat.');
   } catch (error) {
+    activeChatEngineReady = false;
+    updateChatSendAvailability();
     engineError.textContent = formatError(error);
     engineList.replaceChildren(make('div', 'empty', translation('engine.loadFailed', 'Could not load engine status.')));
     gpuObservationButton.disabled = true;
+    renderRuntimeProfile();
   }
 }
 
@@ -1645,7 +1805,7 @@ function createNewConversation() {
   renderChatWorkspace();
   chatError.textContent = '';
   chatMessageInput.value = '';
-  chatSendButton.disabled = true;
+  updateChatSendAvailability();
   chatMessageInput.focus();
 }
 
@@ -1742,9 +1902,7 @@ if (chatConversationList) chatConversationList.addEventListener('click', (event)
   renderChatWorkspace();
 });
 
-chatMessageInput.addEventListener('input', () => {
-  chatSendButton.disabled = Boolean(activeChatController) || chatMessageInput.value.trim().length === 0;
-});
+chatMessageInput.addEventListener('input', updateChatSendAvailability);
 
 document.querySelector('#chat-form').addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -1752,6 +1910,11 @@ document.querySelector('#chat-form').addEventListener('submit', async (event) =>
   chatError.textContent = '';
   const messageText = chatMessageInput.value.trim();
   if (!messageText) return;
+  if (!activeChatEngineReady) {
+    chatError.textContent = translation('chat.engineRequired', 'The selected chat engine is not ready. Choose and apply a model in Models, then start the engine from Activity. Your message is still here.');
+    updateChatSendAvailability();
+    return;
+  }
   let conversation = activeConversation();
   if (!conversation) {
     conversation = { id: createChatId(), title: '', updated_at: Date.now(), messages: [] };
@@ -1828,7 +1991,7 @@ document.querySelector('#chat-form').addEventListener('submit', async (event) =>
     if (activeChatController === controller) activeChatController = null;
     chatStopButton.hidden = true;
     chatMessageInput.disabled = false;
-    chatSendButton.disabled = chatMessageInput.value.trim().length === 0;
+    updateChatSendAvailability();
     renderChatHistory();
     chatMessageInput.focus();
   }
@@ -1897,7 +2060,7 @@ updateDownloadButton.addEventListener('click', stageRuntimeUpdate);
 checkUpdatesButton.addEventListener('click', () => checkForUpdates(true));
 updateApplyButton.addEventListener('click', applyRuntimeUpdate);
 
-chatSendButton.disabled = true;
+updateChatSendAvailability();
 refreshHealth();
 refreshHardware();
 refreshResources();

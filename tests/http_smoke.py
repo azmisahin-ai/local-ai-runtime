@@ -497,6 +497,33 @@ def main():
             catalog_schema = json.loads(catalog_schema_path.read_text(encoding="utf-8"))
             catalog_errors = validate_catalog_schema(catalog, catalog_schema)
             assert not catalog_errors, "Catalog API did not satisfy component-v1 schema: " + "; ".join(catalog_errors[:12])
+            profile_status, profile_raw, profile_type = request(base + "/v1/runtime/profile")
+            runtime_profile = json.loads(profile_raw)
+            profile_schema_path = Path(__file__).resolve().parents[1] / "catalog" / "schemas" / "runtime-profile-v1.schema.json"
+            profile_schema = json.loads(profile_schema_path.read_text(encoding="utf-8"))
+            profile_errors = validate_catalog_schema(runtime_profile, profile_schema)
+            assert profile_status == 200 and "application/json" in profile_type
+            assert not profile_errors, "Runtime profile API did not satisfy runtime-profile-v1 schema: " + "; ".join(profile_errors[:12])
+            assert runtime_profile["engine_configured"] is True and runtime_profile["model_configured"] is True
+            assert runtime_profile["can_chat"] is True and runtime_profile["context_size"] >= 512
+            try:
+                request(base + "/v1/runtime/profile", method="POST", body={
+                    "engine_component_id": "not-a-reviewed-engine",
+                    "model_component_id": "not-a-reviewed-model",
+                    "context_size": 2048,
+                })
+                raise AssertionError("Runtime profile must reject components outside the reviewed catalog")
+            except urllib.error.HTTPError as exc:
+                assert exc.code == 422, f"Expected 422 for unreviewed runtime profile components, got {exc.code}"
+            try:
+                request(base + "/v1/runtime/profile", method="POST", body={
+                    "engine_component_id": "llama.cpp-cpu",
+                    "model_component_id": "qwen2.5-1.5b-q4km",
+                    "context_size": 32769,
+                })
+                raise AssertionError("Runtime profile must reject context sizes outside the supported range")
+            except urllib.error.HTTPError as exc:
+                assert exc.code == 422, f"Expected 422 for an invalid context size, got {exc.code}"
             activity_status, activity_raw, activity_type = request(base + "/v1/activity")
             activity = json.loads(activity_raw)
             activity_schema_path = Path(__file__).resolve().parents[1] / "catalog" / "schemas" / "activity-v1.schema.json"
@@ -937,7 +964,7 @@ def main():
             saved_job_after_shutdown = json.loads(persisted_job_path.read_text(encoding="utf-8"))
             assert saved_job_after_shutdown["state"] == "interrupted", "Restored job state should remain durable on disk"
             assert saved_job_after_shutdown["error_code"] == "process_interrupted"
-            print("HTTP smoke test passed: persistent job restoration, interrupted-state safety, reviewed-catalog retry guard, legacy /v1/downloads compatibility, jobs API, dashboard, local hardware inventory, health/version/platform-update metadata, staged update status, apply capability guards, update URL/digest guards, duplicate-startup diagnostics, security guards, readiness probe, engine lifecycle, chat/models proxy, GGUF validation, quoted paths, restricted engine CORS, CPU/GPU setup persistence, graceful shutdown.")
+            print("HTTP smoke test passed: persistent jobs and recovery, reviewed catalog and runtime-profile schemas, explicit profile selection guards, chat readiness, legacy downloads API, local hardware/resources, engine lifecycle, chat/models proxy, update safety, diagnostics, and graceful shutdown.")
         except Exception:
             runtime_log.flush()
             print(

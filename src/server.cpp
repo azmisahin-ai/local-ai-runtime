@@ -1012,22 +1012,36 @@ void proxy_chat_stream(beast::tcp_stream& client_stream,
         http::write(client_stream, response);
         return;
     }
-    if (engine->state != ProcessState::running) {
-        auto response = error_response(http::status::service_unavailable, version, "Configured engine is not running. Start it from the dashboard first.");
-        http::write(client_stream, response);
-        return;
-    }
-    const auto port_text = upstream_port(engine->config.upstream_base_url);
-    if (port_text.empty()) {
-        auto response = error_response(http::status::bad_gateway, version, "No valid local upstream_base_url is configured for this engine.");
-        http::write(client_stream, response);
-        return;
-    }
-
     const auto operation_id = activity_jobs.begin("inference", engine->config.id, "Streaming local chat completion", true);
     if (operation_id.empty()) {
         auto response = error_response(http::status::internal_server_error, version, "Could not persist the streaming inference operation.");
         http::write(client_stream, response);
+        return;
+    }
+    const auto fail_before_stream = [&](http::status status, const std::string& title, const std::string& detail) {
+        activity_jobs.fail(operation_id, title, detail, "inference_failed");
+        auto response = error_response(status, version, detail);
+        http::write(client_stream, response);
+    };
+    if (engine->config.model_path.empty()) {
+        fail_before_stream(http::status::service_unavailable, "Chat model is not selected",
+            "No model is selected for Chat. Install a model, choose it in Models → Active runtime profile, and apply the profile.");
+        return;
+    }
+    if (engine->state != ProcessState::running) {
+        fail_before_stream(http::status::service_unavailable, "Chat engine is stopped",
+            "Configured engine is not running. Start it from the dashboard first.");
+        return;
+    }
+    if (!upstream_is_ready(*engine)) {
+        fail_before_stream(http::status::service_unavailable, "Chat engine is not ready",
+            "The selected engine is still loading or failed its readiness check. Wait until Activity reports Ready, then retry your message.");
+        return;
+    }
+    const auto port_text = upstream_port(engine->config.upstream_base_url);
+    if (port_text.empty()) {
+        fail_before_stream(http::status::bad_gateway, "Chat engine upstream is invalid",
+            "No valid local upstream_base_url is configured for this engine.");
         return;
     }
     bool downstream_headers_sent = false;
@@ -1497,6 +1511,34 @@ http::response<http::string_body> handle_request(const http::request<http::strin
     if (request.method() == http::verb::get && target == "/v1/catalog") {
         return json_response(http::status::ok, version, downloads.catalog_json());
     }
+    if (request.method() == http::verb::get && target == "/v1/runtime/profile") {
+        return json_response(http::status::ok, version, downloads.runtime_profile_json());
+    }
+    if (request.method() == http::verb::post && target == "/v1/runtime/profile") {
+        if (downloads.has_active_jobs()) {
+            return error_response(http::status::conflict, version, "Finish or cancel the active component installation before changing the runtime profile.");
+        }
+        try {
+            std::istringstream input(request.body());
+            boost::property_tree::ptree body;
+            boost::property_tree::read_json(input, body);
+            const auto engine_component_id = body.get<std::string>("engine_component_id", "");
+            const auto model_component_id = body.get<std::string>("model_component_id", "");
+            const auto context_size = body.get<unsigned int>("context_size", 2048U);
+            std::string error;
+            if (!downloads.apply_runtime_profile(engine_component_id, model_component_id, context_size, error)) {
+                const auto status = error.find("Stop all running engines") != std::string::npos
+                    ? http::status::conflict : http::status::unprocessable_entity;
+                return error_response(status, version, error);
+            }
+            return json_response(http::status::ok, version,
+                "{\"status\":\"applied\",\"profile\":" + downloads.runtime_profile_json() + "}");
+        } catch (const boost::property_tree::json_parser_error& ex) {
+            return error_response(http::status::bad_request, version, std::string("Invalid runtime profile JSON: ") + ex.what());
+        } catch (const std::exception& ex) {
+            return error_response(http::status::unprocessable_entity, version, ex.what());
+        }
+    }
     if (request.method() == http::verb::get && target == "/v1/jobs") {
         return json_response(http::status::ok, version,
             merge_jobs_json(downloads.jobs_json(), activity_jobs.jobs_json()));
@@ -1636,6 +1678,9 @@ http::response<http::string_body> handle_request(const http::request<http::strin
 
             RuntimeConfig next_config = config;
             next_config.engines = candidate_engines;
+            next_config.runtime_profile.engine_component_id.clear();
+            next_config.runtime_profile.model_component_id.clear();
+            next_config.runtime_profile.context_size = body.get<unsigned int>("context_size", 2048U);
             std::string error;
             const auto persist = [&](std::string& persist_error) {
                 try {
@@ -1665,6 +1710,16 @@ http::response<http::string_body> handle_request(const http::request<http::strin
             if (downloads.has_active_jobs()) {
                 return error_response(http::status::conflict, version, "A component installation is active. Wait for it to finish before starting an engine.");
             }
+            const auto configured = engines.configurations();
+            const auto selected_engine = std::find_if(configured.begin(), configured.end(), [&](const EngineConfig& item) {
+                return item.id == start_id;
+            });
+            if (selected_engine != configured.end() &&
+                std::find(selected_engine->capabilities.begin(), selected_engine->capabilities.end(), "chat") != selected_engine->capabilities.end() &&
+                selected_engine->model_path.empty()) {
+                return error_response(http::status::conflict, version,
+                    "No model is selected for this chat engine. Choose an installed model in Models → Active runtime profile before starting it.");
+            }
             const auto operation_id = activity_jobs.begin("engine-start", start_id, "Starting engine process");
             if (operation_id.empty()) return error_response(http::status::internal_server_error, version, "Could not persist the engine start operation.");
             std::string error;
@@ -1693,6 +1748,16 @@ http::response<http::string_body> handle_request(const http::request<http::strin
             if (!engine) return error_response(http::status::service_unavailable, version, "No chat engine is configured. Set upstream_base_url in config/engines.json.");
             const auto operation_id = activity_jobs.begin("inference", engine->config.id, "Running local chat completion");
             if (operation_id.empty()) return error_response(http::status::internal_server_error, version, "Could not persist the inference operation.");
+            if (engine->config.model_path.empty()) {
+                const std::string detail = "No model is selected for Chat. Install a model, choose it in Models → Active runtime profile, and apply the profile.";
+                activity_jobs.fail(operation_id, "Chat model is not selected", detail, "inference_failed");
+                return error_response(http::status::service_unavailable, version, detail);
+            }
+            if (!upstream_is_ready(*engine)) {
+                const std::string detail = "The selected engine is not ready yet. Start it from Activity and wait until its status is Ready before sending a message.";
+                activity_jobs.fail(operation_id, "Chat engine is not ready", detail, "inference_failed");
+                return error_response(http::status::service_unavailable, version, detail);
+            }
             const auto proxied = proxy_chat(*engine, request.body());
             activity_jobs.report_progress(operation_id, "Validating local inference response",
                 static_cast<std::uint64_t>(proxied.body.size()));

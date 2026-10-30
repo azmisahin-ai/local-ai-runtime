@@ -126,6 +126,10 @@ async function main() {
     assert(dashboardHtml.includes(`id="view-${view}"`) && dashboardHtml.includes(`data-view-target="${view}"`), `dashboard should expose the ${view} workspace`);
   }
   assert(dashboardHtml.includes('id="language-select"') && dashboardScript.includes('/locales/'), 'dashboard should expose persisted English/Turkish language selection');
+  assert(dashboardHtml.includes('id="runtime-profile-panel"') && dashboardHtml.includes('id="runtime-profile-apply"'), 'Models should expose an explicit active Runtime Profile selector');
+  assert(dashboardScript.includes("api('/v1/runtime/profile')") && dashboardScript.includes("method: 'POST'"), 'dashboard should read and explicitly apply Runtime Profiles through the API');
+  assert(dashboardScript.includes('function updateChatSendAvailability()') && dashboardScript.includes('!activeChatEngineReady'), 'Chat Send must remain gated by runtime readiness, not only by input text');
+  assert(dashboardScript.includes('runtimeProfileContextSelect.replaceChildren'), 'Runtime Profile context options must be rebuilt without accumulating duplicate custom values');
   assert.deepEqual(Object.keys(englishUi).sort(), Object.keys(turkishUi).sort(), 'English and Turkish UI resources must expose identical keys');
   for (const key of Object.keys(englishUi)) {
     const tokens = (value) => [...String(value).matchAll(/\{([a-zA-Z0-9_]+)\}/g)].map((match) => match[1]).sort();

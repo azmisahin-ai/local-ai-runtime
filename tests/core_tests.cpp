@@ -224,6 +224,9 @@ int main() {
         auto roundtrip = config;
         roundtrip.engines.front().executable_path = std::filesystem::current_path() / "tools" / "llama-server";
         roundtrip.engines.front().model_path = std::filesystem::current_path() / "models" / std::filesystem::path(u8"kullanıcı modeli üğşöçı.gguf");
+        roundtrip.runtime_profile.engine_component_id = "llama.cpp-cuda12";
+        roundtrip.runtime_profile.model_component_id = "qwen2.5-1.5b-q4km";
+        roundtrip.runtime_profile.context_size = 8192;
         const auto suffix = std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
         const auto roundtrip_path = std::filesystem::temp_directory_path() / ("lar-config-roundtrip-" + suffix + ".json");
         lar::save_config(roundtrip_path, roundtrip);
@@ -260,6 +263,12 @@ int main() {
                 "saved executable path did not round-trip");
         require(loaded_roundtrip.engines.front().model_path == roundtrip.engines.front().model_path,
                 "saved Unicode model path did not round-trip");
+        require(loaded_roundtrip.runtime_profile.engine_component_id == "llama.cpp-cuda12",
+                "runtime profile engine component ID with dots did not round-trip");
+        require(loaded_roundtrip.runtime_profile.model_component_id == "qwen2.5-1.5b-q4km",
+                "runtime profile model component ID with dots did not round-trip");
+        require(loaded_roundtrip.runtime_profile.context_size == 8192,
+                "runtime profile context size did not round-trip");
         const auto roundtrip_args = lar::expand_arguments(loaded_roundtrip.engines.front());
         bool unicode_model_argument = false;
         for (const auto& argument : roundtrip_args) {

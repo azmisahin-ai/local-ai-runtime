@@ -88,14 +88,6 @@ const catalog::ComponentDefinition& pinned_model_component(std::string_view id) 
     return *component;
 }
 
-const catalog::ComponentDefinition& default_model_component_or_throw() {
-    const auto* component = catalog::default_model_component();
-    if (!component || !component->installable || component->installer != "pinned-gguf") {
-        throw std::runtime_error("The compiled catalog manifest does not contain a valid default model.");
-    }
-    return *component;
-}
-
 std::once_flag curl_init_flag;
 CURLcode curl_init_result = CURLE_FAILED_INIT;
 
@@ -631,6 +623,49 @@ std::optional<std::filesystem::path> find_llama_server(const std::filesystem::pa
     return std::nullopt;
 }
 
+std::optional<std::filesystem::path> find_installed_llama_variant(const std::filesystem::path& engine_root,
+                                                                  const std::string& variant) {
+    std::error_code error;
+    if (!std::filesystem::is_directory(engine_root, error) || error) return std::nullopt;
+    std::optional<std::filesystem::path> selected;
+    std::filesystem::file_time_type selected_time{};
+    const auto suffix = std::string("-") + variant;
+    for (std::filesystem::directory_iterator it(engine_root, error), end; it != end && !error; it.increment(error)) {
+        if (!it->is_directory(error) || error) { error.clear(); continue; }
+        const auto name = it->path().filename().string();
+        if (name.size() < suffix.size() || name.compare(name.size() - suffix.size(), suffix.size(), suffix) != 0) continue;
+        const auto server = find_llama_server(it->path());
+        if (!server) continue;
+        const auto write_time = it->last_write_time(error);
+        if (error) { error.clear(); continue; }
+        if (!selected || write_time > selected_time) {
+            selected = it->path();
+            selected_time = write_time;
+        }
+    }
+    return selected;
+}
+
+std::string infer_engine_component_id(const EngineConfig& engine) {
+    const auto path = lower_ascii(engine.executable_path.generic_string());
+    for (const auto& component : catalog::components()) {
+        if (component.kind != "engine" || component.installer != "llama-release") continue;
+        const auto suffix = std::string("-") + component.variant;
+        if (path.find(suffix + "/") != std::string::npos || path.find(suffix + "\\") != std::string::npos) return component.id;
+    }
+    return {};
+}
+
+std::string infer_model_component_id(const EngineConfig& engine) {
+    if (engine.model_path.empty()) return {};
+    const auto filename = lower_ascii(engine.model_path.filename().string());
+    for (const auto& component : catalog::components()) {
+        if (component.kind == "model" && component.installer == "pinned-gguf" &&
+            lower_ascii(component.filename) == filename) return component.id;
+    }
+    return {};
+}
+
 std::uint16_t configured_engine_port(const EngineConfig& engine) {
     const auto colon = engine.upstream_base_url.find_last_of(':');
     if (colon == std::string::npos || colon + 1 >= engine.upstream_base_url.size()) return 8081;
@@ -1162,6 +1197,140 @@ std::string DownloadManager::catalog_json() const {
     }
     out << "]}";
     return out.str();
+}
+
+std::string DownloadManager::runtime_profile_json() const {
+    const auto configs = engines_.configurations();
+    const auto active = std::find_if(configs.begin(), configs.end(), [](const EngineConfig& engine) {
+        return engine.default_for_chat;
+    });
+    std::string engine_component_id = config_.runtime_profile.engine_component_id;
+    std::string model_component_id = config_.runtime_profile.model_component_id;
+    if (active != configs.end()) {
+        if (engine_component_id.empty()) engine_component_id = infer_engine_component_id(*active);
+        if (model_component_id.empty()) model_component_id = infer_model_component_id(*active);
+    }
+    const bool engine_configured = active != configs.end() && !active->executable_path.empty();
+    const bool model_configured = active != configs.end() && !active->model_path.empty();
+    const auto context = active != configs.end() ? configured_context_size(*active) : config_.runtime_profile.context_size;
+    const auto backend = active != configs.end() ? configured_gpu_layers(*active) : std::string("0");
+
+    std::ostringstream out;
+    out << "{\"schema_version\":1"
+        << ",\"engine_component_id\":" << json_quote(engine_component_id)
+        << ",\"model_component_id\":" << json_quote(model_component_id)
+        << ",\"context_size\":" << context
+        << ",\"compute_mode\":" << json_quote(backend == "0" ? "cpu" : "auto")
+        << ",\"engine_configured\":" << (engine_configured ? "true" : "false")
+        << ",\"model_configured\":" << (model_configured ? "true" : "false")
+        << ",\"can_chat\":" << (engine_configured && model_configured ? "true" : "false")
+        << '}';
+    return out.str();
+}
+
+bool DownloadManager::apply_runtime_profile(const std::string& engine_component_id,
+                                            const std::string& model_component_id,
+                                            unsigned int context_size, std::string& error) {
+    if (context_size < 512U || context_size > 32768U) {
+        error = "Context size must be between 512 and 32768 tokens.";
+        return false;
+    }
+    const auto* engine_component = catalog::find_component(engine_component_id);
+    if (!engine_component || engine_component->kind != "engine" ||
+        engine_component->installer != "llama-release" || !engine_component->installable ||
+        !catalog::supports_target(*engine_component, host_os(), host_architecture())) {
+        error = "Select an installed engine component supported by this OS and architecture.";
+        return false;
+    }
+    const auto* model_component = catalog::find_component(model_component_id);
+    if (!model_component || model_component->kind != "model" ||
+        model_component->installer != "pinned-gguf" || !model_component->installable ||
+        !catalog::supports_target(*model_component, host_os(), host_architecture())) {
+        error = "Select a reviewed, supported model component.";
+        return false;
+    }
+    if (config_.source_path.empty()) {
+        error = "The runtime configuration path is unknown; the active profile cannot be saved.";
+        return false;
+    }
+
+    const auto data_root = user_data_directory();
+    const auto engine_directory = find_installed_llama_variant(data_root / "engines" / "llama.cpp", engine_component->variant);
+    if (!engine_directory) {
+        error = "The selected engine package is not installed. Install it from Models before applying this profile.";
+        return false;
+    }
+    const auto executable = find_llama_server(*engine_directory);
+    if (!executable) {
+        error = "The installed engine package does not contain llama-server.";
+        return false;
+    }
+
+    const auto model_path = data_root / "models" / model_component->filename;
+    std::error_code fs_error;
+    if (!std::filesystem::is_regular_file(model_path, fs_error) || fs_error) {
+        error = "The selected model is not installed. Download it from Models before applying this profile.";
+        return false;
+    }
+    const auto actual_size = std::filesystem::file_size(model_path, fs_error);
+    if (fs_error || actual_size != model_component->size_bytes) {
+        error = "The installed model size does not match the reviewed catalog. Reinstall the model before using it.";
+        return false;
+    }
+    try {
+        if (sha256_file(model_path) != model_component->sha256 || !has_gguf_header(model_path)) {
+            error = "The installed model failed its SHA-256 or GGUF header check. Reinstall it before using it.";
+            return false;
+        }
+    } catch (const std::exception& ex) {
+        error = std::string("Could not verify the selected model: ") + ex.what();
+        return false;
+    }
+
+    auto candidates = engines_.configurations();
+    auto selected = std::find_if(candidates.begin(), candidates.end(), [](const EngineConfig& engine) {
+        return engine.id == "llama-cpp";
+    });
+    EngineConfig engine;
+    if (selected != candidates.end()) engine = *selected;
+    engine.id = "llama-cpp";
+    engine.display_name = "llama.cpp server";
+    engine.executable_path = *executable;
+    engine.model_path = model_path;
+    engine.working_directory = executable->parent_path();
+    const auto port = configured_engine_port(engine);
+    const bool gpu_requested = engine_component->variant == "cuda12" || engine_component->variant == "cuda13";
+    engine.args = {"--host", "127.0.0.1", "--port", std::to_string(port),
+                   "--ctx-size", std::to_string(context_size), "--n-gpu-layers",
+                   gpu_requested ? "auto" : "0", "--cors-origins", "localhost",
+                   "--no-cors-credentials", "-m", "{model_path}"};
+    engine.upstream_base_url = "http://127.0.0.1:" + std::to_string(port);
+    engine.capabilities = {"chat"};
+    engine.default_for_chat = true;
+    if (selected == candidates.end()) candidates.push_back(engine);
+    else *selected = engine;
+    for (auto& current : candidates) current.default_for_chat = current.id == "llama-cpp";
+
+    RuntimeConfig next_config = config_;
+    next_config.engines = candidates;
+    next_config.runtime_profile.engine_component_id = engine_component_id;
+    next_config.runtime_profile.model_component_id = model_component_id;
+    next_config.runtime_profile.context_size = context_size;
+    const auto persist = [&](std::string& persist_error) {
+        try {
+            save_config(config_.source_path, next_config);
+            return true;
+        } catch (const std::exception& ex) {
+            persist_error = std::string("Could not save runtime profile: ") + ex.what();
+            return false;
+        }
+    };
+    if (!engines_.replace_configs(candidates, persist, error)) return false;
+    config_ = std::move(next_config);
+    error.clear();
+    log_diagnostic("INFO", "runtime.profile.applied", "engine_component=" + engine_component_id +
+                   " model_component=" + model_component_id + " context=" + std::to_string(context_size));
+    return true;
 }
 
 std::string DownloadManager::jobs_json() const {
@@ -1729,9 +1898,8 @@ void DownloadManager::download_model(const std::shared_ptr<Job>& job) {
                 current.phase = "Model already installed and verified";
             });
             log_diagnostic("INFO", "model.install.already_verified", "job=" + job->id);
-            const auto configs = engines_.configurations();
-            const auto current = std::find_if(configs.begin(), configs.end(), [](const EngineConfig& e) { return e.id == "llama-cpp" && !e.executable_path.empty(); });
-            if (current != configs.end()) configure_llama_engine(current->executable_path, final_path, configured_gpu_layers(*current) == "0" ? "cpu" : "gpu");
+            // Installing or re-verifying a model must never change the active chat model.
+            // Selection is an explicit Runtime Profile action.
             return;
         }
         fs_error.clear();
@@ -1794,9 +1962,8 @@ void DownloadManager::download_model(const std::shared_ptr<Job>& job) {
     }
     mutate_job(job, [&](DownloadManager::Job& current) { current.installed_path = path_to_utf8(final_path); });
     log_diagnostic("INFO", "model.install.finalized", "job=" + job->id + " bytes=" + std::to_string(model.size_bytes));
-    const auto configs = engines_.configurations();
-    const auto current = std::find_if(configs.begin(), configs.end(), [](const EngineConfig& e) { return e.id == "llama-cpp" && !e.executable_path.empty(); });
-    if (current != configs.end()) configure_llama_engine(current->executable_path, final_path, configured_gpu_layers(*current) == "0" ? "cpu" : "gpu");
+    // Downloading a model only installs a verified artifact. It does not silently
+    // replace the model currently selected for Chat.
 }
 
 void DownloadManager::download_engine(const std::shared_ptr<Job>& job, const std::string& variant) {
@@ -1910,22 +2077,9 @@ void DownloadManager::download_engine(const std::shared_ptr<Job>& job, const std
     const auto installed_server = find_llama_server(final_dir);
     if (!installed_server) throw std::runtime_error("Could not find llama-server after extraction.");
     std::filesystem::remove_all(stage_root, fs_error);
-    const auto& default_model = default_model_component_or_throw();
-    const auto known_model = data_root / "models" / default_model.filename;
-    std::filesystem::path model_for_config;
-    std::error_code model_error;
-    if (std::filesystem::is_regular_file(known_model, model_error) && !model_error) {
-        try {
-            if (std::filesystem::file_size(known_model, model_error) == default_model.size_bytes && !model_error && sha256_file(known_model) == default_model.sha256) {
-                model_for_config = known_model;
-            }
-        } catch (...) {
-            model_for_config.clear();
-        }
-    }
-    mutate_job(job, [](DownloadManager::Job& current) { current.state = "configuring"; current.phase = "Registering llama.cpp with Local AI Runtime"; });
+    mutate_job(job, [](DownloadManager::Job& current) { current.state = "configuring"; current.phase = "Registering installed llama.cpp package without changing the active runtime profile"; });
     try {
-        configure_llama_engine(*installed_server, model_for_config, variant);
+        configure_llama_engine(*installed_server, {}, variant);
     } catch (...) {
         // Do not leave an orphaned directory that the catalog would mark as
         // installed if configuration persistence failed.
@@ -1939,27 +2093,26 @@ void DownloadManager::download_engine(const std::shared_ptr<Job>& job, const std
 void DownloadManager::configure_llama_engine(const std::filesystem::path& executable,
                                              const std::filesystem::path& model,
                                              const std::string& variant) {
-    if (any_engine_running(engines_)) throw std::runtime_error("Stop all running engines before the installer updates config/engines.json.");
-    if (config_.source_path.empty()) throw std::runtime_error("The runtime configuration path is unknown; cannot register the downloaded engine.");
+    (void)model; // Model installation/selection is deliberately independent from engine installation.
     auto candidates = engines_.configurations();
-    auto existing = std::find_if(candidates.begin(), candidates.end(), [](const EngineConfig& e) { return e.id == "llama-cpp"; });
+    const auto existing = std::find_if(candidates.begin(), candidates.end(), [](const EngineConfig& engine) {
+        return engine.id == "llama-cpp";
+    });
+    // Additional CPU/CUDA packages are installed side-by-side. They must not
+    // silently replace the backend currently used by Chat.
+    if (existing != candidates.end() && !existing->executable_path.empty()) return;
+    if (config_.source_path.empty()) throw std::runtime_error("The runtime configuration path is unknown; cannot register the downloaded engine.");
+
     EngineConfig engine;
     if (existing != candidates.end()) engine = *existing;
     engine.id = "llama-cpp";
     engine.display_name = "llama.cpp server";
-    if (!executable.empty()) engine.executable_path = executable;
-    if (!model.empty()) engine.model_path = model;
-    if (engine.model_path.empty()) {
-        const auto& default_model_spec = default_model_component_or_throw();
-        const auto default_model_path = user_data_directory() / "models" / default_model_spec.filename;
-        std::error_code ec;
-        if (std::filesystem::is_regular_file(default_model_path, ec) && !ec) engine.model_path = default_model_path;
-    }
-    if (engine.executable_path.empty()) return; // Model can be downloaded before an engine is installed.
-    engine.working_directory = engine.executable_path.parent_path();
+    engine.executable_path = executable;
+    engine.model_path.clear(); // The user explicitly selects an installed model in Runtime Profile.
+    engine.working_directory = executable.parent_path();
     const auto port = configured_engine_port(engine);
-    const auto context = configured_context_size(engine);
-    const bool use_gpu = variant == "cuda12" || variant == "cuda13" || variant == "gpu" || variant == "native";
+    const auto context = config_.runtime_profile.context_size >= 512U ? config_.runtime_profile.context_size : 2048U;
+    const bool use_gpu = variant == "cuda12" || variant == "cuda13";
     engine.args = {"--host", "127.0.0.1", "--port", std::to_string(port), "--ctx-size", std::to_string(context),
                    "--n-gpu-layers", use_gpu ? "auto" : "0", "--cors-origins", "localhost",
                    "--no-cors-credentials", "-m", "{model_path}"};
@@ -1967,18 +2120,28 @@ void DownloadManager::configure_llama_engine(const std::filesystem::path& execut
     engine.capabilities = {"chat"};
     engine.default_for_chat = true;
     for (auto& current : candidates) current.default_for_chat = false;
-    existing = std::find_if(candidates.begin(), candidates.end(), [](const EngineConfig& e) { return e.id == "llama-cpp"; });
-    if (existing == candidates.end()) candidates.push_back(engine);
-    else *existing = engine;
+    const auto new_existing = std::find_if(candidates.begin(), candidates.end(), [](const EngineConfig& item) {
+        return item.id == "llama-cpp";
+    });
+    if (new_existing == candidates.end()) candidates.push_back(engine);
+    else *new_existing = engine;
+
     RuntimeConfig next_config = config_;
     next_config.engines = candidates;
-    std::string error;
+    const auto component = std::find_if(catalog::components().begin(), catalog::components().end(), [&](const catalog::ComponentDefinition& item) {
+        return item.kind == "engine" && item.installer == "llama-release" && item.variant == variant;
+    });
+    if (component != catalog::components().end()) next_config.runtime_profile.engine_component_id = component->id;
+    // Do not pick a model automatically. The profile remains incomplete until
+    // the user explicitly chooses an installed model from the Models screen.
+    next_config.runtime_profile.model_component_id.clear();
     const auto persist = [&](std::string& persist_error) {
         try { save_config(config_.source_path, next_config); return true; }
         catch (const std::exception& ex) { persist_error = std::string("Could not save engine configuration: ") + ex.what(); return false; }
     };
+    std::string error;
     if (!engines_.replace_configs(candidates, persist, error)) throw std::runtime_error("Could not register the downloaded llama.cpp engine: " + error);
-    config_.engines = std::move(candidates);
+    config_ = std::move(next_config);
 }
 
 } // namespace lar

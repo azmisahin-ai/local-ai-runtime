@@ -1,3 +1,24 @@
+## Unreleased — explicit Runtime Profile and model activation
+
+- Persist a selected engine/backend component, Chat model component and context size separately from installed artifacts.
+- Install CPU/CUDA engine packages side-by-side without silently replacing the active executable; installing or re-verifying a model no longer changes the active Chat model.
+- Add `GET/POST /v1/runtime/profile` and a Models-screen profile selector that only applies verified, installed catalogue components while engines are stopped.
+- Verify the selected model file size, SHA-256 and GGUF header before activation; keep manual llama.cpp configuration as an Advanced/custom path.
+- Block Chat engine start without a selected model, disable Chat Send until the configured engine reports ready, and record unavailable inference attempts in Activity.
+- Persist dotted catalogue component IDs safely and add `runtime-profile-v1`, core persistence and HTTP/API regression coverage.
+- Keep hardware auto-selection, persistent install queuing and non-llama engine families out of this stage; those require separate compatibility and adapter work.
+
+## Unreleased — runtime profiles and explicit model selection
+
+- Persist the active managed engine component, model component and context size as a Runtime Profile.
+- Separate installation from activation: installing CPU/CUDA engine packages side-by-side no longer changes the selected backend; downloading or re-verifying a model no longer replaces the model currently used by Chat.
+- Add `GET/POST /v1/runtime/profile`, a `runtime-profile-v1` schema, and a Models-page selector for installed engine package, installed Chat model and context size.
+- Apply a managed profile only while engines are stopped; verify installed model size, SHA-256 and GGUF header before selecting it.
+- Guard engine start and both streaming/non-streaming Chat APIs when no model is selected or the local engine is not ready; persist unavailable inference attempts in Activity.
+- Keep manual llama.cpp configuration as an Advanced/custom setup path, separate from managed catalog profiles.
+- Fix component ID persistence so catalog IDs containing dots (for example `llama.cpp-cuda12` and `qwen2.5-1.5b-q4km`) survive config save/restart validation.
+- Keep the first-run model step incomplete until an engine and model are actually configured, not merely downloaded.
+
 # Changelog
 
 ## Unreleased — manifest-driven component catalog

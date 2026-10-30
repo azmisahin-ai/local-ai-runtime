@@ -8,41 +8,63 @@ Local AI Runtime should feel like an installed desktop application, not a develo
 
 The runtime, engines, and models remain separate versioned components. The catalogue must be honest about licenses, supported hardware, memory requirements, and evidence. “Detected” does not mean “supported”; “starts” does not mean “inference tested.”
 
+## Current baseline and visible progress — 2026-10-30
+
+**Published baseline:** `v0.1.18-alpha` (`7a1f73d`). The user confirmed that both `main` CI and tagged release CI passed on Windows x64, Linux x64, macOS x64 and macOS arm64. The published foundation includes the five-area dashboard, local streaming chat, persistent Activity/jobs, live CPU/RAM/engine resource telemetry, EN/TR onboarding/accessibility, and the build-time embedded component manifest. Hosted CI uses fake engines and does not prove real GPU/model task compatibility.
+
+**Current work:** Stage 8 — Runtime Profile & Model Selection. The working-tree candidate separates package installation from active model/backend selection, persists an explicit chat profile, guards Chat readiness, and fixes engine/model component ID persistence. It is not released until the maintainer publisher script passes the main and tagged four-platform CI gates. Candidate release target: `v0.1.19-alpha`.
+
+### Product delivery checklist
+
+| Stage | Scope | State | Target |
+|---|---|---|---|
+| 1–2 | Five-area UI, local streaming Chat and conversation history | [x] Published | `v0.1.13-alpha` |
+| 3–4 | Persistent Job Manager and unified runtime Activity | [x] Published | `v0.1.15-alpha` |
+| 5 | Runtime Resource Manager | [x] Published | `v0.1.16-alpha` |
+| 6 | EN/TR, accessibility and first-run guide | [x] Published | `v0.1.17-alpha` |
+| 6.1 | CI failure diagnostics and Windows process cleanup | [x] Published | `v0.1.17-alpha` |
+| 7 | Embedded Component Catalog Manifest v1 | [x] Published | `v0.1.18-alpha` |
+| 8 | Runtime Profile, explicit model/backend selection and Chat readiness | [~] Candidate; local tests pass, four-platform CI pending | `v0.1.19-alpha` |
+| 9 | Persistent install queue, duplicate/dependency handling and reliable retries | [ ] Not started | `v0.1.20-alpha` |
+| 10 | Catalog v2 and simplified Models UI, model details/quantization/compatibility | [ ] Not started | `v0.1.20-alpha` or later |
+| 11 | Shared Engine Adapter lifecycle; keep llama.cpp as first adapter | [ ] Not started | `v0.1.21-alpha` |
+| 12 | Hardware Compatibility & Evidence; real CPU/CUDA profiles and RTX 3060 acceptance | [ ] Not started | `v0.1.22-alpha` |
+| 13 | Local MCP stdio MVP for the user's other project | [ ] Not started | `v0.1.23-alpha` |
+| 14 | Documents, embeddings and local RAG | [ ] Not started | `v0.1.24-alpha` |
+| 15 | Vision and Speech pilots | [ ] Not started | `v0.1.25-alpha` |
+| 16 | Image generation workspace and adapter | [ ] Not started | Later alpha |
+| 17 | Video understanding (frames + audio + vision) | [ ] Not started | Later alpha |
+| 18 | Music and advanced audio generation | [ ] Not started | Later alpha |
+| 19 | Signing, provenance, cross-platform install/update/recovery parity and v1.0 acceptance | [ ] Not started | v1.0 gate |
+
+### Stage 8 acceptance checklist
+
+- [x] Persist active engine component, model component and context size in `engines.json`.
+- [x] Install engine packages side-by-side without silently switching the active backend.
+- [x] Install or re-verify model files without silently changing the active Chat model.
+- [x] Select an installed engine package and installed model explicitly in Models.
+- [x] Apply the selected profile only when engines are stopped; verify model size, SHA-256 and GGUF header before activation.
+- [x] Block engine start when no Chat model is selected.
+- [x] Disable Chat Send until the selected engine reports ready; guard streaming and non-streaming APIs as well.
+- [x] Record attempted inference when the engine/model is not ready; preserve the typed message in the UI while send is disabled.
+- [x] Keep manual llama.cpp setup as an Advanced/custom path, separate from managed catalog profiles.
+- [x] Add a versioned runtime-profile API schema and regression tests for persisted component IDs (including dots in IDs).
+- [ ] Pass Windows x64, Linux x64, macOS x64 and macOS arm64 main/tag CI; then publish the candidate.
+
+The default product workflow remains task-first: users choose a task/workspace, the runtime helps select a compatible model and engine profile, Activity shows preparation/execution, and the Chat or task workspace only offers controls supported by the selected model's capabilities. No additional engine family is added until the profile, queue, adapter, hardware-evidence and distribution gates are ready.
+
 ## Distribution status
 
-- The `v0.1.2-alpha` milestone introduced the Windows per-user setup installer `local-ai-runtime-windows-x64-setup.exe`; the current published baseline at this roadmap revision is `v0.1.17-alpha`. This baseline includes the user-confirmed full-installer in-app update path with whole-install backup, restart/health verification and interruption recovery. The user has confirmed a clean installation, launch, and successful Qwen2.5 starter-model chat on one Windows environment. This is not evidence for both Windows 10 and 11, GPU inference, or every upgrade/uninstall path. Publisher signing remains outstanding. Always check the [live Releases page](https://github.com/azmisahin-ai/local-ai-runtime/releases) for the current assets.
-- The new Windows shell hosts the existing dashboard in WebView2, starts the C++ runtime without a console window, and uses a tray menu for reopen, update check, and explicit graceful exit. The installer/payload passed tagged Windows CI; the site may offer it as an alpha, but it must not be described as a mature general-availability product until clean Windows 10/11 manual acceptance is complete.
-- The managed catalogue currently starts with official `llama.cpp` CPU/CUDA packages and one pinned Qwen2.5 1.5B GGUF model. The catalog pairs the CUDA server archive with its official companion runtime/DLL archive, verifies both, and records their hashes; physical GPU inference remains unverified until a real hardware run. The current manifest candidate moves component display metadata and the install allowlist into `catalog/manifest-v1.json`, embedded into the runtime at build time; publisher CI must pass before it is treated as released. It is not yet a catalogue of every relevant C/C++ engine or model.
-- The dashboard now has five user-facing destinations (Overview, Chat, Models, Activity, Settings), a dedicated chat workspace, English/Turkish locale resources, dynamic Activity/job and engine-state labels, localized update guidance, and a dismissible four-step first-run guide. Keyboard skip navigation, focus targets, visible focus, live status announcements, and reduced-motion handling are included. Server-supplied error details, upstream component names, capability metadata and license text remain source-provided by design. See [product information architecture](product-information-architecture.md) and [UI/UX principles](ui-ux.md).
-- Local hardware inventory and first-pass heuristic recommendations are implemented. Evidence-backed per-device live inference measurements and validated compatibility profiles remain in progress.
-- Hosted CI uses a fake OpenAI-compatible engine and intentionally does not download the real engine or the ~1.12 GB starter model. Real CPU/GPU inference therefore requires a separate maintainer validation run.
-- Windows tagged portable packages support user-confirmed update apply/restart with checksum-verified backup and rollback. The installed desktop updater shipped in `v0.1.11-alpha`: it downloads the official full setup asset, verifies the SHA-256 digest, backs up the complete install folder, applies the setup package, starts the new shell/runtime and requires a matching `/health` response; failures and interrupted installs restore the verified backup. Its Windows CI smoke is part of the main/tagged pipeline; clean Windows 10/11 manual acceptance beyond the user-confirmed first-run on one Windows environment remains a release gate. Linux/macOS currently verify and stage an update but require manual archive replacement.
+- The `v0.1.2-alpha` milestone introduced the Windows per-user setup installer `local-ai-runtime-windows-x64-setup.exe`; the current published baseline is `v0.1.18-alpha`. The user has confirmed installation, launch and a Qwen2.5 starter-model chat on one Windows environment. This is not evidence for both Windows 10 and 11, real GPU inference, or every upgrade/uninstall path. Publisher signing remains outstanding. Always check the [live Releases page](https://github.com/azmisahin-ai/local-ai-runtime/releases) for current assets.
+- The Windows shell hosts the dashboard in WebView2, starts the C++ runtime without a console window, and uses a tray menu for reopen, update check and graceful exit. Clean Windows 10/11 manual acceptance remains a release gate.
+- The managed catalogue contains llama.cpp CPU/CUDA packages and a pinned Qwen2.5 1.5B GGUF starter model. Manifest v1 is now published and embedded at build time. It is a reviewed starter catalogue, not a general catalogue of every model or C/C++ engine. Real model/CPU/GPU task evidence is still required per declared platform/profile.
+- The dashboard has five destinations (Overview, Chat, Models, Activity, Settings), local EN/TR resources, first-run onboarding, accessibility basics, persistent jobs and resource telemetry. Manual screen-reader review remains open. See [product information architecture](product-information-architecture.md) and [UI/UX principles](ui-ux.md).
+- Hosted CI uses fake engines and deliberately does not download the real engine or the ~1.12 GB starter model. Real CPU/GPU inference requires separately recorded task validation.
+- Windows installed-app updates have verification, backup, health-check, rollback and interruption recovery. Linux/macOS currently verify and stage packages but still require manual archive replacement. Windows Authenticode signing and release provenance remain outstanding.
 
-The website can offer the Windows setup executable as an alpha because its tagged CI passes install/payload/uninstall checks; the portable ZIP remains a fallback. Clean Windows 10/11 user-session acceptance is still required before calling the desktop experience mature.
+## Historical foundation status
 
-## Current foundation status — 2026-10-30
-
-The published reference point is `v0.1.17-alpha` (`976dda1`). Both main and tag CI passed on Windows x64, Linux x64, macOS x64 and macOS arm64. The user has performed a clean installation of an earlier release on one Windows environment, launched the app, installed/used the Qwen2.5 1.5B starter model, and received a local chat response. Do not ask them to repeat this first-run acceptance. The test does not establish Windows 10 and Windows 11 coverage separately, uninstall preservation, a desktop in-app upgrade from every prior release, or real RTX 3060 GPU inference.
-
-The first UI foundation slice is published in `v0.1.12-alpha`: five-area navigation (Overview, Chat, Models, Activity, Settings), task-first Overview, dedicated Chat, English/Turkish resources, and `GET /v1/activity`. `v0.1.13-alpha` adds SSE streaming, client cancellation, and bounded local conversation history. `v0.1.14-alpha` adds persistent component-job records and interrupted-state recovery while preserving `/v1/downloads` compatibility. The phase-4 implementation extends the same `jobs-v1` contract and Activity view to engine start/stop and inference, including explicit cancellation for active streamed inference; it was published in `v0.1.15-alpha` after all platform/tag CI passed. Phase 5 adds live system and managed-engine resource telemetry to Activity and was published in `v0.1.16-alpha` after the four-target main/tag CI passed. Phase 6 completes the first-run guide, broader EN/TR dynamic labels, error-detail framing and keyboard/reduced-motion accessibility; it was published in `v0.1.17-alpha` after the four-target main/tag CI passed. The current phase-7 candidate adds the versioned component manifest, drives both API metadata and install allowlisting from it, and embeds it into the runtime; it still requires the normal publisher CI gates before release. An append-only event ledger remains future work.
-
-The next work remains foundation-only: improve the end-user UI before adding another engine family; complete the Activity/job contract and localization; establish the checked-in manifest as the source for the existing reviewed catalog; define and test the common engine adapter lifecycle; strengthen hardware evidence and distribution trust; then reach cross-platform parity. Qwen3.5 and Gemma 4 can be evaluated as model-family pilots on the existing `llama.cpp` engine after the manifest and compatibility work, without treating them as new engine families.
-
-## Priority 0 — keep the release pipeline green
-
-### Foundation delivery sequence (no new engine family until gates below are complete)
-
-1. [x] Five-area task-first UI shell and first EN/TR resources (`v0.1.12-alpha`).
-2. [x] Incremental chat streaming, stop/cancel, and bounded device-local conversation history (`v0.1.13-alpha`).
-3. [x] Unified Activity/Job lifecycle: durable component and runtime-operation records, interrupted-state recovery, reviewed download retry, explicit streamed-inference cancellation, and four-platform publisher CI acceptance (`v0.1.15-alpha`). The separate append-only event ledger remains future work.
-4. [x] Runtime Resource Manager: live system CPU/RAM and managed-engine CPU/RSS, memory-pressure heuristics, and conditional NVIDIA system-wide utilization/VRAM snapshots are published in `v0.1.16-alpha` after four-target main/tag CI. Automatic model unloading, admission control, and non-NVIDIA GPU telemetry remain future work.
-5. [~] Localization, accessibility and first-run onboarding: a four-step device/model/engine/chat guide, persisted dismissal/reopen, expanded EN/TR dynamic UI labels, locale-key/placeholder parity checks, keyboard skip navigation, focus targets, live status announcements, and reduced-motion support are published in `v0.1.17-alpha`; manual assistive-technology review remains open.
-6. [~] Versioned component authoring manifest as the single source for catalogue display and installation allowlists: the current candidate adds the embedded manifest, strict installer strategies, target parity and API/allowlist regression tests; four-platform publisher CI is pending.
-7. [ ] Shared engine adapter lifecycle and dependency resolver.
-8. [ ] Hardware compatibility evidence and real-task profiles, including the user-confirmed RTX 3060 laptop profile.
-9. [ ] Distribution trust: signing, provenance and verified catalogue updates.
-10. [ ] Cross-platform installer/update/recovery and UX parity, followed by first modality/engine-family pilots.
-
+`v0.1.12-alpha` introduced the five-area UI and first `/v1/activity` snapshot. `v0.1.13-alpha` added SSE streaming and local conversation history. `v0.1.14-alpha` added durable component jobs and interrupted-state recovery. `v0.1.15-alpha` unified runtime operation jobs. `v0.1.16-alpha` added resource monitoring. `v0.1.17-alpha` expanded onboarding, localization and accessibility and included CI diagnostics/process cleanup. `v0.1.18-alpha` published the manifest-driven catalogue. The next release candidate is Stage 8; it must not be called published until the main and tagged publisher CI both pass.
 
 - [x] Fix the Windows PowerShell 5.1 publisher smoke-test regression and confirm the canonical four-target pipeline passes. `f841c80` was the confirmed green publisher/installer baseline when this roadmap update began (`v0.1.2-alpha`).
 - [x] Keep one maintainer command and one stable bundle filename (`local-ai-runtime-update.bundle`). A push uses a normal fast-forward, never force-pushes, and stops at a failed CI gate.
@@ -95,7 +117,7 @@ The metadata contract and distribution boundaries live in [engine distribution s
 - [x] Separate runtime release, engine packages, and model weights; keep large models out of the runtime installer.
 - [x] Starter catalogue: official `llama.cpp` CPU/CUDA assets and a pinned Qwen2.5 1.5B Q4_K_M GGUF model, with license acknowledgement, size limits, HTTPS, SHA-256, safe extraction, progress, cancellation, and user-data installation paths.
 - [x] Publish a versioned component-v1 catalog API schema with targets, backend, source/revision, license, dependency resolution, resource estimates, limitations and evidence fields; validate every live `/v1/catalog` response in the HTTP smoke test. See `catalog/schemas/component-v1.schema.json` and [product information architecture](product-information-architecture.md).
-- [~] Replace the built-in metadata allowlist with the reviewed, build-time embedded `catalog/manifest-v1.json` source; current candidate drives API metadata, model pins, engine strategy dispatch and platform install targets from it. Four-platform release CI is pending. Arbitrary or remote executable manifests remain prohibited.
+- [x] Replace the built-in metadata allowlist with the reviewed, build-time embedded `catalog/manifest-v1.json` source; `v0.1.18-alpha` drives API metadata, model pins, engine strategy dispatch and platform install targets from it. Arbitrary or remote executable manifests remain prohibited.
 - [ ] Run a real `llama-server` + GGUF CPU inference smoke test on Windows and one additional CPU environment; record the exact package/model and local report.
 - [x] Implement exact official CUDA server + companion runtime asset selection, SHA-256 verification, safe extraction/merge, aggregate progress, conservative free-space checks, diagnostic asset hashes, and regression coverage for Windows/Linux x64 asset naming. The real GPU task test remains a separate gate.
 - [ ] Run CUDA validation with a real NVIDIA GPU, driver, VRAM, model quantization, context and backend evidence. `--n-gpu-layers auto` alone is not proof of GPU inference.

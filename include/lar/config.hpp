@@ -18,12 +18,19 @@ struct EngineConfig {
     bool default_for_chat{false};
 };
 
+struct RuntimeProfileConfig {
+    std::string engine_component_id;
+    std::string model_component_id;
+    unsigned int context_size{2048};
+};
+
 struct RuntimeConfig {
     std::string host{"127.0.0.1"};
     unsigned short port{8000};
     std::vector<EngineConfig> engines;
     // Absolute path to the user-owned configuration file (not serialized).
     std::filesystem::path source_path;
+    RuntimeProfileConfig runtime_profile;
 };
 
 RuntimeConfig load_config(const std::filesystem::path& path);

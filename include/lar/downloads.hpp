@@ -53,6 +53,10 @@ public:
     ~DownloadManager();
 
     std::string catalog_json() const;
+    std::string runtime_profile_json() const;
+    bool apply_runtime_profile(const std::string& engine_component_id,
+                               const std::string& model_component_id,
+                               unsigned int context_size, std::string& error);
     std::string jobs_json() const;
     std::optional<std::string> job_json(const std::string& id) const;
     bool retry(const std::string& job_id, std::string& error);

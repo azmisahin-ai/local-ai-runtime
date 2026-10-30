@@ -21,6 +21,14 @@ std::string trim(std::string value) {
     return value.substr(first, last - first + 1);
 }
 
+bool is_valid_component_id(const std::string& id) {
+    if (id.empty() || id.size() > 128) return false;
+    for (const unsigned char ch : id) {
+        if (!(std::isalnum(ch) != 0 || ch == '-' || ch == '_' || ch == '.')) return false;
+    }
+    return id.front() != '.' && id.back() != '.';
+}
+
 std::vector<std::string> read_string_array(const boost::property_tree::ptree& parent,
                                            const std::string& key) {
     std::vector<std::string> values;
@@ -120,6 +128,19 @@ RuntimeConfig load_config(const std::filesystem::path& path) {
     if (port == 0U || port > 65535U) throw std::runtime_error("server.port must be between 1 and 65535.");
     config.port = static_cast<unsigned short>(port);
 
+    if (const auto profile = root.get_child_optional("runtime_profile")) {
+        config.runtime_profile.engine_component_id = trim(profile->get<std::string>("engine_component_id", ""));
+        config.runtime_profile.model_component_id = trim(profile->get<std::string>("model_component_id", ""));
+        config.runtime_profile.context_size = profile->get<unsigned int>("context_size", 2048U);
+        if (config.runtime_profile.context_size < 512U || config.runtime_profile.context_size > 32768U) {
+            throw std::runtime_error("runtime_profile.context_size must be between 512 and 32768 tokens.");
+        }
+        if ((!config.runtime_profile.engine_component_id.empty() && !is_valid_component_id(config.runtime_profile.engine_component_id)) ||
+            (!config.runtime_profile.model_component_id.empty() && !is_valid_component_id(config.runtime_profile.model_component_id))) {
+            throw std::runtime_error("runtime_profile component IDs contain unsupported characters.");
+        }
+    }
+
     const auto engines = root.get_child_optional("engines");
     if (!engines) throw std::runtime_error("Config is missing the 'engines' array.");
 
@@ -205,6 +226,13 @@ void save_config(const std::filesystem::path& path, const RuntimeConfig& config)
         if (engine.default_for_chat) ++default_count;
     }
     if (default_count > 1) throw std::runtime_error("Cannot save configuration with more than one default chat engine.");
+    if (config.runtime_profile.context_size < 512U || config.runtime_profile.context_size > 32768U) {
+        throw std::runtime_error("Cannot save runtime_profile.context_size outside 512..32768 tokens.");
+    }
+    if ((!config.runtime_profile.engine_component_id.empty() && !is_valid_component_id(config.runtime_profile.engine_component_id)) ||
+        (!config.runtime_profile.model_component_id.empty() && !is_valid_component_id(config.runtime_profile.model_component_id))) {
+        throw std::runtime_error("Cannot save invalid runtime profile component IDs.");
+    }
 
     std::ostringstream json;
     json << "{\n  \"server\": {\n    \"host\": " << json_quote(config.host)
@@ -231,7 +259,11 @@ void save_config(const std::filesystem::path& path, const RuntimeConfig& config)
         json << "],\n      \"default_for_chat\": " << (engine.default_for_chat ? "true" : "false") << "\n    }";
     }
     if (!config.engines.empty()) json << '\n';
-    json << "  ]\n}\n";
+    json << "  ],\n  \"runtime_profile\": {\n"
+         << "    \"engine_component_id\": " << json_quote(config.runtime_profile.engine_component_id) << ",\n"
+         << "    \"model_component_id\": " << json_quote(config.runtime_profile.model_component_id) << ",\n"
+         << "    \"context_size\": " << config.runtime_profile.context_size << "\n"
+         << "  }\n}\n";
 
     auto parent = path.parent_path();
     if (!parent.empty()) std::filesystem::create_directories(parent);

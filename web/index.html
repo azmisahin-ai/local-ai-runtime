@@ -207,6 +207,23 @@
         </section>
 
         <section id="view-models" class="app-view" data-view="models" aria-labelledby="page-title" hidden>
+          <section id="runtime-profile-panel" class="panel runtime-profile-panel" aria-labelledby="runtime-profile-title">
+            <div class="section-heading">
+              <div><p class="eyebrow" data-i18n="profile.eyebrow">ACTIVE CHAT CONFIGURATION</p><h2 id="runtime-profile-title" data-i18n="profile.title">Active runtime profile</h2></div>
+              <span id="runtime-profile-state" class="tag">Not configured</span>
+            </div>
+            <p class="hint" data-i18n="profile.description">Installing a package does not activate it. Choose an installed engine backend and an installed model, then apply them together for Chat.</p>
+            <div class="runtime-profile-grid">
+              <div><label for="profile-engine" data-i18n="profile.engineLabel">Engine backend</label><select id="profile-engine"><option value="" data-i18n="profile.noInstalledEngine">No installed engine</option></select></div>
+              <div><label for="profile-model" data-i18n="profile.modelLabel">Chat model</label><select id="profile-model"><option value="" data-i18n="profile.noInstalledModel">No installed model</option></select></div>
+              <div><label for="profile-context" data-i18n="profile.contextLabel">Context size</label><select id="profile-context"><option value="2048">2,048</option><option value="4096">4,096</option><option value="8192">8,192</option><option value="16384">16,384</option><option value="32768">32,768</option></select></div>
+            </div>
+            <div class="profile-footer">
+              <p id="runtime-profile-summary" class="hint" role="status" aria-live="polite" data-i18n="profile.loading">Loading your active profile…</p>
+              <button id="runtime-profile-apply" class="button primary" type="button" data-i18n="profile.apply">Use this profile in Chat</button>
+            </div>
+            <p id="runtime-profile-error" class="error" role="status" aria-live="polite"></p>
+          </section>
           <section id="catalog-panel" class="panel catalog-panel">
             <div class="section-heading">
               <div><p class="eyebrow" data-i18n="models.eyebrow">COMPONENT LIBRARY</p><h2 data-i18n="models.title">Find your next model</h2></div>

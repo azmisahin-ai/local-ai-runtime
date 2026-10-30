@@ -8,19 +8,22 @@ The current dashboard is organized into five persistent destinations:
 
 1. **Overview** — local runtime readiness, current chat model, hardware summary, and clearly-labelled available/planned workspaces.
 2. **Chat** — the primary user task, with a dedicated composer, incremental SSE token streaming, stop-generation behavior, and a bounded local conversation history. Conversations are stored in browser/WebView local storage under the per-user profile and are never uploaded or included in diagnostics.
-3. **Models** — reviewed engines, models, dependencies, requirements, licenses, and installed state. The catalogue is still backed by reviewed built-in metadata; it is not yet a user-editable or remotely executable manifest.
+3. **Models** — reviewed engine packages and model weights, their dependencies, requirements and licenses, plus the active Chat Runtime Profile. The component catalogue is sourced from the reviewed build-time embedded manifest. Installing an engine package or downloading a model never silently activates it; the user explicitly applies an installed engine/model combination here.
 4. **Activity** — installed engine state plus persistent download, setup, engine start/stop, and inference operation records. `GET /v1/activity` follows [activity-v1](../catalog/schemas/activity-v1.schema.json); `GET /v1/jobs` returns the shared [jobs-v1](../catalog/schemas/jobs-v1.schema.json) lifecycle contract. The Activity endpoint is a point-in-time snapshot of current engine readiness and durable job state, not an append-only event timeline. Active streamed inference can be canceled from Activity; only reviewed catalog/update jobs support retry.
-5. **Settings** — language preference, release/update controls, advanced manual engine configuration, and privacy information.
+5. **Settings** — language preference, release/update controls, advanced manual/custom engine configuration, and privacy information. Manual llama.cpp setup is an escape hatch for user-managed binaries/models; managed catalogue profiles are selected in Models.
 
-The UI ships English and Turkish resource files under `web/locales/`. The loopback server serves only `/locales/en.json` and `/locales/tr.json`; arbitrary locale paths are not exposed. The current localization slice covers the navigation, section headings, and primary static content. Dynamic catalog, hardware, and error messages still need complete resource-key extraction before localization is considered complete.
+The UI ships English and Turkish resource files under `web/locales/`. The loopback server serves only `/locales/en.json` and `/locales/tr.json`; arbitrary locale paths are not exposed. The published localization slice covers navigation, onboarding, Activity states, engine/model guidance, update progress and primary error framing. Source-provided upstream diagnostics and newly introduced task-specific messages must continue to be reviewed for translation coverage as each workspace is added.
 
 ## Separate tasks from components
 
 - **Workspace** answers “What do I want to do?” Examples: chat, image generation, image understanding, transcription, speech, music/SFX, video, local knowledge search, and automation.
-- **Engine** is an executable runtime or adapter that performs one or more tasks.
-- **Model** is a versioned weight/checkpoint used by an engine; quantizations are distinct variants with their own resource and license metadata.
+- **Engine** is an executable runtime or adapter that performs one or more tasks (for example `llama.cpp`).
+- **Backend** is the execution implementation/package selected for an engine (for example CPU or a CUDA 12/13 build). Backend packages may coexist side-by-side; installing another backend must not change the active selection.
+- **Model** is a versioned weight/checkpoint used by an engine; quantizations and multimodal projector files are distinct catalogue artifacts with their own resource and license metadata.
+- **Runtime Profile** is the explicit pairing of an engine package/backend, a model, and runtime settings such as context size. It is persisted separately from installation state and activated only by an explicit user action while engines are stopped.
 - **Dependency** is a package required by an engine (for example the official `cudart` DLL archive required beside a CUDA-enabled `llama-server`). Dependencies are installed and verified as part of the engine choice, not exposed as duplicate engines to users.
-- **Installed instance** is a configured engine/model combination with process, readiness, and last-task status.
+- **Installed artifact** means a verified engine package or model file is present on disk. It does not mean that artifact is active.
+- **Active instance** is the selected Runtime Profile currently configured for Chat, with process, readiness, and last-task status reported separately.
 - **Job** describes a component download/verification/install/update or a runtime operation such as engine start/stop and inference. The current API exposes durable lifecycle records and a point-in-time Activity snapshot; the target model adds a separate append-only event trail. Retry is allowlist-restricted and cancellation is available only where the operation can stop safely.
 - **Compatibility profile** records observed hardware/software and the evidence for a specific engine/model/task combination. Hardware detection alone is not a support claim.
 
@@ -39,15 +42,29 @@ The UI ships English and Turkish resource files under `web/locales/`. The loopba
 
 The dashboard may show future workspaces to make the product direction clear, but only working workspaces are actionable. Planned cards must say `Planned` and must not look like broken buttons.
 
+## Runtime Profile and model activation rules
+
+The installation lifecycle and activation lifecycle are separate:
+
+1. **Install engine package** — verifies and stores a selected CPU/CUDA package. Multiple reviewed backend packages may coexist. Installing an additional package never replaces the active executable.
+2. **Install model** — downloads, verifies and stores the selected model artifact. It never changes the model currently used by Chat.
+3. **Apply Runtime Profile** — the user selects one installed engine package/backend, one installed Chat model, and a context size. The runtime verifies the model size, digest and format, then persists the profile. Applying is rejected while a managed engine is running.
+4. **Start** — Activity starts only the executable/model pair in the active profile. A Chat engine without a model cannot be started.
+5. **Ready** — the process must pass its local readiness check before Chat Send is enabled. Typing a prompt does not override the readiness gate. API callers receive `503` while the model is missing or the engine is not ready; these attempts are recorded in Activity when an engine can be identified.
+
+`GET /v1/runtime/profile` and `POST /v1/runtime/profile` follow `runtime-profile-v1`. `engine_component_id` and `model_component_id` may be empty for Advanced/manual configuration; this is distinct from a managed catalogue profile. `can_chat` means an executable and model path are configured, not that the process is currently ready. Live readiness comes from `/v1/engines`.
+
+For managed llama.cpp profiles, CPU requests `--n-gpu-layers 0`; CUDA packages request `--n-gpu-layers auto`. A CUDA package installation or GPU detection alone is not proof of actual GPU inference. Driver/runtime compatibility and offloaded-layer/task evidence remain separate acceptance gates. The current Runtime Profile UI exposes only settings supported by the current llama.cpp adapter; advanced tuning and automatic hardware selection are future work.
+
 ## Catalog navigation
 
-The component library is a resource browser, not the primary list of user tasks. Its main filters should be:
+The component library is a resource browser, not the primary list of user tasks. The current Models view includes the Active Chat Runtime Profile above the catalogue so users can distinguish what is installed from what Chat will actually start. Its main filters should be:
 
 1. **Engines** — runtime family, task capabilities, supported backend, platform, version, and required dependencies.
 2. **Models** — task/modality, family, format, quantization/precision, language, model size, license, disk size, and estimated system RAM/VRAM.
 3. **Supporting packages** — shown only where the user needs to understand a prerequisite; low-level CUDA DLL archives and similar assets remain dependencies of a selected engine.
 4. **Installed** — installed version, source, verification status, assigned model, running/ready state, and actions.
-5. **Activity & diagnostics** — one timeline for downloads, validation, engine start/stop, inference failures, update and rollback events.
+5. **Activity & diagnostics** — current implementation provides persistent operation rows and engine state; the next queue/event-ledger work will add a true ordered timeline for downloads, validation, engine start/stop, inference failures, update and rollback events.
 
 Search should match task, model family, quantization, backend, hardware requirement, and license. Incompatible items should be hidden from the default recommendation view or disabled with a concise reason, while advanced users may inspect the full catalog.
 
@@ -92,10 +109,15 @@ Every job emits structured local events with `job_id`, `component_id`, stage/pha
 
 ## Implementation order
 
-1. Establish the five-area UI shell, task-first Overview, dedicated Chat, and initial EN/TR resources (implemented as the first foundation slice).
-2. Unify operation state in `activity-v1` and the durable `jobs-v1` contract. Component download retry remains allowlist-restricted; streamed inference supports explicit cancellation, while engine lifecycle operations are recorded but never replayed.
-3. Complete dynamic localization, accessible names/status announcements and first-run onboarding. Streaming Chat and bounded local conversation persistence are now implemented; regenerate, system instructions, model selection and richer history management remain future Chat improvements.
-4. Move reviewed model, engine and dependency definitions to a checked-in versioned authoring manifest that generates both API metadata and the install allowlist from one source.
-5. Finalize and test the shared engine adapter lifecycle against the existing `llama.cpp` integration.
-6. Validate reproducible CPU/GPU hardware profiles and add Qwen3.5/Gemma 4 as model-family pilots on the existing engine where formats and capabilities are verified.
-7. Add additional engine families only after the product, adapter, catalogue, compatibility, distribution and recovery gates are met.
+1. [x] Establish the five-area UI shell, task-first Overview, dedicated Chat, and initial EN/TR resources.
+2. [x] Unify operation state in `activity-v1` and durable `jobs-v1`; component retry remains allowlist-restricted and streamed inference supports explicit cancellation.
+3. [x] Complete the first localization/accessibility/onboarding slice; native screen-reader review and broader clean-OS acceptance remain open.
+4. [x] Move reviewed model, engine and dependency definitions to the embedded versioned authoring manifest.
+5. [~] Separate install from activation with explicit Runtime Profiles, persistent model/backend selection and Chat readiness gates; candidate is pending four-platform publisher CI.
+6. [ ] Add persistent installation queue and dependency/duplicate handling before growing the catalogue.
+7. [ ] Complete Catalog v2 and simplified model details/quantization UI.
+8. [ ] Finalize and test the shared engine adapter lifecycle against the existing `llama.cpp` integration.
+9. [ ] Validate reproducible CPU/GPU hardware profiles and add Qwen3.5/Gemma 4 as model-family pilots on the existing engine where formats and capabilities are verified.
+10. [ ] Deliver a constrained stdio MCP adapter, then Documents/RAG and the first Vision/Speech pilots.
+11. [ ] Add image generation, video and music only after their distinct adapters, licences, hardware requirements, and real-task tests are ready.
+12. [ ] Complete signing, provenance, Linux/macOS install/update/recovery parity and the v1.0 acceptance gates.

@@ -33,5 +33,10 @@
       ],
       "default_for_chat": true
     }
-  ]
+  ],
+  "runtime_profile": {
+    "engine_component_id": "",
+    "model_component_id": "",
+    "context_size": 2048
+  }
 }
