@@ -180,14 +180,20 @@ int main() {
                 queue_cv.notify_all();
                 if (item_id == "llama.cpp-cpu") {
                     std::unique_lock<std::mutex> lock(queue_mutex);
-                    queue_cv.wait(lock, [&] { return release_first || canceled(); });
+                    // Poll cancellation as well as waiting for the test to release the
+                    // first job. DownloadManager shutdown sets the cancellation flag,
+                    // but cannot notify this test-owned condition variable. A bounded
+                    // wait keeps failure cleanup from hanging the core-test process.
+                    while (!release_first && !canceled()) {
+                        queue_cv.wait_for(lock, std::chrono::milliseconds(10));
+                    }
                 }
                 active_workers.fetch_sub(1);
                 if (canceled()) throw std::runtime_error("Download canceled by the user.");
             };
             {
                 lar::DownloadManager queue_manager(queue_config, queue_engines, executor);
-                std::string first_job, duplicate_job, second_job, canceled_job, queue_error;
+                std::string first_job, duplicate_job, second_job, requeued_job, queue_error;
                 require(queue_manager.start("llama.cpp-cpu", true, first_job, queue_error),
                         (std::string("first catalog install should queue: ") + queue_error).c_str());
                 {
@@ -195,9 +201,11 @@ int main() {
                     require(queue_cv.wait_for(lock, std::chrono::seconds(2), [&] { return first_started; }),
                             "the first queued install did not start");
                 }
+                stage("install queue first worker started");
                 require(queue_manager.start("llama.cpp-cpu", true, duplicate_job, queue_error),
                         "a duplicate install request should reuse the queued/active job");
                 require(duplicate_job == first_job, "duplicate item clicks created a second install job");
+                stage("install queue duplicate request reused");
                 require(queue_manager.start("qwen2.5-1.5b-q4km", true, second_job, queue_error),
                         (std::string("second catalog install should join the queue: ") + queue_error).c_str());
                 require(second_job != first_job, "a distinct component must receive its own queue job");
@@ -205,17 +213,23 @@ int main() {
                 require(second_snapshot && second_snapshot->find("\"state\":\"queued\"") != std::string::npos &&
                         second_snapshot->find("\"queue_position\":1") != std::string::npos,
                         "the second install should remain queued at position one while the first is active");
-                require(queue_manager.start("llama.cpp-cuda12", true, canceled_job, queue_error),
-                        (std::string("a third install should join the queue: ") + queue_error).c_str());
-                const auto third_snapshot = queue_manager.job_json(canceled_job);
-                require(third_snapshot && third_snapshot->find("\"queue_position\":2") != std::string::npos &&
-                        third_snapshot->find("llama.cpp-cudart-cuda12") != std::string::npos,
-                        "the third CUDA install should expose queue position two and its reviewed runtime dependency");
-                require(queue_manager.cancel(canceled_job, queue_error),
+                // Do not use a CUDA-only component in this generic queue test:
+                // macOS has no CUDA catalog targets. Cancel the queued model and
+                // enqueue it again to verify cancellation/retry semantics on every OS.
+                require(queue_manager.cancel(second_job, queue_error),
                         "a not-yet-started install should be cancelable immediately");
-                const auto canceled_snapshot = queue_manager.job_json(canceled_job);
+                const auto canceled_snapshot = queue_manager.job_json(second_job);
                 require(canceled_snapshot && canceled_snapshot->find("\"state\":\"canceled\"") != std::string::npos,
                         "canceling a queued install should mark it terminal without interrupting the active install");
+                require(queue_manager.start("qwen2.5-1.5b-q4km", true, requeued_job, queue_error),
+                        (std::string("a canceled catalog item should be queueable again: ") + queue_error).c_str());
+                require(requeued_job != second_job && requeued_job != first_job,
+                        "re-queuing a canceled item should create a new job attempt");
+                const auto requeued_snapshot = queue_manager.job_json(requeued_job);
+                require(requeued_snapshot && requeued_snapshot->find("\"state\":\"queued\"") != std::string::npos &&
+                        requeued_snapshot->find("\"queue_position\":1") != std::string::npos,
+                        "the re-queued model should return to queue position one");
+                stage("install queue canceled item and re-queued replacement");
                 {
                     std::lock_guard<std::mutex> lock(queue_mutex);
                     release_first = true;
@@ -224,14 +238,19 @@ int main() {
                 const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
                 bool completed = false;
                 while (std::chrono::steady_clock::now() < deadline) {
-                    const auto snapshot = queue_manager.job_json(second_job);
+                    const auto snapshot = queue_manager.job_json(requeued_job);
                     if (snapshot && snapshot->find("\"state\":\"succeeded\"") != std::string::npos) {
                         completed = true;
                         break;
                     }
                     std::this_thread::sleep_for(std::chrono::milliseconds(10));
                 }
-                require(completed, "the second queued install did not run after the first completed");
+                require(completed, "the re-queued install did not run after the first completed");
+                stage("install queue FIFO worker completed");
+                const auto original_canceled_snapshot = queue_manager.job_json(second_job);
+                require(original_canceled_snapshot &&
+                        original_canceled_snapshot->find("\"state\":\"canceled\"") != std::string::npos,
+                        "the canceled attempt must not be executed after re-queueing");
                 require(maximum_active_workers.load() == 1, "more than one install worker ran concurrently");
                 {
                     std::lock_guard<std::mutex> lock(queue_mutex);
@@ -342,7 +361,12 @@ int main() {
                 }
                 if (item_id == "llama.cpp-cpu") {
                     std::unique_lock<std::mutex> lock(queue_mutex);
-                    queue_cv.wait(lock, [&] { return release_engine || canceled(); });
+                    // Keep teardown bounded if a preceding assertion fails before
+                    // the test releases this executor. DownloadManager cancellation
+                    // does not notify this test-owned condition variable.
+                    while (!release_engine && !canceled()) {
+                        queue_cv.wait_for(lock, std::chrono::milliseconds(10));
+                    }
                 }
                 if (canceled()) throw std::runtime_error("Download canceled by the user.");
             };
@@ -393,6 +417,7 @@ int main() {
                 }
                 require(succeeded && model_attempts.load() == 2,
                         "the queued retry did not execute and succeed after the active install finished");
+                stage("install queue failed attempt successfully retried");
                 std::lock_guard<std::mutex> lock(queue_mutex);
                 require(execution_order.size() == 3 && execution_order[0] == "qwen2.5-1.5b-q4km" &&
                         execution_order[1] == "llama.cpp-cpu" && execution_order[2] == "qwen2.5-1.5b-q4km",

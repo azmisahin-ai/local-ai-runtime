@@ -21,6 +21,12 @@
 
 # Changelog
 
+## Unreleased — cross-platform install queue test stability
+
+- Make the persistent install queue core test platform-neutral by testing cancellation and re-queueing with the reviewed cross-platform Qwen model instead of requesting a CUDA-only component on macOS.
+- Poll the test executor cancellation callback with a bounded condition-variable wait so an early assertion cannot strand the DownloadManager destructor while the test-owned condition variable is not notified.
+- Keep CUDA 12/13 target coverage in manifest contract tests, where unsupported macOS targets are explicitly asserted, instead of trying to install CUDA on macOS.
+
 ## Unreleased — persistent sequential installation queue
 
 - Replace per-install worker threads with one bounded (16 outstanding jobs including the active job), persistent FIFO worker shared by component and runtime-update downloads; keep only one installation pipeline active at a time.

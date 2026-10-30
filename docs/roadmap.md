@@ -63,7 +63,7 @@ The runtime, engines, and models remain separate versioned components. The catal
 - [x] Add a versioned runtime-profile API schema and regression tests for persisted component IDs (including dots in IDs).
 - [ ] Pass Windows x64, Linux x64, macOS x64 and macOS arm64 main/tag CI; then publish the candidate.
 
-The Stage 8 Runtime Profile milestone is published in `v0.1.19-alpha`. The Stage 9 queue remains a candidate until its four-platform publisher workflow and the quick successive-install acceptance test pass.
+The Stage 8 Runtime Profile milestone is published in `v0.1.19-alpha`. Stage 9 remains a candidate until its four-platform publisher workflow and the quick successive-install acceptance test pass. The queue core test must remain platform-neutral: CUDA availability is asserted in manifest contract tests, while sequential queue/cancel/re-queue behavior uses components supported on every CI host.
 
 The default product workflow remains task-first: users choose a task/workspace, the runtime helps select a compatible model and engine profile, Activity shows preparation/execution, and the Chat or task workspace only offers controls supported by the selected model's capabilities. No additional engine family is added until the profile, queue, adapter, hardware-evidence and distribution gates are ready.
 
