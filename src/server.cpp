@@ -1,5 +1,6 @@
 #include "lar/server.hpp"
 #include "lar/downloads.hpp"
+#include "lar/activity_jobs.hpp"
 #include "lar/diagnostics.hpp"
 #include "lar/hardware.hpp"
 #include "lar/backend_evidence.hpp"
@@ -21,9 +22,11 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <iterator>
 #include <mutex>
+#include <optional>
 #include <regex>
 #include <set>
 #include <cctype>
@@ -568,6 +571,25 @@ std::string engine_status_json(const EngineStatus& engine) {
     return out.str();
 }
 
+std::string merge_jobs_json(const std::string& download_jobs, const std::string& operation_jobs) {
+    constexpr std::string_view prefix = "{\"data\":[";
+    const auto extract = [](const std::string& value) -> std::optional<std::string> {
+        constexpr std::string_view start = "{\"data\":[";
+        if (value.size() < start.size() + 2 || value.compare(0, start.size(), start) != 0 ||
+            value.compare(value.size() - 2, 2, "]}") != 0) return std::nullopt;
+        return value.substr(start.size(), value.size() - start.size() - 2);
+    };
+    const auto downloads = extract(download_jobs);
+    const auto operations = extract(operation_jobs);
+    if (!downloads || !operations) return download_jobs;
+    std::string merged(prefix);
+    merged += *downloads;
+    if (!downloads->empty() && !operations->empty()) merged.push_back(',');
+    merged += *operations;
+    merged += "]}";
+    return merged;
+}
+
 std::string activity_snapshot_json(const std::vector<EngineStatus>& engines,
                                    const std::string& jobs_json) {
     std::ostringstream out;
@@ -584,13 +606,19 @@ std::string activity_snapshot_json(const std::vector<EngineStatus>& engines,
                 const auto& job = entry.second;
                 const auto state = job.get<std::string>("state", "unknown");
                 const auto kind = job.get<std::string>("kind", "component");
-                const bool cancellable = state == "queued" || state == "downloading" ||
+                const bool component_cancellable = state == "queued" || state == "downloading" ||
                     state == "verifying" || state == "extracting" || state == "configuring";
-                if (cancellable) ++active_jobs;
+                const bool operation_cancellable = state == "running" &&
+                    job.get<bool>("cancellable", false);
+                const bool cancellable = component_cancellable || operation_cancellable;
+                const bool active = cancellable || state == "running";
+                if (active) ++active_jobs;
+                const bool runtime_operation = kind == "engine-start" || kind == "engine-stop" || kind == "inference";
+                const std::string item_type = runtime_operation ? "operation" : (kind == "update" ? "update" : "component");
                 if (!first) out << ',';
                 first = false;
                 out << "{\"id\":" << json_quoted("job:" + job.get<std::string>("id", "unknown"))
-                    << ",\"type\":" << json_quoted(kind == "update" ? "update" : "component")
+                    << ",\"type\":" << json_quoted(item_type)
                     << ",\"kind\":" << json_quoted(kind)
                     << ",\"component_id\":" << json_quoted(job.get<std::string>("item_id", ""))
                     << ",\"state\":" << json_quoted(state)
@@ -600,6 +628,7 @@ std::string activity_snapshot_json(const std::vector<EngineStatus>& engines,
                     << ",\"progress_percent\":" << job.get<unsigned int>("progress_percent", 0U)
                     << ",\"completed_bytes\":" << job.get<std::uint64_t>("downloaded_bytes", 0ULL)
                     << ",\"total_bytes\":" << job.get<std::uint64_t>("total_bytes", 0ULL)
+                    << ",\"progress_bytes\":" << job.get<std::uint64_t>("progress_bytes", 0ULL)
                     << ",\"cancellable\":" << (cancellable ? "true" : "false") << '}';
             }
         }
@@ -646,7 +675,7 @@ std::string activity_snapshot_json(const std::vector<EngineStatus>& engines,
             << ",\"phase\":" << json_quoted(phase)
             << ",\"message\":" << json_quoted(message)
             << ",\"version\":\"\",\"progress_percent\":null"
-            << ",\"completed_bytes\":0,\"total_bytes\":0,\"cancellable\":false}";
+            << ",\"completed_bytes\":0,\"total_bytes\":0,\"progress_bytes\":0,\"cancellable\":false}";
     }
     out << "],\"summary\":{\"active_jobs\":" << active_jobs
         << ",\"ready_engines\":" << ready_engines
@@ -942,7 +971,8 @@ bool downstream_client_disconnected(tcp::socket& socket) {
 
 void proxy_chat_stream(beast::tcp_stream& client_stream,
                        const http::request<http::string_body>& client_request,
-                       const RuntimeConfig& config, EngineManager& engines) {
+                       const RuntimeConfig& config, EngineManager& engines,
+                       ActivityJobManager& activity_jobs) {
     const auto version = client_request.version();
     const std::string host(client_request[http::field::host].data(), client_request[http::field::host].size());
     if (!is_loopback_host(host, config.port)) {
@@ -979,6 +1009,12 @@ void proxy_chat_stream(beast::tcp_stream& client_stream,
         return;
     }
 
+    const auto operation_id = activity_jobs.begin("inference", engine->config.id, "Streaming local chat completion", true);
+    if (operation_id.empty()) {
+        auto response = error_response(http::status::internal_server_error, version, "Could not persist the streaming inference operation.");
+        http::write(client_stream, response);
+        return;
+    }
     bool downstream_headers_sent = false;
     try {
         asio::io_context ioc;
@@ -1000,7 +1036,49 @@ void proxy_chat_stream(beast::tcp_stream& client_stream,
         beast::flat_buffer upstream_buffer;
         http::response_parser<http::buffer_body> parser;
         parser.body_limit(64U * 1024U * 1024U);
-        http::read_header(upstream, upstream_buffer, parser);
+        // Wait for the upstream response headers asynchronously so explicit
+        // Activity cancellation also works during a slow model prefill, before
+        // the first SSE body bytes are available.
+        upstream.expires_after(std::chrono::minutes(15));
+        asio::steady_timer cancellation_poll(ioc);
+        bool header_read_done = false;
+        bool downstream_disconnected = false;
+        boost::system::error_code header_error;
+        std::function<void()> poll_cancellation;
+        poll_cancellation = [&]() {
+            cancellation_poll.expires_after(std::chrono::milliseconds(100));
+            cancellation_poll.async_wait([&](const boost::system::error_code& timer_error) {
+                if (timer_error || header_read_done) return;
+                if (activity_jobs.cancel_requested(operation_id)) {
+                    boost::system::error_code ignored;
+                    upstream.socket().cancel(ignored);
+                    return;
+                }
+                if (downstream_client_disconnected(client_stream.socket())) {
+                    downstream_disconnected = true;
+                    boost::system::error_code ignored;
+                    upstream.socket().cancel(ignored);
+                    return;
+                }
+                poll_cancellation();
+            });
+        };
+        http::async_read_header(upstream, upstream_buffer, parser,
+            [&](const boost::system::error_code& error, std::size_t) {
+                header_error = error;
+                header_read_done = true;
+                boost::system::error_code ignored;
+                cancellation_poll.cancel(ignored);
+            });
+        poll_cancellation();
+        ioc.run();
+        if (activity_jobs.cancel_requested(operation_id)) {
+            throw std::runtime_error("The inference job was canceled by the user.");
+        }
+        if (downstream_disconnected || downstream_client_disconnected(client_stream.socket())) {
+            throw std::runtime_error("The chat client canceled generation.");
+        }
+        if (header_error) throw boost::system::system_error(header_error, "read local model response header");
 
         http::response<http::empty_body> downstream_response{parser.get().result(), version};
         downstream_response.set(http::field::server, "local-ai-runtime/" LAR_VERSION);
@@ -1021,8 +1099,15 @@ void proxy_chat_stream(beast::tcp_stream& client_stream,
         downstream_headers_sent = true;
 
         std::array<char, 16U * 1024U> body_buffer{};
+        std::uint64_t streamed_response_bytes = 0;
         const auto stream_deadline = std::chrono::steady_clock::now() + std::chrono::minutes(15);
         while (!parser.is_done()) {
+            if (activity_jobs.cancel_requested(operation_id)) {
+                throw std::runtime_error("The inference job was canceled by the user.");
+            }
+            if (downstream_client_disconnected(client_stream.socket())) {
+                throw std::runtime_error("The chat client canceled generation.");
+            }
             parser.get().body().data = body_buffer.data();
             parser.get().body().size = body_buffer.size();
             boost::system::error_code error;
@@ -1033,8 +1118,18 @@ void proxy_chat_stream(beast::tcp_stream& client_stream,
             const auto poll_window = std::min(remaining, std::chrono::steady_clock::duration(std::chrono::milliseconds(300)));
             upstream.expires_after(std::chrono::duration_cast<std::chrono::steady_clock::duration>(poll_window));
             http::read_some(upstream, upstream_buffer, parser, error);
+            if (activity_jobs.cancel_requested(operation_id)) {
+                throw std::runtime_error("The inference job was canceled by the user.");
+            }
             const auto bytes_read = body_buffer.size() - parser.get().body().size;
-            if (bytes_read > 0) write_http_chunk(client_stream, body_buffer.data(), bytes_read);
+            if (bytes_read > 0) {
+                streamed_response_bytes += static_cast<std::uint64_t>(bytes_read);
+                activity_jobs.report_progress(operation_id, "Streaming model output", streamed_response_bytes);
+                write_http_chunk(client_stream, body_buffer.data(), bytes_read);
+                if (downstream_client_disconnected(client_stream.socket())) {
+                    throw std::runtime_error("The chat client canceled generation.");
+                }
+            }
             if (error == beast::error::timeout) {
                 if (downstream_client_disconnected(client_stream.socket())) {
                     throw std::runtime_error("The chat client canceled generation.");
@@ -1048,7 +1143,21 @@ void proxy_chat_stream(beast::tcp_stream& client_stream,
             if (parser.is_done()) break;
         }
         asio::write(client_stream, asio::buffer("0\r\n\r\n", 5));
+        activity_jobs.succeed(operation_id, "Streaming inference completed");
     } catch (const std::exception& error) {
+        const std::string error_text = error.what();
+        const bool user_requested_cancel = error_text.find("canceled by the user") != std::string::npos;
+        const bool client_disconnected = error_text.find("canceled generation") != std::string::npos ||
+            downstream_client_disconnected(client_stream.socket());
+        if (user_requested_cancel) {
+            activity_jobs.cancel(operation_id, "Inference canceled",
+                "The user requested cancellation for this inference operation.", "user_canceled");
+        } else if (client_disconnected) {
+            activity_jobs.cancel(operation_id, "Inference canceled after client disconnect",
+                "The chat client disconnected before generation completed.", "client_disconnected");
+        } else {
+            activity_jobs.fail(operation_id, "Streaming inference failed", error_text, "inference_stream_failed");
+        }
         log_diagnostic("WARN", "chat.stream_failed", error.what());
         if (!downstream_headers_sent) {
             auto response = error_response(http::status::bad_gateway, version,
@@ -1082,6 +1191,7 @@ http::response<http::string_body> handle_request(const http::request<http::strin
                                                   const RuntimeConfig& config,
                                                   EngineManager& engines,
                                                   DownloadManager& downloads,
+                                                  ActivityJobManager& activity_jobs,
                                                   const std::filesystem::path& web_dir) {
     const auto version = request.version();
     const std::string host = std::string(request[http::field::host].data(), request[http::field::host].size());
@@ -1253,7 +1363,8 @@ http::response<http::string_body> handle_request(const http::request<http::strin
         }
         engine_json << "]}";
         const auto engine_logs = include_engine_logs ? read_engine_log_tails(config) : std::string{};
-        const auto report = build_diagnostic_report(LAR_VERSION, downloads.jobs_json(), engine_json.str(), engine_logs);
+        const auto report = build_diagnostic_report(LAR_VERSION,
+            merge_jobs_json(downloads.jobs_json(), activity_jobs.jobs_json()), engine_json.str(), engine_logs);
         http::response<http::string_body> response{http::status::ok, version};
         response.set(http::field::server, "local-ai-runtime/" LAR_VERSION);
         response.set(http::field::content_type, "text/plain; charset=utf-8");
@@ -1365,7 +1476,8 @@ http::response<http::string_body> handle_request(const http::request<http::strin
         return json_response(http::status::ok, version, downloads.catalog_json());
     }
     if (request.method() == http::verb::get && target == "/v1/jobs") {
-        return json_response(http::status::ok, version, downloads.jobs_json());
+        return json_response(http::status::ok, version,
+            merge_jobs_json(downloads.jobs_json(), activity_jobs.jobs_json()));
     }
     if (request.method() == http::verb::post && target == "/v1/jobs") {
         try {
@@ -1394,7 +1506,8 @@ http::response<http::string_body> handle_request(const http::request<http::strin
     }
     if (request.method() == http::verb::get && target == "/v1/activity") {
         return json_response(http::status::ok, version,
-            activity_snapshot_json(engines.statuses(), downloads.jobs_json()));
+            activity_snapshot_json(engines.statuses(),
+                merge_jobs_json(downloads.jobs_json(), activity_jobs.jobs_json())));
     }
     constexpr std::string_view jobs_prefix = "/v1/jobs/";
     constexpr std::string_view downloads_prefix = "/v1/downloads/";
@@ -1408,7 +1521,13 @@ http::response<http::string_body> handle_request(const http::request<http::strin
             if (job_id.find('/') != std::string::npos) return error_response(http::status::not_found, version, "Job route was not found.");
             std::string error;
             if (!downloads.retry(std::string(job_id), error)) {
-                if (error == "Unknown job id.") return error_response(http::status::not_found, version, error);
+                if (error == "Unknown job id.") {
+                    if (activity_jobs.job_json(std::string(job_id))) {
+                        return error_response(http::status::conflict, version,
+                            "Runtime operations are not replayed. Start a new engine action or submit a new inference request.");
+                    }
+                    return error_response(http::status::not_found, version, error);
+                }
                 const auto status = error.find("active") != std::string::npos || error.find("running engines") != std::string::npos
                     ? http::status::conflict : http::status::unprocessable_entity;
                 return error_response(status, version, error);
@@ -1418,14 +1537,26 @@ http::response<http::string_body> handle_request(const http::request<http::strin
                 job.value_or("{\"id\":" + json_quoted(job_id) + ",\"status\":\"queued\"}"));
         }
         if (route_id.find('/') == std::string::npos && request.method() == http::verb::get) {
-            const auto job = downloads.job_json(std::string(route_id));
-            if (!job) return error_response(http::status::not_found, version, "Download job was not found.");
+            auto job = downloads.job_json(std::string(route_id));
+            if (!job && jobs_route) job = activity_jobs.job_json(std::string(route_id));
+            if (!job) return error_response(http::status::not_found, version, "Job was not found.");
             return json_response(http::status::ok, version, *job);
         }
         if (route_id.find('/') == std::string::npos && request.method() == http::verb::delete_) {
             std::string error;
             if (!downloads.cancel(std::string(route_id), error)) {
-                return error_response(error == "Unknown download job id." ? http::status::not_found : http::status::conflict, version, error);
+                if (error == "Unknown download job id.") {
+                    if (jobs_route && activity_jobs.job_json(std::string(route_id))) {
+                        std::string operation_error;
+                        if (!activity_jobs.request_cancel(std::string(route_id), operation_error)) {
+                            return error_response(http::status::conflict, version, operation_error);
+                        }
+                        return json_response(http::status::accepted, version,
+                            "{\"id\":" + json_quoted(route_id) + ",\"status\":\"cancel_requested\"}");
+                    }
+                    return error_response(http::status::not_found, version, error);
+                }
+                return error_response(http::status::conflict, version, error);
             }
             return json_response(http::status::accepted, version,
                 "{\"id\":" + json_quoted(route_id) + ",\"status\":" + json_quoted(jobs_route ? "cancel_requested" : "canceling") + "}");
@@ -1512,21 +1643,43 @@ http::response<http::string_body> handle_request(const http::request<http::strin
             if (downloads.has_active_jobs()) {
                 return error_response(http::status::conflict, version, "A component installation is active. Wait for it to finish before starting an engine.");
             }
+            const auto operation_id = activity_jobs.begin("engine-start", start_id, "Starting engine process");
+            if (operation_id.empty()) return error_response(http::status::internal_server_error, version, "Could not persist the engine start operation.");
             std::string error;
-            if (!engines.start(start_id, error)) return error_response(http::status::unprocessable_entity, version, error);
-            return json_response(http::status::ok, version, "{\"id\":" + json_quoted(start_id) + ",\"status\":\"running\"}");
+            if (!engines.start(start_id, error)) {
+                activity_jobs.fail(operation_id, "Engine start failed", error, "engine_start_failed");
+                return error_response(http::status::unprocessable_entity, version, error);
+            }
+            activity_jobs.succeed(operation_id, "Engine process started; health readiness is monitored separately");
+            return json_response(http::status::ok, version, "{\"id\":" + json_quoted(start_id) + ",\"status\":\"running\",\"job_id\":" + json_quoted(operation_id) + "}");
         }
         const auto stop_id = engine_id_from_path(target, "stop");
         if (!stop_id.empty()) {
+            const auto operation_id = activity_jobs.begin("engine-stop", stop_id, "Stopping engine process");
+            if (operation_id.empty()) return error_response(http::status::internal_server_error, version, "Could not persist the engine stop operation.");
             std::string error;
-            if (!engines.stop(stop_id, error)) return error_response(http::status::unprocessable_entity, version, error);
-            return json_response(http::status::ok, version, "{\"id\":" + json_quoted(stop_id) + ",\"status\":\"stopped\"}");
+            if (!engines.stop(stop_id, error)) {
+                activity_jobs.fail(operation_id, "Engine stop failed", error, "engine_stop_failed");
+                return error_response(http::status::unprocessable_entity, version, error);
+            }
+            activity_jobs.succeed(operation_id, "Engine process stopped");
+            return json_response(http::status::ok, version, "{\"id\":" + json_quoted(stop_id) + ",\"status\":\"stopped\",\"job_id\":" + json_quoted(operation_id) + "}");
         }
         if (target == "/v1/chat/completions") {
             if (request.body().empty()) return error_response(http::status::bad_request, version, "Request body must contain a chat completion JSON object.");
             const auto engine = engines.default_chat_engine();
             if (!engine) return error_response(http::status::service_unavailable, version, "No chat engine is configured. Set upstream_base_url in config/engines.json.");
+            const auto operation_id = activity_jobs.begin("inference", engine->config.id, "Running local chat completion");
+            if (operation_id.empty()) return error_response(http::status::internal_server_error, version, "Could not persist the inference operation.");
             const auto proxied = proxy_chat(*engine, request.body());
+            activity_jobs.report_progress(operation_id, "Validating local inference response",
+                static_cast<std::uint64_t>(proxied.body.size()));
+            if (proxied.status == http::status::ok && has_nonempty_chat_choices(proxied.body)) {
+                activity_jobs.succeed(operation_id, "Local inference completed");
+            } else {
+                activity_jobs.fail(operation_id, "Local inference failed",
+                    "The local model server did not return a successful chat completion.", "inference_failed");
+            }
             http::response<http::string_body> response{proxied.status, version};
             response.set(http::field::server, "local-ai-runtime/" LAR_VERSION);
             response.set(http::field::content_type, proxied.content_type);
@@ -1545,7 +1698,8 @@ http::response<http::string_body> handle_request(const http::request<http::strin
 }
 
 void serve_client(tcp::socket socket, RuntimeConfig config, EngineManager& engines,
-                  DownloadManager& downloads, std::filesystem::path web_dir) {
+                  DownloadManager& downloads, ActivityJobManager& activity_jobs,
+                  std::filesystem::path web_dir) {
     beast::tcp_stream stream(std::move(socket));
     stream.expires_after(std::chrono::seconds(130));
     beast::flat_buffer buffer;
@@ -1559,14 +1713,14 @@ void serve_client(tcp::socket socket, RuntimeConfig config, EngineManager& engin
             // as the local model server produces them instead of buffering the
             // complete generation in memory.
             stream.expires_after(std::chrono::minutes(15));
-            proxy_chat_stream(stream, request, config, engines);
+            proxy_chat_stream(stream, request, config, engines, activity_jobs);
             beast::error_code ignored;
             stream.socket().shutdown(tcp::socket::shutdown_send, ignored);
             return;
         }
         const bool is_shutdown_request = request.method() == http::verb::post &&
             request.target() == "/v1/runtime/shutdown";
-        auto response = handle_request(request, config, engines, downloads, web_dir);
+        auto response = handle_request(request, config, engines, downloads, activity_jobs, web_dir);
         const bool shutdown_after_response = is_shutdown_request && response.result() == http::status::accepted;
         http::write(stream, response);
         beast::error_code ignored;
@@ -1612,6 +1766,7 @@ void run_http_server(const RuntimeConfig& config, EngineManager& engines,
     acceptor.listen(asio::socket_base::max_listen_connections);
     acceptor.non_blocking(true);
     DownloadManager downloads(config, engines);
+    ActivityJobManager activity_jobs(DownloadManager::user_data_directory() / "jobs");
     std::cout << "Local AI Runtime " << LAR_VERSION << " listening on http://127.0.0.1:"
               << config.port << "\n"
               << "Configured engines: " << config.engines.size() << "\n"
@@ -1627,7 +1782,8 @@ void run_http_server(const RuntimeConfig& config, EngineManager& engines,
         }
         if (ec == asio::error::interrupted && shutdown_requested != 0) break;
         if (ec) throw boost::system::system_error(ec, "accept");
-        std::thread(serve_client, std::move(socket), config, std::ref(engines), std::ref(downloads), web_dir).detach();
+        std::thread(serve_client, std::move(socket), config, std::ref(engines),
+            std::ref(downloads), std::ref(activity_jobs), web_dir).detach();
     }
     beast::error_code ignored;
     acceptor.close(ignored);

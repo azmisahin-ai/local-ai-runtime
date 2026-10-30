@@ -11,7 +11,7 @@ The app uses five persistent destinations:
 - **Overview** — current model/runtime readiness, a compact device summary, and recommendations with explicit evidence labels.
 - **Chat** — the primary available workflow. It now streams SSE deltas, lets the user stop generation, and persists a bounded conversation list in the local WebView/browser profile. Regenerate, explicit model selection, system instructions and richer conversation management remain planned.
 - **Models** — discover, compare, install, update, and remove models and their required engine/dependency packages. Show license, file size, storage needs, memory guidance, backend/platform requirements, provenance, and evidence without flooding the default card view.
-- **Activity** — one view of current downloads, verification, installation, engine lifecycle, inference, updates, and recovery. The current `/v1/activity` v1 endpoint is only a live snapshot of download/update jobs plus engine state; a durable event ledger is still required.
+- **Activity** — one view of persistent download/setup jobs and engine start/stop/inference operations, with current engine readiness. `GET /v1/activity` is a point-in-time snapshot and `GET /v1/jobs` is the unified durable list; the separate append-only event ledger remains future work. Active streamed inference can be canceled, while retries stay restricted to reviewed component/update jobs.
 - **Settings** — language, updates, storage, privacy, and advanced/manual configuration.
 
 ## First-run journey

@@ -32,6 +32,11 @@ void respond(tcp::socket& socket, const http::request<http::string_body>& reques
     if (request.method() == http::verb::post && request.target() == "/v1/chat/completions" &&
         (request.body().find("\"stream\": true") != std::string::npos ||
          request.body().find("\"stream\":true") != std::string::npos)) {
+        // Delay response headers for the explicit-cancel case to prove that
+        // Activity cancellation also interrupts a slow prefill, not just an
+        // already-started response-body stream.
+        const bool explicit_cancel_case = request.body().find("cancel this") != std::string::npos;
+        if (explicit_cancel_case) std::this_thread::sleep_for(std::chrono::milliseconds(2500));
         http::response<http::empty_body> streaming_response{http::status::ok, request.version()};
         streaming_response.set(http::field::server, "lar-fake-http-engine");
         streaming_response.set(http::field::content_type, "text/event-stream; charset=utf-8");
@@ -39,10 +44,14 @@ void respond(tcp::socket& socket, const http::request<http::string_body>& reques
         streaming_response.keep_alive(false);
         streaming_response.chunked(true);
         http::response_serializer<http::empty_body> serializer{streaming_response};
-        http::write_header(socket, serializer);
-        // Simulate real model prefill latency so the runtime's streamed-read
-        // timeout polling is exercised before the first token is available.
-        std::this_thread::sleep_for(std::chrono::milliseconds(450));
+        boost::system::error_code header_error;
+        http::write_header(socket, serializer, header_error);
+        if (header_error) {
+            socket.close(header_error);
+            return;
+        }
+        // Simulate real model prefill latency before the first body token.
+        if (!explicit_cancel_case) std::this_thread::sleep_for(std::chrono::milliseconds(450));
         const std::string chunks[] = {
             "data: {\"id\":\"chatcmpl-ci-stream\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"}}]}\n\n",
             "data: {\"id\":\"chatcmpl-ci-stream\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"LAR_STREAM_SMOKE_OK\"}}]}\n\n",
@@ -51,12 +60,17 @@ void respond(tcp::socket& socket, const http::request<http::string_body>& reques
         for (const auto& chunk : chunks) {
             std::ostringstream prefix;
             prefix << std::hex << chunk.size() << "\r\n";
-            asio::write(socket, asio::buffer(prefix.str()));
-            asio::write(socket, asio::buffer(chunk));
-            asio::write(socket, asio::buffer("\r\n", 2));
+            boost::system::error_code write_error;
+            asio::write(socket, asio::buffer(prefix.str()), write_error);
+            if (write_error) break;
+            asio::write(socket, asio::buffer(chunk), write_error);
+            if (write_error) break;
+            asio::write(socket, asio::buffer("\r\n", 2), write_error);
+            if (write_error) break;
             std::this_thread::sleep_for(std::chrono::milliseconds(120));
         }
-        asio::write(socket, asio::buffer("0\r\n\r\n", 5));
+        boost::system::error_code write_error;
+        asio::write(socket, asio::buffer("0\r\n\r\n", 5), write_error);
         beast::error_code ignored;
         socket.shutdown(tcp::socket::shutdown_both, ignored);
         socket.close(ignored);
@@ -114,7 +128,9 @@ int main(int argc, char** argv) {
                 socket.close(ec);
                 continue;
             }
-            respond(socket, request);
+            std::thread([client = std::move(socket), message = std::move(request)]() mutable {
+                respond(client, message);
+            }).detach();
         }
     } catch (const std::exception& ex) {
         std::cerr << "fake HTTP engine failed: " << ex.what() << std::endl;

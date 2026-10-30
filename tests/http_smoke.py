@@ -9,6 +9,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -500,7 +501,35 @@ def main():
             engines = json.loads(engines_raw)["data"]
             assert status == 200 and len(engines) == 1 and engines[0]["status"] == "stopped"
 
-            request(base + "/v1/engines/fake-engine/start", method="POST", body={})
+            start_status, start_raw, _ = request(base + "/v1/engines/fake-engine/start", method="POST", body={})
+            start_result = json.loads(start_raw)
+            assert start_status == 200 and start_result.get("job_id"), start_result
+            engine_start_job_id = start_result["job_id"]
+            start_job_status, start_job_raw, _ = request(base + f"/v1/jobs/{engine_start_job_id}")
+            engine_start_job = json.loads(start_job_raw)
+            assert start_job_status == 200 and engine_start_job["kind"] == "engine-start"
+            assert engine_start_job["item_id"] == "fake-engine" and engine_start_job["state"] == "succeeded"
+            assert engine_start_job["retryable"] is False and engine_start_job["duration_ms"] >= 0
+            try:
+                request(base + f"/v1/jobs/{engine_start_job_id}/retry", method="POST", body={})
+                raise AssertionError("Engine lifecycle operations must not be replayed")
+            except urllib.error.HTTPError as operation_retry_error:
+                assert operation_retry_error.code == 409
+            try:
+                request(base + f"/v1/jobs/{engine_start_job_id}", method="DELETE")
+                raise AssertionError("Completed engine operations must not expose download cancellation")
+            except urllib.error.HTTPError as operation_cancel_error:
+                assert operation_cancel_error.code == 409
+            try:
+                request(base + "/v1/engines/missing-engine/start", method="POST", body={})
+                raise AssertionError("An unknown engine should produce a durable failed start operation")
+            except urllib.error.HTTPError as failed_start_error:
+                assert failed_start_error.code == 422
+            status, failed_jobs_raw, _ = request(base + "/v1/jobs")
+            failed_start_jobs = [job for job in json.loads(failed_jobs_raw)["data"]
+                                 if job["kind"] == "engine-start" and job["item_id"] == "missing-engine"]
+            assert status == 200 and failed_start_jobs[-1]["state"] == "failed"
+            assert failed_start_jobs[-1]["error_code"] == "engine_start_failed"
 
             # The start endpoint confirms process creation, not application
             # readiness. The native C++ fake engine avoids Python-launcher/environment
@@ -576,6 +605,24 @@ def main():
             assert status == 200 and "application/json" in content_type
             result = json.loads(raw)
             assert result["choices"][0]["message"]["content"] == "LAR_HTTP_SMOKE_OK"
+            status, jobs_raw, _ = request(base + "/v1/jobs")
+            inference_jobs = [job for job in json.loads(jobs_raw)["data"] if job["kind"] == "inference"]
+            assert status == 200 and inference_jobs and inference_jobs[-1]["state"] == "succeeded", inference_jobs
+            assert inference_jobs[-1]["item_id"] == "fake-engine"
+            legacy_download_status, legacy_downloads_raw, _ = request(base + "/v1/downloads")
+            legacy_download_rows = json.loads(legacy_downloads_raw)["data"]
+            assert legacy_download_status == 200 and not any(job["kind"] == "inference" for job in legacy_download_rows), (
+                "The compatibility /v1/downloads route must remain limited to component downloads"
+            )
+            activity_status, activity_raw, _ = request(base + "/v1/activity")
+            activity = json.loads(activity_raw)
+            operation_rows = [row for row in activity["data"] if row["type"] == "operation"]
+            assert activity_status == 200 and any(row["kind"] == "engine-start" for row in operation_rows)
+            assert any(row["kind"] == "inference" for row in operation_rows)
+            activity_errors = validate_catalog_schema(activity, activity_schema)
+            assert not activity_errors, "Activity API with runtime operations failed activity-v1: " + "; ".join(activity_errors[:12])
+            job_errors = validate_catalog_schema(json.loads(jobs_raw), jobs_schema)
+            assert not job_errors, "Unified jobs API failed jobs-v1 after runtime operations: " + "; ".join(job_errors[:12])
 
             # Streaming must be forwarded as a live SSE response (not buffered
             # JSON), while preserving the same loopback-only security boundary.
@@ -608,11 +655,75 @@ def main():
             assert incremental_elapsed < 1.0, f"First SSE bytes were buffered ({incremental_elapsed:.2f}s)"
             incremental_connection.close()  # Exercise client-side cancellation/disconnect.
             time.sleep(0.4)
+            status, jobs_raw, _ = request(base + "/v1/jobs")
+            stream_operation_jobs = [job for job in json.loads(jobs_raw)["data"] if job["kind"] == "inference"]
+            assert status == 200 and len(stream_operation_jobs) >= 3, stream_operation_jobs
+            assert stream_operation_jobs[-1]["state"] in ("canceled", "failed", "succeeded"), stream_operation_jobs[-1]
 
-            request(base + "/v1/engines/fake-engine/stop", method="POST", body={})
+            # A running streaming inference exposes an explicit cancellation
+            # request through the shared jobs API, independent of socket close.
+            cancel_stream_error = {}
+            def run_cancelable_stream():
+                try:
+                    request(
+                        base + "/v1/chat/completions", method="POST",
+                        body={"model": "fake-model", "messages": [{"role": "user", "content": "cancel this"}], "stream": True},
+                        timeout=5,
+                    )
+                except Exception as stream_error:
+                    cancel_stream_error["error"] = str(stream_error)
+            cancel_stream_thread = threading.Thread(target=run_cancelable_stream, daemon=True)
+            cancel_stream_thread.start()
+            cancelable_operation = None
+            cancel_deadline = time.monotonic() + 3
+            while time.monotonic() < cancel_deadline:
+                status, jobs_raw, _ = request(base + "/v1/jobs")
+                candidates = [job for job in json.loads(jobs_raw)["data"]
+                              if job["kind"] == "inference" and job.get("cancellable") and job["state"] == "running"]
+                if candidates:
+                    cancelable_operation = candidates[-1]
+                    break
+                time.sleep(0.02)
+            assert cancelable_operation is not None, "A streaming inference should be exposed as cancellable while running"
+            activity_status, activity_raw, _ = request(base + "/v1/activity")
+            activity_rows = json.loads(activity_raw)["data"]
+            activity_operation = next((row for row in activity_rows
+                                       if row["id"] == "job:" + cancelable_operation["id"]), None)
+            assert activity_status == 200 and activity_operation is not None
+            assert activity_operation["cancellable"] is True
+            assert "progress_bytes" in activity_operation
+            cancel_status, cancel_raw, _ = request(
+                base + f"/v1/jobs/{cancelable_operation['id']}", method="DELETE")
+            assert cancel_status == 202 and json.loads(cancel_raw)["status"] == "cancel_requested"
+            cancel_stream_thread.join(timeout=5)
+            assert not cancel_stream_thread.is_alive(), "A canceled streaming inference should release its request thread"
+            canceled_status, canceled_raw, _ = request(base + f"/v1/jobs/{cancelable_operation['id']}")
+            canceled_operation = json.loads(canceled_raw)
+            assert canceled_status == 200 and canceled_operation["state"] == "canceled", canceled_operation
+            assert canceled_operation["error_code"] == "user_canceled", canceled_operation
+            diagnostics_status, diagnostics_jobs, diagnostics_type = request(base + "/v1/diagnostics/export")
+            assert diagnostics_status == 200 and "Current component and runtime-operation jobs" in diagnostics_jobs
+            assert cancelable_operation["id"] in diagnostics_jobs and "user_canceled" in diagnostics_jobs
+
+            stop_status, stop_raw, _ = request(base + "/v1/engines/fake-engine/stop", method="POST", body={})
+            stop_result = json.loads(stop_raw)
+            assert stop_status == 200 and stop_result.get("job_id"), stop_result
+            stop_job_status, stop_job_raw, _ = request(base + f"/v1/jobs/{stop_result['job_id']}")
+            stop_job = json.loads(stop_job_raw)
+            assert stop_job_status == 200 and stop_job["kind"] == "engine-stop" and stop_job["state"] == "succeeded"
             status, engines_raw, _ = request(base + "/v1/engines")
             engines = json.loads(engines_raw)["data"]
             assert status == 200 and engines[0]["status"] == "stopped"
+            try:
+                request(base + "/v1/chat/completions", method="POST",
+                        body={"model": "fake-model", "messages": [{"role": "user", "content": "engine stopped"}]})
+                raise AssertionError("Inference against a stopped engine must fail and persist an operation error")
+            except urllib.error.HTTPError as failed_inference_error:
+                assert failed_inference_error.code == 503
+            status, failed_inference_raw, _ = request(base + "/v1/jobs")
+            failed_inference_jobs = [job for job in json.loads(failed_inference_raw)["data"]
+                                     if job["kind"] == "inference" and job["state"] == "failed"]
+            assert status == 200 and failed_inference_jobs[-1]["error_code"] == "inference_failed"
 
             # The setup wizard accepts only an explicitly selected llama-server binary
             # and a non-empty GGUF file, persists configuration, and updates live state.

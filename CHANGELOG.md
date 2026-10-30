@@ -1,12 +1,17 @@
 # Changelog
 
-## Unreleased — streaming chat and local conversation history
+## Unreleased — unified Activity and runtime-operation jobs
 
 - Forward OpenAI-compatible chat `stream:true` responses as chunked Server-Sent Events so tokens reach the UI as they are generated.
 - Detect client disconnects during streamed reads and close the upstream request promptly; keep the same loopback Host/Origin policy for streaming calls.
 - Add streamed chat rendering, stop generation, a local conversation list, new-chat and clear-history actions. Store a bounded history in the per-user WebView/browser profile only; do not include prompt or response content in diagnostics.
 - Add delayed chunked fake-engine coverage proving that first SSE bytes are delivered before a full generation completes, plus the streaming route security test.
 - Improve Activity summary cards so job/engine counters remain clearly separated in the UI.
+- Extend the durable `jobs-v1` contract and Activity snapshot to engine start/stop and local inference operations while preserving the legacy `/v1/downloads` routes.
+- Persist runtime-operation lifecycle, elapsed duration, and inference output-byte progress; mark unfinished operations `interrupted` on startup without replaying them.
+- Allow explicit cancellation of active streamed inference from Activity; keep retry restricted to reviewed component/update workflows and never replay engine lifecycle operations.
+- Include unified component and operation job history in exported diagnostics without logging prompt or generated response text.
+- Add core, HTTP integration, schema, recovery, and explicit streaming-cancellation regression coverage for the unified Activity path.
 
 
 ## Unreleased

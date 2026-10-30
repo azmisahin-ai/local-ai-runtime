@@ -36,6 +36,7 @@ add_library(lar_core
     src/config.cpp
     src/process.cpp
     src/downloads.cpp
+    src/activity_jobs.cpp
     src/diagnostics.cpp
     src/hardware.cpp
     src/backend_evidence.cpp

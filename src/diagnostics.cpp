@@ -196,7 +196,7 @@ std::string sanitize_diagnostic_text(std::string_view text) {
 }
 
 std::string build_diagnostic_report(std::string_view runtime_version,
-                                    std::string_view download_jobs_json,
+                                    std::string_view jobs_json,
                                     std::string_view engine_statuses_json,
                                     std::string_view engine_logs_text) {
     std::lock_guard<std::mutex> lock(g_mutex);
@@ -216,8 +216,8 @@ std::string build_diagnostic_report(std::string_view runtime_version,
     const auto lines = read_recent_lines_locked();
     if (lines.empty()) report << "(No runtime log entries have been recorded yet.)\n";
     for (const auto& line : lines) report << sanitize_locked(line) << '\n';
-    report << "\n== Current download jobs (JSON) ==\n"
-           << sanitize_locked(download_jobs_json) << "\n"
+    report << "\n== Current component and runtime-operation jobs (JSON) ==\n"
+           << sanitize_locked(jobs_json) << "\n"
            << "\n== Current engine status (JSON) ==\n"
            << sanitize_locked(engine_statuses_json) << "\n";
     if (!engine_logs_text.empty()) {

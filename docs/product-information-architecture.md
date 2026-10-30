@@ -9,7 +9,7 @@ The current dashboard is organized into five persistent destinations:
 1. **Overview** — local runtime readiness, current chat model, hardware summary, and clearly-labelled available/planned workspaces.
 2. **Chat** — the primary user task, with a dedicated composer, incremental SSE token streaming, stop-generation behavior, and a bounded local conversation history. Conversations are stored in browser/WebView local storage under the per-user profile and are never uploaded or included in diagnostics.
 3. **Models** — reviewed engines, models, dependencies, requirements, licenses, and installed state. The catalogue is still backed by reviewed built-in metadata; it is not yet a user-editable or remotely executable manifest.
-4. **Activity** — installed engine state and the current download/update job snapshot. `GET /v1/activity` follows [activity-v1](../catalog/schemas/activity-v1.schema.json). It is a point-in-time snapshot, not a durable event history; events remain in local diagnostics until a separate event ledger is implemented.
+4. **Activity** — installed engine state plus persistent download, setup, engine start/stop, and inference operation records. `GET /v1/activity` follows [activity-v1](../catalog/schemas/activity-v1.schema.json); `GET /v1/jobs` returns the shared [jobs-v1](../catalog/schemas/jobs-v1.schema.json) lifecycle contract. The Activity endpoint is a point-in-time snapshot of current engine readiness and durable job state, not an append-only event timeline. Active streamed inference can be canceled from Activity; only reviewed catalog/update jobs support retry.
 5. **Settings** — language preference, release/update controls, advanced manual engine configuration, and privacy information.
 
 The UI ships English and Turkish resource files under `web/locales/`. The loopback server serves only `/locales/en.json` and `/locales/tr.json`; arbitrary locale paths are not exposed. The current localization slice covers the navigation, section headings, and primary static content. Dynamic catalog, hardware, and error messages still need complete resource-key extraction before localization is considered complete.
@@ -21,7 +21,7 @@ The UI ships English and Turkish resource files under `web/locales/`. The loopba
 - **Model** is a versioned weight/checkpoint used by an engine; quantizations are distinct variants with their own resource and license metadata.
 - **Dependency** is a package required by an engine (for example the official `cudart` DLL archive required beside a CUDA-enabled `llama-server`). Dependencies are installed and verified as part of the engine choice, not exposed as duplicate engines to users.
 - **Installed instance** is a configured engine/model combination with process, readiness, and last-task status.
-- **Job** describes download, verification, extraction, activation, update, or test progress. The current API exposes a point-in-time state/progress snapshot; the target model adds a durable phase/event trail, actionable error, and retry/cancel behavior where safe.
+- **Job** describes a component download/verification/install/update or a runtime operation such as engine start/stop and inference. The current API exposes durable lifecycle records and a point-in-time Activity snapshot; the target model adds a separate append-only event trail. Retry is allowlist-restricted and cancellation is available only where the operation can stop safely.
 - **Compatibility profile** records observed hardware/software and the evidence for a specific engine/model/task combination. Hardware detection alone is not a support claim.
 
 ## User-facing workspaces
@@ -91,7 +91,7 @@ Every job emits structured local events with `job_id`, `component_id`, stage/pha
 ## Implementation order
 
 1. Establish the five-area UI shell, task-first Overview, dedicated Chat, and initial EN/TR resources (implemented as the first foundation slice).
-2. Unify current operation state in the `activity-v1` snapshot and evolve it into a durable job/event contract with safe retry/cancel semantics.
+2. Unify operation state in `activity-v1` and the durable `jobs-v1` contract. Component download retry remains allowlist-restricted; streamed inference supports explicit cancellation, while engine lifecycle operations are recorded but never replayed.
 3. Complete dynamic localization, accessible names/status announcements and first-run onboarding. Streaming Chat and bounded local conversation persistence are now implemented; regenerate, system instructions, model selection and richer history management remain future Chat improvements.
 4. Move reviewed model, engine and dependency definitions to a checked-in versioned authoring manifest that generates both API metadata and the install allowlist from one source.
 5. Finalize and test the shared engine adapter lifecycle against the existing `llama.cpp` integration.

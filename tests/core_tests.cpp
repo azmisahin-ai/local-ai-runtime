@@ -3,6 +3,7 @@
 #include "lar/diagnostics.hpp"
 #include "lar/hardware.hpp"
 #include "lar/downloads.hpp"
+#include "lar/activity_jobs.hpp"
 #include "lar/process.hpp"
 #include "lar/backend_evidence.hpp"
 #include "lar/gpu_monitor.hpp"
@@ -226,6 +227,45 @@ int main() {
         }
         require(unicode_model_argument, "model argument did not preserve UTF-8 path encoding");
         std::filesystem::remove(roundtrip_path);
+
+        stage("durable runtime operation lifecycle and restart recovery");
+        {
+            const auto operation_root = std::filesystem::temp_directory_path() /
+                ("lar-operation-jobs-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+            std::string interrupted_id;
+            std::string succeeded_id;
+            {
+                lar::ActivityJobManager operation_jobs(operation_root);
+                interrupted_id = operation_jobs.begin("inference", "fake-engine", "Running local inference");
+                require(!interrupted_id.empty(), "runtime operation should be persisted before execution");
+                operation_jobs.report_progress(interrupted_id, "Streaming model output", 49152);
+                succeeded_id = operation_jobs.begin("engine-start", "fake-engine", "Starting engine");
+                require(!succeeded_id.empty(), "engine start operation should be persisted");
+                operation_jobs.succeed(succeeded_id, "Engine process started");
+                const auto active_record = operation_jobs.job_json(interrupted_id);
+                require(active_record && active_record->find("\"state\":\"running\"") != std::string::npos,
+                        "an in-flight operation should be visible as running");
+            }
+            {
+                lar::ActivityJobManager restored_jobs(operation_root);
+                const auto interrupted = restored_jobs.job_json(interrupted_id);
+                const auto succeeded = restored_jobs.job_json(succeeded_id);
+                require(interrupted && interrupted->find("\"state\":\"interrupted\"") != std::string::npos,
+                        "an operation left running at shutdown must be marked interrupted");
+                require(interrupted->find("\"error_code\":\"process_interrupted\"") != std::string::npos,
+                        "interrupted runtime operations must expose a stable error code");
+                require(interrupted->find("\"retryable\":false") != std::string::npos,
+                        "engine and inference operations must not be replayed automatically");
+                require(interrupted->find("\"progress_bytes\":49152") != std::string::npos,
+                        "the last persisted inference output-byte progress must survive restart recovery");
+                require(succeeded && succeeded->find("\"state\":\"succeeded\"") != std::string::npos,
+                        "terminal operation history must survive runtime restart");
+                require(succeeded->find("\"duration_ms\":") != std::string::npos,
+                        "terminal operation history must record elapsed duration");
+            }
+            std::error_code ignored;
+            std::filesystem::remove_all(operation_root, ignored);
+        }
 
         stage("unknown engine handling");
         {

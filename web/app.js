@@ -808,20 +808,31 @@ async function refreshCatalog() {
 function downloadJobCard(job) {
   const card = make('article', 'download-card');
   const header = make('div', 'download-job-header');
-  const jobTitle = job.item_id === 'runtime-update' ? 'Local AI Runtime update' : job.item_id;
+  const operationTitles = {
+    'engine-start': translation('activity.operation.engineStart', 'Start engine'),
+    'engine-stop': translation('activity.operation.engineStop', 'Stop engine'),
+    inference: translation('activity.operation.inference', 'Chat inference'),
+  };
+  const isOperation = Object.prototype.hasOwnProperty.call(operationTitles, job.kind);
+  const jobTitle = operationTitles[job.kind] || (job.item_id === 'runtime-update' ? 'Local AI Runtime update' : job.item_id);
   header.append(make('h3', '', `${jobTitle} · ${job.state}`));
-  header.append(make('span', 'tag', job.kind || 'component'));
+  header.append(make('span', 'tag', isOperation ? translation('activity.operationTag', 'operation') : (job.kind || 'component')));
   card.append(header);
   card.append(make('p', '', job.phase || job.state));
   if (Number(job.attempt || 1) > 1) card.append(make('p', 'hint', `${translation('activity.attempt', 'Attempt')} ${job.attempt}`));
-  const progress = make('progress', 'download-progress');
-  progress.max = 100;
-  progress.value = Math.max(0, Math.min(100, Number(job.progress_percent || 0)));
-  progress.setAttribute('aria-label', `Download progress ${progress.value}%`);
-  card.append(progress);
-  const total = Number(job.total_bytes || 0);
-  const downloaded = Number(job.downloaded_bytes || 0);
-  card.append(make('p', 'hint', total > 0 ? `${formatBytes(downloaded)} of ${formatBytes(total)} (${progress.value}%)` : `${formatBytes(downloaded)} downloaded`));
+  if (isOperation) {
+    if (Number(job.progress_bytes || 0) > 0) card.append(make('p', 'hint', `${formatBytes(Number(job.progress_bytes))} ${translation('activity.outputReceived', 'output received')}`));
+    if (Number(job.duration_ms || 0) > 0) card.append(make('p', 'hint', `${translation('activity.duration', 'Duration')}: ${(Number(job.duration_ms) / 1000).toFixed(2)} s`));
+  } else {
+    const progress = make('progress', 'download-progress');
+    progress.max = 100;
+    progress.value = Math.max(0, Math.min(100, Number(job.progress_percent || 0)));
+    progress.setAttribute('aria-label', `Download progress ${progress.value}%`);
+    card.append(progress);
+    const total = Number(job.total_bytes || 0);
+    const downloaded = Number(job.downloaded_bytes || 0);
+    card.append(make('p', 'hint', total > 0 ? `${formatBytes(downloaded)} of ${formatBytes(total)} (${progress.value}%)` : `${formatBytes(downloaded)} downloaded`));
+  }
   if (job.version) card.append(make('p', 'hint', `Upstream version: ${job.version}`));
   if (job.installed_path) card.append(make('p', 'hint', job.kind === 'update' ? `Verified package staged at: ${job.installed_path}` : `Installed at: ${job.installed_path}`));
   if (job.error) {
@@ -833,8 +844,8 @@ function downloadJobCard(job) {
   if (job.last_error && !job.error) {
     card.append(make('p', 'hint', `${translation('activity.previousError', 'Previous attempt')}: ${job.last_error}`));
   }
-  const active = ['queued', 'downloading', 'verifying', 'extracting', 'configuring'].includes(job.state);
-  if (active) {
+  const active = ['queued', 'running', 'downloading', 'verifying', 'extracting', 'configuring'].includes(job.state);
+  if (active && (!isOperation || job.cancellable)) {
     const cancel = make('button', 'button secondary', job.cancel_requested
       ? translation('activity.cancelRequested', 'Cancellation requested…') : 'Cancel');
     cancel.type = 'button';
@@ -871,24 +882,25 @@ function downloadJobCard(job) {
 async function refreshDownloads() {
   try {
     const result = await api('/v1/jobs');
-    if (!Array.isArray(result.data)) throw new Error('The download job list response is invalid.');
-    const activeJobs = result.data.filter((job) => ['queued', 'downloading', 'verifying', 'extracting', 'configuring'].includes(job.state)).length;
+    if (!Array.isArray(result.data)) throw new Error('The unified job list response is invalid.');
+    const jobs = [...result.data].sort((left, right) => Number(right.created_at || 0) - Number(left.created_at || 0));
+    const activeJobs = jobs.filter((job) => ['queued', 'running', 'downloading', 'verifying', 'extracting', 'configuring'].includes(job.state)).length;
     if (activityCountBadge) { activityCountBadge.textContent = String(activeJobs); activityCountBadge.hidden = activeJobs === 0; }
     if (activityActiveJobs) activityActiveJobs.textContent = String(activeJobs);
     downloadList.replaceChildren();
-    if (!result.data.length) {
-      downloadList.append(make('div', 'empty', translation('activity.noJobs', 'No downloads or setup jobs yet.')));
+    if (!jobs.length) {
+      downloadList.append(make('div', 'empty', translation('activity.noJobs', 'No runtime operations yet.')));
       return;
     }
     let hasActive = false;
     let changedComponentTerminalState = false;
     let completedComponentSuccessfully = false;
-    for (const job of result.data) {
+    for (const job of jobs) {
       downloadList.append(downloadJobCard(job));
-      if (['queued', 'downloading', 'verifying', 'extracting', 'configuring'].includes(job.state)) hasActive = true;
+      if (['queued', 'running', 'downloading', 'verifying', 'extracting', 'configuring'].includes(job.state)) hasActive = true;
       if (['succeeded', 'failed', 'canceled', 'interrupted'].includes(job.state) && !completedDownloadJobs.has(job.id)) {
         completedDownloadJobs.add(job.id);
-        if (job.kind !== 'update') {
+        if (['engine', 'model'].includes(job.kind)) {
           changedComponentTerminalState = true;
           completedComponentSuccessfully = completedComponentSuccessfully || job.state === 'succeeded';
         }
