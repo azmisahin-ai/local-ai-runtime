@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://local-ai-runtime.example/schemas/activity-v1.schema.json",
   "title": "Local AI Runtime Activity Snapshot",
-  "description": "A loopback-only snapshot of active download/update jobs and configured engine states. This is not a durable event history.",
+  "description": "A loopback-only snapshot of durable download/update job records and current configured engine states. Engine readiness is point-in-time; job lifecycle records persist across runtime restarts.",
   "type": "object",
   "required": ["schema_version", "snapshot", "data", "summary"],
   "properties": {

@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <chrono>
 #include <cstdlib>
 #include <fstream>
 #include <functional>
@@ -48,13 +49,24 @@ struct DownloadManager::Job {
     std::string version;
     std::string installed_path;
     std::string error;
+    std::string last_error;
     std::string source_url;
     std::string expected_sha256;
     std::string asset_name;
+    std::string error_code;
     std::uint64_t expected_size{0};
     std::uint64_t downloaded_bytes{0};
     std::uint64_t total_bytes{0};
+    std::uint64_t created_at{0};
+    std::uint64_t updated_at{0};
+    std::uint64_t started_at{0};
+    std::uint64_t finished_at{0};
+    std::uint64_t attempt{1};
+    std::uint64_t last_persisted_bytes{0};
+    std::chrono::steady_clock::time_point last_persisted_at{};
+    bool license_accepted{false};
     std::atomic<bool> cancel_requested{false};
+    std::function<void()> persist_callback;
     mutable std::mutex mutex;
 };
 
@@ -638,16 +650,79 @@ bool any_engine_running(EngineManager& engines) {
 
 namespace {
 
+std::uint64_t unix_time_millis() {
+    return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count());
+}
+
+bool is_active_job_state(std::string_view state) {
+    return state == "queued" || state == "downloading" || state == "verifying" ||
+           state == "extracting" || state == "configuring";
+}
+
+bool is_terminal_job_state(std::string_view state) {
+    return state == "succeeded" || state == "failed" || state == "canceled" || state == "interrupted";
+}
+
+bool is_retryable_job(const DownloadManager::Job& job) {
+    if (job.state == "succeeded" || job.state == "queued" || job.state == "downloading" ||
+        job.state == "verifying" || job.state == "extracting" || job.state == "configuring") return false;
+    if (job.item_id == "runtime-update") {
+        if (job.kind != "update") return false;
+        const auto expected_asset = DownloadManager::runtime_update_asset_name();
+        const auto expected_url = "https://github.com/azmisahin-ai/local-ai-runtime/releases/download/" +
+                                  job.version + "/" + expected_asset;
+        return !expected_asset.empty() && job.asset_name == expected_asset && job.source_url == expected_url &&
+               DownloadManager::is_newer_release_tag(job.version, "0.0.0") &&
+               is_sha256_digest(job.expected_sha256) && job.expected_size >= 1024 &&
+               job.expected_size <= kMaximumRuntimeUpdateBytes;
+    }
+    if (!job.license_accepted) return false;
+    if ((job.item_id == "llama.cpp-cpu" || job.item_id == "llama.cpp-cuda12" || job.item_id == "llama.cpp-cuda13") &&
+        job.kind != "engine") return false;
+    if (job.item_id == "qwen2.5-1.5b-q4km" && job.kind != "model") return false;
+    const auto os = host_os();
+    const auto arch = host_architecture();
+    if (job.item_id == "llama.cpp-cpu") {
+        return ((os == "windows" || os == "linux") && arch == "x64") ||
+               (os == "macos" && (arch == "x64" || arch == "arm64"));
+    }
+    if (job.item_id == "llama.cpp-cuda12" || job.item_id == "llama.cpp-cuda13") {
+        return (os == "windows" || os == "linux") && arch == "x64";
+    }
+    return job.item_id == "qwen2.5-1.5b-q4km";
+}
+
 void mutate_job(const std::shared_ptr<DownloadManager::Job>& job,
                 const std::function<void(DownloadManager::Job&)>& fn) {
-    std::lock_guard<std::mutex> lock(job->mutex);
-    fn(*job);
+    std::function<void()> persist;
+    {
+        std::lock_guard<std::mutex> lock(job->mutex);
+        const auto previous_state = job->state;
+        const auto previous_phase = job->phase;
+        const auto previous_bytes = job->downloaded_bytes;
+        fn(*job);
+        job->updated_at = unix_time_millis();
+        const auto now = std::chrono::steady_clock::now();
+        const bool state_changed = previous_state != job->state || previous_phase != job->phase;
+        const bool progress_checkpoint = job->downloaded_bytes >= job->last_persisted_bytes + 1024ULL * 1024ULL ||
+            (previous_bytes != job->downloaded_bytes &&
+             now - job->last_persisted_at >= std::chrono::seconds(2));
+        if (job->persist_callback && (state_changed || progress_checkpoint || job->last_persisted_at.time_since_epoch().count() == 0)) {
+            job->last_persisted_bytes = job->downloaded_bytes;
+            job->last_persisted_at = now;
+            persist = job->persist_callback;
+        }
+    }
+    if (persist) persist();
 }
 
 DownloadJobSnapshot snapshot_job(const std::shared_ptr<DownloadManager::Job>& job) {
     std::lock_guard<std::mutex> lock(job->mutex);
     return {job->id, job->item_id, job->kind, job->state, job->phase, job->version,
-            job->installed_path, job->error, job->downloaded_bytes, job->total_bytes};
+            job->installed_path, job->error, job->last_error, job->error_code, job->downloaded_bytes, job->total_bytes,
+            job->created_at, job->updated_at, job->started_at, job->finished_at, job->attempt,
+            job->cancel_requested.load(), is_retryable_job(*job)};
 }
 
 void download_to_file(const std::string& url, const std::filesystem::path& destination,
@@ -739,7 +814,9 @@ bool is_supported_cuda_runtime_archive(const std::string& name, const std::strin
 } // namespace catalog
 
 DownloadManager::DownloadManager(RuntimeConfig config, EngineManager& engines)
-    : config_(std::move(config)), engines_(engines) {}
+    : config_(std::move(config)), engines_(engines) {
+    load_jobs();
+}
 
 bool DownloadManager::is_newer_release_tag(const std::string& candidate_tag, const std::string& current_version) {
     static const std::regex valid_tag(R"(^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$)");
@@ -752,6 +829,187 @@ DownloadManager::~DownloadManager() {
         for (const auto& job : jobs_) job->cancel_requested.store(true);
     }
     for (auto& worker : workers_) if (worker.thread.joinable()) worker.thread.join();
+}
+
+void DownloadManager::load_jobs() {
+    const auto directory = user_data_directory() / "jobs";
+    std::error_code fs_error;
+    if (!std::filesystem::exists(directory, fs_error)) return;
+    if (fs_error || !std::filesystem::is_directory(directory, fs_error)) {
+        log_diagnostic("WARN", "jobs.persistence_unavailable", "Could not inspect the persistent job history directory.");
+        return;
+    }
+
+    std::vector<std::shared_ptr<Job>> loaded;
+    for (std::filesystem::directory_iterator it(directory, fs_error), end; !fs_error && it != end; it.increment(fs_error)) {
+        if (!it->is_regular_file(fs_error) || fs_error || it->path().extension() != ".json") {
+            fs_error.clear();
+            continue;
+        }
+        try {
+            std::ifstream input(it->path(), std::ios::binary);
+            if (!input) continue;
+            pt::ptree record;
+            pt::read_json(input, record);
+            auto job = std::make_shared<Job>();
+            job->id = record.get<std::string>("id", "");
+            if (job->id.empty() || job->id.size() > 96 ||
+                !std::all_of(job->id.begin(), job->id.end(), [](unsigned char c) {
+                    return std::isalnum(c) != 0 || c == '-' || c == '_';
+                })) continue;
+            if (it->path().filename().string() != job->id + ".json") continue;
+            job->item_id = record.get<std::string>("item_id", "");
+            job->kind = record.get<std::string>("kind", "component");
+            if (job->item_id.empty() || (job->kind != "engine" && job->kind != "model" && job->kind != "update")) continue;
+            job->state = record.get<std::string>("state", "interrupted");
+            job->phase = record.get<std::string>("phase", "Restored from local job history");
+            job->version = record.get<std::string>("version", "");
+            job->installed_path = record.get<std::string>("installed_path", "");
+            job->error = record.get<std::string>("error", "");
+            job->last_error = record.get<std::string>("last_error", "");
+            job->error_code = record.get<std::string>("error_code", "");
+            job->source_url = record.get<std::string>("source_url", "");
+            job->expected_sha256 = record.get<std::string>("expected_sha256", "");
+            job->asset_name = record.get<std::string>("asset_name", "");
+            job->expected_size = record.get<std::uint64_t>("expected_size", 0);
+            job->downloaded_bytes = record.get<std::uint64_t>("downloaded_bytes", 0);
+            job->total_bytes = record.get<std::uint64_t>("total_bytes", 0);
+            job->created_at = record.get<std::uint64_t>("created_at", 0);
+            job->updated_at = record.get<std::uint64_t>("updated_at", job->created_at);
+            job->started_at = record.get<std::uint64_t>("started_at", 0);
+            job->finished_at = record.get<std::uint64_t>("finished_at", 0);
+            job->attempt = std::max<std::uint64_t>(1, record.get<std::uint64_t>("attempt", 1));
+            job->license_accepted = record.get<bool>("license_accepted", false);
+            job->cancel_requested.store(record.get<bool>("cancel_requested", false));
+            if (job->created_at == 0) job->created_at = unix_time_millis();
+            if (job->updated_at == 0) job->updated_at = job->created_at;
+
+            if (!is_terminal_job_state(job->state)) {
+                job->state = "interrupted";
+                job->phase = "Interrupted when Local AI Runtime was not running";
+                job->error_code = "process_interrupted";
+                job->error = "The runtime stopped before this job finished. It was not resumed automatically; retry it to start a new attempt.";
+                job->finished_at = unix_time_millis();
+                job->updated_at = job->finished_at;
+                job->cancel_requested.store(false);
+            }
+            if (job->error_code.empty() && job->state == "failed") job->error_code = "job_failed";
+            if (job->error_code.empty() && job->state == "canceled") job->error_code = "job_canceled";
+            if (job->id.rfind("download-", 0) == 0) {
+                try {
+                    const auto number = std::stoull(job->id.substr(9));
+                    next_job_number_ = std::max(next_job_number_, static_cast<std::uint64_t>(number + 1));
+                } catch (...) {}
+            }
+            job->persist_callback = [this, weak = std::weak_ptr<Job>(job)] {
+                if (const auto locked = weak.lock()) persist_job(locked);
+            };
+            loaded.push_back(std::move(job));
+        } catch (const std::exception& ex) {
+            log_diagnostic("WARN", "jobs.persistence_record_skipped", "A saved job record could not be read: " + std::string(ex.what()));
+        }
+    }
+    std::sort(loaded.begin(), loaded.end(), [](const auto& left, const auto& right) {
+        return snapshot_job(left).created_at < snapshot_job(right).created_at;
+    });
+    if (loaded.size() > 64) {
+        const auto first_kept = loaded.end() - 64;
+        for (auto it = loaded.begin(); it != first_kept; ++it) remove_persisted_job((*it)->id);
+        loaded.erase(loaded.begin(), first_kept);
+    }
+    jobs_ = std::move(loaded);
+    for (const auto& job : jobs_) persist_job(job);
+}
+
+bool DownloadManager::persist_job(const std::shared_ptr<Job>& job) const {
+    if (!job) return false;
+    std::lock_guard<std::mutex> persistence_lock(persistence_mutex_);
+    std::string id;
+    std::ostringstream json;
+    {
+        std::lock_guard<std::mutex> job_lock(job->mutex);
+        id = job->id;
+        if (id.empty() || id.size() > 96 || !std::all_of(id.begin(), id.end(), [](unsigned char c) {
+                return std::isalnum(c) != 0 || c == '-' || c == '_';
+            })) return false;
+        json << "{\"schema_version\":1"
+             << ",\"id\":" << json_quote(job->id)
+             << ",\"item_id\":" << json_quote(job->item_id)
+             << ",\"kind\":" << json_quote(job->kind)
+             << ",\"state\":" << json_quote(job->state)
+             << ",\"phase\":" << json_quote(job->phase)
+             << ",\"version\":" << json_quote(job->version)
+             << ",\"installed_path\":" << json_quote(job->installed_path)
+             << ",\"error\":" << json_quote(job->error)
+             << ",\"last_error\":" << json_quote(job->last_error)
+             << ",\"error_code\":" << json_quote(job->error_code)
+             << ",\"source_url\":" << json_quote(job->source_url)
+             << ",\"expected_sha256\":" << json_quote(job->expected_sha256)
+             << ",\"asset_name\":" << json_quote(job->asset_name)
+             << ",\"expected_size\":" << job->expected_size
+             << ",\"downloaded_bytes\":" << job->downloaded_bytes
+             << ",\"total_bytes\":" << job->total_bytes
+             << ",\"created_at\":" << job->created_at
+             << ",\"updated_at\":" << job->updated_at
+             << ",\"started_at\":" << job->started_at
+             << ",\"finished_at\":" << job->finished_at
+             << ",\"attempt\":" << job->attempt
+             << ",\"license_accepted\":" << (job->license_accepted ? "true" : "false")
+             << ",\"cancel_requested\":" << (job->cancel_requested.load() ? "true" : "false")
+             << "}\n";
+    }
+
+    const auto directory = user_data_directory() / "jobs";
+    std::error_code fs_error;
+    std::filesystem::create_directories(directory, fs_error);
+    if (fs_error) {
+        log_diagnostic("WARN", "jobs.persistence_write_failed", "Could not create the persistent job history directory: " + fs_error.message());
+        return false;
+    }
+    const auto destination = directory / (id + ".json");
+    auto temporary = destination;
+    temporary += ".tmp";
+    {
+        std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+        if (!output) {
+            log_diagnostic("WARN", "jobs.persistence_write_failed", "Could not open a temporary job history record for writing.");
+            return false;
+        }
+        const auto value = json.str();
+        output.write(value.data(), static_cast<std::streamsize>(value.size()));
+        output.flush();
+        if (!output) {
+            output.close();
+            std::filesystem::remove(temporary, fs_error);
+            log_diagnostic("WARN", "jobs.persistence_write_failed", "Could not flush a temporary job history record.");
+            return false;
+        }
+    }
+#ifdef _WIN32
+    if (!MoveFileExW(temporary.c_str(), destination.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        const auto code = GetLastError();
+        std::filesystem::remove(temporary, fs_error);
+        log_diagnostic("WARN", "jobs.persistence_replace_failed", "Could not atomically replace a saved job record; Windows error=" + std::to_string(code));
+        return false;
+    }
+#else
+    std::filesystem::rename(temporary, destination, fs_error);
+    if (fs_error) {
+        std::filesystem::remove(temporary, fs_error);
+        log_diagnostic("WARN", "jobs.persistence_replace_failed", "Could not atomically replace a saved job record.");
+        return false;
+    }
+#endif
+    return true;
+}
+
+void DownloadManager::remove_persisted_job(const std::string& job_id) const {
+    if (job_id.empty() || job_id.size() > 96 || !std::all_of(job_id.begin(), job_id.end(), [](unsigned char c) {
+            return std::isalnum(c) != 0 || c == '-' || c == '_';
+        })) return;
+    std::lock_guard<std::mutex> persistence_lock(persistence_mutex_);
+    std::error_code fs_error;
+    std::filesystem::remove(user_data_directory() / "jobs" / (job_id + ".json"), fs_error);
 }
 
 std::filesystem::path DownloadManager::user_data_directory() {
@@ -972,7 +1230,16 @@ std::string DownloadManager::jobs_json() const {
             << ",\"phase\":" << json_quote(job.phase) << ",\"version\":" << json_quote(job.version)
             << ",\"downloaded_bytes\":" << job.downloaded_bytes << ",\"total_bytes\":" << job.total_bytes
             << ",\"progress_percent\":" << percent << ",\"installed_path\":" << json_quote(job.installed_path)
-            << ",\"error\":" << json_quote(job.error) << '}';
+            << ",\"error\":" << json_quote(job.error)
+            << ",\"last_error\":" << json_quote(job.last_error)
+            << ",\"error_code\":" << json_quote(job.error_code)
+            << ",\"created_at\":" << job.created_at
+            << ",\"updated_at\":" << job.updated_at
+            << ",\"started_at\":" << job.started_at
+            << ",\"finished_at\":" << job.finished_at
+            << ",\"attempt\":" << job.attempt
+            << ",\"cancel_requested\":" << (job.cancel_requested ? "true" : "false")
+            << ",\"retryable\":" << (job.retryable ? "true" : "false") << '}';
     }
     out << "]}";
     return out.str();
@@ -995,7 +1262,13 @@ std::optional<std::string> DownloadManager::job_json(const std::string& id) cons
             ",\"downloaded_bytes\":" + std::to_string(view.downloaded_bytes) +
             ",\"total_bytes\":" + std::to_string(view.total_bytes) +
             ",\"progress_percent\":" + std::to_string(percent) +
-            ",\"installed_path\":" + json_quote(view.installed_path) + ",\"error\":" + json_quote(view.error) + "}";
+            ",\"installed_path\":" + json_quote(view.installed_path) + ",\"error\":" + json_quote(view.error) +
+            ",\"last_error\":" + json_quote(view.last_error) + ",\"error_code\":" + json_quote(view.error_code) +
+            ",\"created_at\":" + std::to_string(view.created_at) + ",\"updated_at\":" + std::to_string(view.updated_at) +
+            ",\"started_at\":" + std::to_string(view.started_at) + ",\"finished_at\":" + std::to_string(view.finished_at) +
+            ",\"attempt\":" + std::to_string(view.attempt) +
+            ",\"cancel_requested\":" + (view.cancel_requested ? "true" : "false") +
+            ",\"retryable\":" + (view.retryable ? "true" : "false") + "}";
     }
     return std::nullopt;
 }
@@ -1042,23 +1315,34 @@ bool DownloadManager::start(const std::string& item_id, bool accept_license,
         constexpr std::size_t max_job_history = 64;
         while (jobs_.size() >= max_job_history) {
             const auto terminal = std::find_if(jobs_.begin(), jobs_.end(), [](const auto& candidate) {
-                const auto state = snapshot_job(candidate).state;
-                return state == "succeeded" || state == "failed" || state == "canceled";
+                return is_terminal_job_state(snapshot_job(candidate).state);
             });
             if (terminal == jobs_.end()) {
                 error = "Download job history is full and no completed job can be removed yet. Restart Local AI Runtime to clear the history.";
                 return false;
             }
+            remove_persisted_job((*terminal)->id);
             jobs_.erase(terminal);
         }
         auto job = std::make_shared<Job>();
         job->id = "download-" + std::to_string(next_job_number_++);
         job->item_id = item_id;
         job->kind = item_id.rfind("llama.cpp-", 0) == 0 ? "engine" : "model";
+        job->license_accepted = accept_license;
+        job->created_at = unix_time_millis();
+        job->updated_at = job->created_at;
+        job->persist_callback = [this, weak = std::weak_ptr<Job>(job)] {
+            if (const auto locked = weak.lock()) persist_job(locked);
+        };
         job_id = job->id;
         try {
             workers_.reserve(workers_.size() + 1);
             jobs_.push_back(job);
+            if (!persist_job(job)) {
+                jobs_.pop_back();
+                error = "Could not persist this job in the local user-data folder; no download was started.";
+                return false;
+            }
             workers_.push_back(Worker{job->id, std::thread([this, job] { run_job(job); })});
         } catch (const std::exception& ex) {
             // If the job was added but thread creation failed, remove it from the
@@ -1066,6 +1350,7 @@ bool DownloadManager::start(const std::string& item_id, bool accept_license,
             // into workers_ cannot require another vector allocation.
             const auto found = std::find(jobs_.begin(), jobs_.end(), job);
             if (found != jobs_.end()) jobs_.erase(found);
+            remove_persisted_job(job->id);
             error = std::string("Could not start download worker: ") + ex.what();
             return false;
         }
@@ -1122,13 +1407,13 @@ bool DownloadManager::start_update(const std::string& current_version, const std
     constexpr std::size_t max_job_history = 64;
     while (jobs_.size() >= max_job_history) {
         const auto terminal = std::find_if(jobs_.begin(), jobs_.end(), [](const auto& candidate) {
-            const auto state = snapshot_job(candidate).state;
-            return state == "succeeded" || state == "failed" || state == "canceled";
+            return is_terminal_job_state(snapshot_job(candidate).state);
         });
         if (terminal == jobs_.end()) {
             error = "Download job history is full and no completed job can be removed yet.";
             return false;
         }
+        remove_persisted_job((*terminal)->id);
         jobs_.erase(terminal);
     }
     auto job = std::make_shared<Job>();
@@ -1141,14 +1426,25 @@ bool DownloadManager::start_update(const std::string& current_version, const std
     job->asset_name = asset_name;
     job->expected_size = expected_size;
     job->total_bytes = expected_size;
+    job->created_at = unix_time_millis();
+    job->updated_at = job->created_at;
+    job->persist_callback = [this, weak = std::weak_ptr<Job>(job)] {
+        if (const auto locked = weak.lock()) persist_job(locked);
+    };
     job_id = job->id;
     try {
         workers_.reserve(workers_.size() + 1);
         jobs_.push_back(job);
+        if (!persist_job(job)) {
+            jobs_.pop_back();
+            error = "Could not persist this update job in the local user-data folder; no download was started.";
+            return false;
+        }
         workers_.push_back(Worker{job->id, std::thread([this, job] { run_job(job); })});
     } catch (const std::exception& ex) {
         const auto found = std::find(jobs_.begin(), jobs_.end(), job);
         if (found != jobs_.end()) jobs_.erase(found);
+        remove_persisted_job(job->id);
         error = std::string("Could not start update download worker: ") + ex.what();
         return false;
     }
@@ -1164,7 +1460,7 @@ void DownloadManager::reap_finished_workers_locked() {
         bool finished = job_it == jobs_.end();
         if (!finished) {
             const auto state = snapshot_job(*job_it).state;
-            finished = state == "succeeded" || state == "failed" || state == "canceled";
+            finished = is_terminal_job_state(state);
         }
         if (!finished) {
             ++it;
@@ -1190,24 +1486,135 @@ bool DownloadManager::has_active_jobs() const {
 }
 
 bool DownloadManager::cancel(const std::string& job_id, std::string& error) {
+    std::shared_ptr<Job> selected;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto found = std::find_if(jobs_.begin(), jobs_.end(), [&](const auto& job) { return job->id == job_id; });
+        if (found != jobs_.end()) selected = *found;
+    }
+    if (!selected) { error = "Unknown download job id."; return false; }
+    bool accepted = false;
+    mutate_job(selected, [&](Job& job) {
+        if (is_terminal_job_state(job.state)) return;
+        job.cancel_requested.store(true);
+        job.phase = "Cancel requested; waiting for a safe cancellation point";
+        accepted = true;
+    });
+    if (!accepted) { error = "This job has already finished."; return false; }
+    error.clear();
+    log_diagnostic("INFO", "jobs.cancel_requested", "job=" + job_id);
+    return true;
+}
+
+bool DownloadManager::retry(const std::string& job_id, std::string& error) {
     std::lock_guard<std::mutex> lock(mutex_);
-    for (const auto& job : jobs_) {
-        if (job->id != job_id) continue;
-        std::lock_guard<std::mutex> job_lock(job->mutex);
-        if (job->state == "succeeded" || job->state == "failed" || job->state == "canceled") {
-            error = "This download job has already finished.";
+    reap_finished_workers_locked();
+    const auto found = std::find_if(jobs_.begin(), jobs_.end(), [&](const auto& job) { return job->id == job_id; });
+    if (found == jobs_.end()) { error = "Unknown job id."; return false; }
+    const auto job = *found;
+    const auto previous = snapshot_job(job);
+    if (previous.state != "failed" && previous.state != "canceled" && previous.state != "interrupted") {
+        error = "Only failed, canceled or interrupted jobs can be retried.";
+        return false;
+    }
+    if (!is_retryable_job(*job)) {
+        error = "This saved job does not contain enough trusted task information to retry safely.";
+        return false;
+    }
+    if (any_engine_running(engines_)) {
+        error = "Stop running engines before retrying a component installation.";
+        return false;
+    }
+    if (job->item_id != "runtime-update") {
+        const auto os = host_os();
+        const auto arch = host_architecture();
+        const bool cpu_supported = job->item_id != "llama.cpp-cpu" ||
+            (((os == "windows" || os == "linux") && arch == "x64") ||
+             (os == "macos" && (arch == "x64" || arch == "arm64")));
+        const bool cuda_supported = (job->item_id != "llama.cpp-cuda12" && job->item_id != "llama.cpp-cuda13") ||
+            ((os == "windows" || os == "linux") && arch == "x64");
+        if (!cpu_supported || !cuda_supported) {
+            error = "This catalog item is not supported on the current OS/architecture and cannot be retried.";
             return false;
         }
-        job->cancel_requested.store(true);
-        job->phase = "Canceling";
-        error.clear();
-        return true;
     }
-    error = "Unknown download job id.";
-    return false;
+    for (const auto& existing : jobs_) {
+        if (existing == job) continue;
+        const auto state = snapshot_job(existing).state;
+        if (is_active_job_state(state)) {
+            error = "Another job is active in " + existing->id + ". Finish or cancel it before retrying.";
+            return false;
+        }
+    }
+    if (job->item_id == "runtime-update") {
+        const auto expected_asset = runtime_update_asset_name();
+        const auto expected_url = "https://github.com/azmisahin-ai/local-ai-runtime/releases/download/" +
+                                  job->version + "/" + expected_asset;
+        if (expected_asset.empty() || job->asset_name != expected_asset || job->source_url != expected_url ||
+            !is_newer_release_tag(job->version, "0.0.0") || !is_sha256_digest(job->expected_sha256) ||
+            job->expected_size < 1024 || job->expected_size > kMaximumRuntimeUpdateBytes) {
+            error = "The saved runtime update metadata failed its safety checks and cannot be retried.";
+            return false;
+        }
+    } else if (!job->license_accepted) {
+        error = "The original upstream license acceptance was not recorded; start this catalog item again and review its license.";
+        return false;
+    }
+
+    try {
+        workers_.reserve(workers_.size() + 1);
+        mutate_job(job, [](Job& current) {
+            current.last_error = current.error.empty() ? current.last_error : current.error;
+            current.error.clear();
+            current.error_code.clear();
+            current.state = "queued";
+            current.phase = "Retry queued";
+            current.downloaded_bytes = 0;
+            current.total_bytes = current.item_id == "runtime-update" ? current.expected_size : 0;
+            current.cancel_requested.store(false);
+            current.started_at = 0;
+            current.finished_at = 0;
+            ++current.attempt;
+        });
+        if (!persist_job(job)) {
+            mutate_job(job, [&](Job& current) {
+                current.state = previous.state;
+                current.phase = previous.phase;
+                current.error = previous.error;
+                current.last_error = previous.last_error;
+                current.error_code = previous.error_code;
+                current.downloaded_bytes = previous.downloaded_bytes;
+                current.total_bytes = previous.total_bytes;
+                current.attempt = previous.attempt;
+                current.started_at = previous.started_at;
+                current.finished_at = previous.finished_at;
+                current.cancel_requested.store(previous.cancel_requested);
+            });
+            error = "Could not persist the retry attempt in the local user-data folder; no retry was started.";
+            return false;
+        }
+        workers_.push_back(Worker{job->id, std::thread([this, job] { run_job(job); })});
+    } catch (const std::exception& ex) {
+        mutate_job(job, [&](Job& current) {
+            current.state = "failed";
+            current.phase = "Could not start retry";
+            current.error_code = "worker_start_failed";
+            current.error = std::string("Could not start retry worker: ") + ex.what();
+            current.finished_at = unix_time_millis();
+        });
+        error = std::string("Could not start retry worker: ") + ex.what();
+        return false;
+    }
+    log_diagnostic("INFO", "jobs.retry_queued", "job=" + job_id + " attempt=" + std::to_string(previous.attempt + 1));
+    error.clear();
+    return true;
 }
 
 void DownloadManager::run_job(const std::shared_ptr<Job>& job) {
+    mutate_job(job, [](Job& current) {
+        current.started_at = unix_time_millis();
+        current.phase = current.attempt > 1 ? "Starting retry attempt" : "Starting job";
+    });
     log_diagnostic("INFO", "download.started", "job=" + job->id + " item=" + job->item_id);
     try {
         if (job->cancel_requested.load()) throw std::runtime_error("Download canceled by the user.");
@@ -1221,6 +1628,9 @@ void DownloadManager::run_job(const std::shared_ptr<Job>& job) {
             current.state = "succeeded";
             if (current.item_id != "runtime-update") current.phase = "Installed and configured";
             current.downloaded_bytes = current.total_bytes > 0 ? current.total_bytes : current.downloaded_bytes;
+            current.error.clear();
+            current.error_code.clear();
+            current.finished_at = unix_time_millis();
         });
         const auto finished = snapshot_job(job);
         log_diagnostic("INFO", "download.succeeded", "job=" + finished.id + " item=" + finished.item_id +
@@ -1232,6 +1642,8 @@ void DownloadManager::run_job(const std::shared_ptr<Job>& job) {
             current.state = canceled ? "canceled" : "failed";
             current.phase = canceled ? "Canceled" : "Failed";
             current.error = ex.what();
+            current.error_code = canceled ? "job_canceled" : "job_failed";
+            current.finished_at = unix_time_millis();
         });
         log_diagnostic(canceled ? "WARN" : "ERROR", canceled ? "download.canceled" : "download.failed",
                        "job=" + previous.id + " item=" + previous.item_id +

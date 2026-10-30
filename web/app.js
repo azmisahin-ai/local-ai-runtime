@@ -502,7 +502,7 @@ async function stageRuntimeUpdate() {
     });
     updateStageJobId = started.job_id;
     while (updateStageJobId) {
-      const job = await api(`/v1/downloads/${encodeURIComponent(updateStageJobId)}`);
+      const job = await api(`/v1/jobs/${encodeURIComponent(updateStageJobId)}`);
       const progress = Math.max(0, Math.min(100, Number(job.progress_percent || 0)));
       const downloaded = Number(job.downloaded_bytes || 0);
       const total = Number(job.total_bytes || 0);
@@ -740,8 +740,8 @@ function catalogItemCard(item) {
     install.disabled = true;
     catalogError.textContent = '';
     try {
-      const started = await api(`/v1/downloads/${encodeURIComponent(item.id)}`, {
-        method: 'POST', body: JSON.stringify({ accept_license: true }),
+      const started = await api('/v1/jobs', {
+        method: 'POST', body: JSON.stringify({ item_id: item.id, accept_license: true }),
       });
       catalogError.textContent = `Queued ${item.name || item.id} as ${started.job_id}. Follow the installation status below.`;
       await refreshDownloads();
@@ -813,6 +813,7 @@ function downloadJobCard(job) {
   header.append(make('span', 'tag', job.kind || 'component'));
   card.append(header);
   card.append(make('p', '', job.phase || job.state));
+  if (Number(job.attempt || 1) > 1) card.append(make('p', 'hint', `${translation('activity.attempt', 'Attempt')} ${job.attempt}`));
   const progress = make('progress', 'download-progress');
   progress.max = 100;
   progress.value = Math.max(0, Math.min(100, Number(job.progress_percent || 0)));
@@ -829,14 +830,19 @@ function downloadJobCard(job) {
       card.append(make('p', 'recovery-hint', 'The model is already downloaded and verified. Close any app that may be using the model file, confirm the license again, then click Download & install to retry the finalization step without downloading 1.12 GB again.'));
     }
   }
+  if (job.last_error && !job.error) {
+    card.append(make('p', 'hint', `${translation('activity.previousError', 'Previous attempt')}: ${job.last_error}`));
+  }
   const active = ['queued', 'downloading', 'verifying', 'extracting', 'configuring'].includes(job.state);
   if (active) {
-    const cancel = make('button', 'button secondary', 'Cancel');
+    const cancel = make('button', 'button secondary', job.cancel_requested
+      ? translation('activity.cancelRequested', 'Cancellation requested…') : 'Cancel');
     cancel.type = 'button';
+    cancel.disabled = Boolean(job.cancel_requested);
     cancel.addEventListener('click', async () => {
       cancel.disabled = true;
       try {
-        await api(`/v1/downloads/${encodeURIComponent(job.id)}`, { method: 'DELETE' });
+        await api(`/v1/jobs/${encodeURIComponent(job.id)}`, { method: 'DELETE' });
         await refreshDownloads();
       } catch (error) {
         catalogError.textContent = error.message;
@@ -844,13 +850,27 @@ function downloadJobCard(job) {
       }
     });
     card.append(cancel);
+  } else if (job.retryable) {
+    const retry = make('button', 'button secondary', translation('activity.retry', 'Retry'));
+    retry.type = 'button';
+    retry.addEventListener('click', async () => {
+      retry.disabled = true;
+      try {
+        await api(`/v1/jobs/${encodeURIComponent(job.id)}/retry`, { method: 'POST' });
+        await refreshDownloads();
+      } catch (error) {
+        catalogError.textContent = error.message;
+        retry.disabled = false;
+      }
+    });
+    card.append(retry);
   }
   return card;
 }
 
 async function refreshDownloads() {
   try {
-    const result = await api('/v1/downloads');
+    const result = await api('/v1/jobs');
     if (!Array.isArray(result.data)) throw new Error('The download job list response is invalid.');
     const activeJobs = result.data.filter((job) => ['queued', 'downloading', 'verifying', 'extracting', 'configuring'].includes(job.state)).length;
     if (activityCountBadge) { activityCountBadge.textContent = String(activeJobs); activityCountBadge.hidden = activeJobs === 0; }
@@ -866,7 +886,7 @@ async function refreshDownloads() {
     for (const job of result.data) {
       downloadList.append(downloadJobCard(job));
       if (['queued', 'downloading', 'verifying', 'extracting', 'configuring'].includes(job.state)) hasActive = true;
-      if (['succeeded', 'failed', 'canceled'].includes(job.state) && !completedDownloadJobs.has(job.id)) {
+      if (['succeeded', 'failed', 'canceled', 'interrupted'].includes(job.state) && !completedDownloadJobs.has(job.id)) {
         completedDownloadJobs.add(job.id);
         if (job.kind !== 'update') {
           changedComponentTerminalState = true;

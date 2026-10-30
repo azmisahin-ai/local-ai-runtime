@@ -131,6 +131,49 @@ def main():
         else:
             default_data_root = temp / "xdg-data" / "local-ai-runtime"
         runtime_instance_id = str(uuid.uuid4())
+        persisted_jobs_dir = data_root / "jobs"
+        persisted_jobs_dir.mkdir(parents=True, exist_ok=True)
+        interrupted_job_record = {
+            "schema_version": 1,
+            "id": "download-41",
+            "item_id": "qwen2.5-1.5b-q4km",
+            "kind": "model",
+            "state": "downloading",
+            "phase": "Downloading test fixture",
+            "version": "",
+            "installed_path": "",
+            "error": "",
+            "error_code": "",
+            "source_url": "",
+            "expected_sha256": "",
+            "asset_name": "",
+            "expected_size": 0,
+            "downloaded_bytes": 4096,
+            "total_bytes": 1117320736,
+            "created_at": 1000,
+            "updated_at": 2000,
+            "started_at": 1500,
+            "finished_at": 0,
+            "attempt": 2,
+            "license_accepted": True,
+            "cancel_requested": False,
+        }
+        persisted_job_path = persisted_jobs_dir / "download-41.json"
+        persisted_job_path.write_text(json.dumps(interrupted_job_record), encoding="utf-8")
+        untrusted_retry_record = dict(interrupted_job_record)
+        untrusted_retry_record.update({
+            "id": "download-42",
+            "item_id": "arbitrary-command",
+            "kind": "model",
+            "state": "failed",
+            "phase": "Failed",
+            "error": "Fixture only; this task is not part of the reviewed catalog.",
+            "error_code": "job_failed",
+            "created_at": 3000,
+            "updated_at": 4000,
+            "attempt": 1,
+        })
+        (persisted_jobs_dir / "download-42.json").write_text(json.dumps(untrusted_retry_record), encoding="utf-8")
         engine_fixture = data_root / "engines" / "llama.cpp" / "state-contract-fixture-cpu"
         engine_fixture.mkdir(parents=True, exist_ok=True)
         installed_server = engine_fixture / ("llama-server.exe" if os.name == "nt" else "llama-server")
@@ -173,6 +216,27 @@ def main():
             identity = json.loads(identity_raw)
             assert status == 200 and "application/json" in identity_type
             assert identity.get("schema_version") == 1 and identity.get("data_root_id") == runtime_instance_id
+            jobs_status, jobs_raw, jobs_type = request(base + "/v1/jobs")
+            jobs_response = json.loads(jobs_raw)
+            jobs_schema_path = Path(__file__).resolve().parents[1] / "catalog" / "schemas" / "jobs-v1.schema.json"
+            jobs_schema = json.loads(jobs_schema_path.read_text(encoding="utf-8"))
+            jobs_errors = validate_catalog_schema(jobs_response, jobs_schema)
+            assert not jobs_errors, "Persistent jobs API did not satisfy jobs-v1 schema: " + "; ".join(jobs_errors[:12])
+            restored_jobs = jobs_response["data"]
+            assert jobs_status == 200 and "application/json" in jobs_type
+            assert [job["id"] for job in restored_jobs] == ["download-41", "download-42"]
+            restored_job = restored_jobs[0]
+            assert restored_job["state"] == "interrupted", "An in-flight job must not resume automatically after restart"
+            assert restored_job["error_code"] == "process_interrupted"
+            assert restored_job["retryable"] is True and restored_job["attempt"] == 2
+            assert restored_job["downloaded_bytes"] == 4096 and restored_job["cancel_requested"] is False
+            assert restored_jobs[1]["retryable"] is False, "Persisted jobs outside the reviewed catalog must never become retry commands"
+            legacy_jobs_status, legacy_jobs_raw, _ = request(base + "/v1/downloads")
+            assert legacy_jobs_status == 200 and json.loads(legacy_jobs_raw)["data"][0]["id"] == "download-41", (
+                "The legacy downloads endpoint must remain an alias for the persistent job list"
+            )
+            single_job_status, single_job_raw, _ = request(base + "/v1/jobs/download-41")
+            assert single_job_status == 200 and json.loads(single_job_raw)["state"] == "interrupted"
             explicit_runtime_log = data_root / "logs" / "runtime.log"
             assert explicit_runtime_log.exists(), "Runtime diagnostics did not use LOCAL_AI_RUNTIME_DATA_DIR"
             assert not (default_data_root / "logs" / "runtime.log").exists(), (
@@ -360,8 +424,10 @@ def main():
                 raise AssertionError("Runtime update staging must reject older release tags")
             except urllib.error.HTTPError as exc:
                 assert exc.code == 422, f"Expected 422 for older update tag, got {exc.code}"
-            status, jobs_raw, _ = request(base + "/v1/downloads")
-            assert status == 200 and json.loads(jobs_raw)["data"] == [], "Rejected update requests must not start a job"
+            status, jobs_raw, _ = request(base + "/v1/jobs")
+            assert status == 200 and [job["id"] for job in json.loads(jobs_raw)["data"]] == ["download-41", "download-42"], (
+                "Rejected update requests must not start an additional job"
+            )
 
             # Managed catalog and download job endpoints must be safe to inspect
             # without network side effects. Downloads require explicit license
@@ -403,8 +469,8 @@ def main():
                 cuda_dependencies = items["llama.cpp-cuda12"]["provenance"]["dependencies"]
                 assert any(dependency["id"] == "llama.cpp-cudart-cuda12" for dependency in cuda_dependencies)
                 assert items["llama.cpp-cuda12"]["evidence"]["real_task_test"] == "not-verified-by-hosted-ci"
-            status, jobs_raw, _ = request(base + "/v1/downloads")
-            assert status == 200 and json.loads(jobs_raw)["data"] == []
+            status, jobs_raw, _ = request(base + "/v1/jobs")
+            assert status == 200 and [job["id"] for job in json.loads(jobs_raw)["data"]] == ["download-41", "download-42"]
             try:
                 request(base + "/v1/downloads/qwen2.5-1.5b-q4km", method="POST", body={"accept_license": False})
                 raise AssertionError("Download must require explicit license acknowledgement")
@@ -415,8 +481,20 @@ def main():
                 raise AssertionError("Unknown catalog items must be rejected")
             except urllib.error.HTTPError as exc:
                 assert exc.code == 422, f"Expected 422 for unknown catalog item, got {exc.code}"
-            status, jobs_raw, _ = request(base + "/v1/downloads")
-            assert status == 200 and json.loads(jobs_raw)["data"] == [], "Rejected downloads must not create jobs or start network requests"
+            status, jobs_raw, _ = request(base + "/v1/jobs")
+            assert status == 200 and [job["id"] for job in json.loads(jobs_raw)["data"]] == ["download-41", "download-42"], (
+                "Rejected downloads must not create jobs or start network requests"
+            )
+            try:
+                request(base + "/v1/jobs/not-a-job/retry", method="POST", body={})
+                raise AssertionError("Retry must reject unknown job IDs")
+            except urllib.error.HTTPError as exc:
+                assert exc.code == 404, f"Expected 404 for unknown retry job, got {exc.code}"
+            try:
+                request(base + "/v1/jobs/download-42/retry", method="POST", body={})
+                raise AssertionError("Retry must reject persisted jobs outside the reviewed catalog")
+            except urllib.error.HTTPError as exc:
+                assert exc.code == 422, f"Expected 422 for unsafe saved job retry, got {exc.code}"
 
             status, engines_raw, _ = request(base + "/v1/engines")
             engines = json.loads(engines_raw)["data"]
@@ -656,7 +734,10 @@ def main():
             assert status == 202 and json.loads(shutdown_raw)["status"] == "shutting-down"
             wait_until(lambda: process.poll() is not None, 5, "graceful runtime shutdown")
             assert process.returncode == 0, f"Runtime exited with {process.returncode} after graceful shutdown"
-            print("HTTP smoke test passed: dashboard, local hardware inventory, health/version/platform-update metadata, staged update status, apply capability guards, update URL/digest guards, duplicate-startup diagnostics, security guards, readiness probe, engine lifecycle, chat/models proxy, GGUF validation, quoted paths, restricted engine CORS, CPU/GPU setup persistence, graceful shutdown.")
+            saved_job_after_shutdown = json.loads(persisted_job_path.read_text(encoding="utf-8"))
+            assert saved_job_after_shutdown["state"] == "interrupted", "Restored job state should remain durable on disk"
+            assert saved_job_after_shutdown["error_code"] == "process_interrupted"
+            print("HTTP smoke test passed: persistent job restoration, interrupted-state safety, reviewed-catalog retry guard, legacy /v1/downloads compatibility, jobs API, dashboard, local hardware inventory, health/version/platform-update metadata, staged update status, apply capability guards, update URL/digest guards, duplicate-startup diagnostics, security guards, readiness probe, engine lifecycle, chat/models proxy, GGUF validation, quoted paths, restricted engine CORS, CPU/GPU setup persistence, graceful shutdown.")
         except Exception:
             runtime_log.flush()
             print(

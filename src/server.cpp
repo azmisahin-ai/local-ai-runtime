@@ -1364,6 +1364,31 @@ http::response<http::string_body> handle_request(const http::request<http::strin
     if (request.method() == http::verb::get && target == "/v1/catalog") {
         return json_response(http::status::ok, version, downloads.catalog_json());
     }
+    if (request.method() == http::verb::get && target == "/v1/jobs") {
+        return json_response(http::status::ok, version, downloads.jobs_json());
+    }
+    if (request.method() == http::verb::post && target == "/v1/jobs") {
+        try {
+            std::istringstream input(request.body());
+            boost::property_tree::ptree body;
+            boost::property_tree::read_json(input, body);
+            const auto item_id = body.get<std::string>("item_id", "");
+            const bool accept_license = body.get<bool>("accept_license", false);
+            if (item_id.empty()) return error_response(http::status::unprocessable_entity, version, "A catalog item_id is required.");
+            std::string job_id;
+            std::string error;
+            if (!downloads.start(item_id, accept_license, job_id, error)) {
+                const auto status = error.find("already being installed") != std::string::npos ||
+                    error.find("active in job") != std::string::npos || error.find("running engines") != std::string::npos
+                    ? http::status::conflict : http::status::unprocessable_entity;
+                return error_response(status, version, error);
+            }
+            return json_response(http::status::accepted, version,
+                "{\"job_id\":" + json_quoted(job_id) + ",\"item_id\":" + json_quoted(item_id) + ",\"status\":\"queued\"}");
+        } catch (const boost::property_tree::json_parser_error& ex) {
+            return error_response(http::status::bad_request, version, std::string("Invalid job request JSON: ") + ex.what());
+        }
+    }
     if (request.method() == http::verb::get && target == "/v1/downloads") {
         return json_response(http::status::ok, version, downloads.jobs_json());
     }
@@ -1371,20 +1396,41 @@ http::response<http::string_body> handle_request(const http::request<http::strin
         return json_response(http::status::ok, version,
             activity_snapshot_json(engines.statuses(), downloads.jobs_json()));
     }
-    constexpr std::string_view download_prefix = "/v1/downloads/";
-    if (target.rfind(download_prefix, 0) == 0 && target.size() > download_prefix.size()) {
-        const auto download_id = target.substr(download_prefix.size());
-        if (download_id.find('/') == std::string::npos && request.method() == http::verb::get) {
-            const auto job = downloads.job_json(download_id);
+    constexpr std::string_view jobs_prefix = "/v1/jobs/";
+    constexpr std::string_view downloads_prefix = "/v1/downloads/";
+    const bool jobs_route = target.rfind(jobs_prefix, 0) == 0;
+    const bool downloads_route = target.rfind(downloads_prefix, 0) == 0;
+    if ((jobs_route || downloads_route) && target.size() > (jobs_route ? jobs_prefix.size() : downloads_prefix.size())) {
+        const auto prefix = jobs_route ? jobs_prefix : downloads_prefix;
+        const auto route_id = target.substr(prefix.size());
+        if (jobs_route && request.method() == http::verb::post && route_id.size() > 6 && route_id.ends_with("/retry")) {
+            const auto job_id = route_id.substr(0, route_id.size() - 6);
+            if (job_id.find('/') != std::string::npos) return error_response(http::status::not_found, version, "Job route was not found.");
+            std::string error;
+            if (!downloads.retry(std::string(job_id), error)) {
+                if (error == "Unknown job id.") return error_response(http::status::not_found, version, error);
+                const auto status = error.find("active") != std::string::npos || error.find("running engines") != std::string::npos
+                    ? http::status::conflict : http::status::unprocessable_entity;
+                return error_response(status, version, error);
+            }
+            const auto job = downloads.job_json(std::string(job_id));
+            return json_response(http::status::accepted, version,
+                job.value_or("{\"id\":" + json_quoted(job_id) + ",\"status\":\"queued\"}"));
+        }
+        if (route_id.find('/') == std::string::npos && request.method() == http::verb::get) {
+            const auto job = downloads.job_json(std::string(route_id));
             if (!job) return error_response(http::status::not_found, version, "Download job was not found.");
             return json_response(http::status::ok, version, *job);
         }
-        if (download_id.find('/') == std::string::npos && request.method() == http::verb::delete_) {
+        if (route_id.find('/') == std::string::npos && request.method() == http::verb::delete_) {
             std::string error;
-            if (!downloads.cancel(download_id, error)) return error_response(http::status::conflict, version, error);
-            return json_response(http::status::accepted, version, "{\"id\":" + json_quoted(download_id) + ",\"status\":\"canceling\"}");
+            if (!downloads.cancel(std::string(route_id), error)) {
+                return error_response(error == "Unknown download job id." ? http::status::not_found : http::status::conflict, version, error);
+            }
+            return json_response(http::status::accepted, version,
+                "{\"id\":" + json_quoted(route_id) + ",\"status\":" + json_quoted(jobs_route ? "cancel_requested" : "canceling") + "}");
         }
-        if (download_id.find('/') == std::string::npos && request.method() == http::verb::post) {
+        if (!jobs_route && route_id.find('/') == std::string::npos && request.method() == http::verb::post) {
             try {
                 std::istringstream input(request.body());
                 boost::property_tree::ptree body;
@@ -1392,13 +1438,13 @@ http::response<http::string_body> handle_request(const http::request<http::strin
                 const bool accept_license = body.get<bool>("accept_license", false);
                 std::string job_id;
                 std::string error;
-                if (!downloads.start(download_id, accept_license, job_id, error)) {
+                if (!downloads.start(std::string(route_id), accept_license, job_id, error)) {
                     const auto status = error.find("already being installed") != std::string::npos || error.find("running engines") != std::string::npos
                         ? http::status::conflict : http::status::unprocessable_entity;
                     return error_response(status, version, error);
                 }
                 return json_response(http::status::accepted, version,
-                    "{\"job_id\":" + json_quoted(job_id) + ",\"item_id\":" + json_quoted(download_id) + ",\"status\":\"queued\"}");
+                    "{\"job_id\":" + json_quoted(job_id) + ",\"item_id\":" + json_quoted(route_id) + ",\"status\":\"queued\"}");
             } catch (const boost::property_tree::json_parser_error& ex) {
                 return error_response(http::status::bad_request, version, std::string("Invalid download request JSON: ") + ex.what());
             }

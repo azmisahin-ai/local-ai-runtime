@@ -24,8 +24,17 @@ struct DownloadJobSnapshot {
     std::string version;
     std::string installed_path;
     std::string error;
+    std::string last_error;
+    std::string error_code;
     std::uint64_t downloaded_bytes{0};
     std::uint64_t total_bytes{0};
+    std::uint64_t created_at{0};
+    std::uint64_t updated_at{0};
+    std::uint64_t started_at{0};
+    std::uint64_t finished_at{0};
+    std::uint64_t attempt{1};
+    bool cancel_requested{false};
+    bool retryable{false};
 };
 
 // Manages downloads only from the built-in, reviewed catalog. Arbitrary URL
@@ -46,6 +55,7 @@ public:
     std::string catalog_json() const;
     std::string jobs_json() const;
     std::optional<std::string> job_json(const std::string& id) const;
+    bool retry(const std::string& job_id, std::string& error);
     bool start(const std::string& item_id, bool accept_license,
                std::string& job_id, std::string& error);
     bool start_update(const std::string& current_version, const std::string& tag_name,
@@ -62,6 +72,9 @@ public:
     static std::string sha256_file(const std::filesystem::path& path);
 
 private:
+    void load_jobs();
+    bool persist_job(const std::shared_ptr<Job>& job) const;
+    void remove_persisted_job(const std::string& job_id) const;
     void run_job(const std::shared_ptr<Job>& job);
     void reap_finished_workers_locked();
     void download_model(const std::shared_ptr<Job>& job);
@@ -74,6 +87,7 @@ private:
     RuntimeConfig config_;
     EngineManager& engines_;
     mutable std::mutex mutex_;
+    mutable std::mutex persistence_mutex_;
     std::vector<std::shared_ptr<Job>> jobs_;
     std::vector<Worker> workers_;
     std::uint64_t next_job_number_{1};
