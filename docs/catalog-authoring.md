@@ -1,37 +1,50 @@
 # Catalog authoring guide
 
-The catalog is the reviewed list of components a user may install. It is not a generic downloader and it is not a plugin marketplace. The current runtime still uses a built-in install allowlist; the v1 metadata schema is the contract for catalog data and the next step toward a single reviewed manifest.
+The catalog is the reviewed list of components a user may install. It is not a generic downloader or a plugin marketplace. `catalog/manifest-v1.json` is the checked-in, versioned source of truth for both public component metadata and the runtime install allowlist.
 
-## Component kinds
+At CMake configure time, the manifest is embedded into the runtime binary. The runtime never downloads a manifest and never reads install policy from a user-writable data directory. A catalog entry is not installable merely because it has a valid display record: its install strategy, immutable source pin, targets and metadata identity must all pass the runtime's compiled validation.
 
-- **Engine**: executable runtime or adapter (for example, `llama.cpp` CPU or CUDA 12). It declares tasks, platform/backend targets, external requirements, resource behavior, dependencies, installation policy and evidence status.
-- **Model**: weight/checkpoint (for example, a pinned GGUF file). It declares format, immutable revision, exact size/hash when pinned, license, memory guidance and supported engine families. A model's format compatibility does not guarantee that it fits a device.
-- **Dependency**: a verified prerequisite needed by an engine. Supporting archives such as CUDA runtime DLLs are listed under the parent engine's `provenance.dependencies`; do not show them as duplicate user-facing engines.
+## Manifest structure
 
-## Required metadata contract
+- `schema_version` describes the manifest contract; `manifest_version` versions reviewed catalog content.
+- Each component has a stable `id`, `kind`, `installable` flag, `default_model` marker, an `install` policy, and `metadata_json`.
+- `metadata_json` is the compact canonical `component-v1` JSON object stored as a string so the compiled runtime can preserve JSON scalar types exactly when it adds runtime-derived `installed` and `installed_path` properties.
+- `install.targets` is the install allowlist for OS/architecture pairs. It must exactly match `metadata_json.compatibility.targets`; display claims and install permissions cannot drift apart.
+- The only accepted installer strategies in v1 are `llama-release` and `pinned-gguf`. Unknown strategy names fail closed.
 
-The `/v1/catalog` response follows [`catalog/schemas/component-v1.schema.json`](../catalog/schemas/component-v1.schema.json). The contract covers:
+The contracts are:
 
-- identity and versioning (`schema_version`, stable ID, kind/type, family, version policy);
-- tasks/workspaces/modalities and input/output formats;
-- supported OS/architecture pairs, backend, driver requirements and known limitations;
-- download size policy and RAM/VRAM estimates with an explicit confidence value;
-- canonical source, revision policy, license, digest policy and dependencies;
-- package verification, real task test and hardware profile evidence;
-- per-user install location and update policy.
+- [`manifest-v1.schema.json`](../catalog/schemas/manifest-v1.schema.json): authoring manifest shape and allowed installer fields.
+- [`component-v1.schema.json`](../catalog/schemas/component-v1.schema.json): public `/v1/catalog` metadata returned by the runtime.
 
-If a field is unknown, use `null`, an empty list when appropriate, or an explicit “not verified” status. Do not guess a minimum VRAM requirement or claim a model/backend is supported from a detected GPU alone. Estimates labelled `heuristic` must stay visibly estimates.
+## Supported v1 installer strategies
 
-## Adding a new component safely
+### `llama-release`
 
-1. Identify one concrete task/workspace and the maintained upstream project. Review the exact component license and redistribution terms.
-2. Identify the immutable release/revision and the exact OS/architecture/backend assets. Prefer a published digest or pin a known digest; never disable TLS/hash checks to make an asset work.
-3. Define all companion dependencies under the selected engine. Verify each asset, enforce download and expanded-size limits, reject unsafe archive paths, then activate the complete set atomically.
-4. Add a record matching component-v1, plus a resolver that accepts only the reviewed ID and known official asset naming. Arbitrary URLs and repository-supplied install scripts are not allowed.
-5. Add regression tests for asset selection ambiguity, unsupported targets, license acknowledgement, checksum mismatch, cancellation, extraction, activation rollback and uninstall/update behavior.
-6. Add a real task smoke test for each claimed target profile. Record OS, CPU/GPU, driver, RAM/VRAM, model revision/quantization, context, output success and memory observations. Hosted fake-engine CI is not real-task evidence.
-7. Keep the component state honest: `listed`, `package verified`, `installed`, `process ready`, `task tested`, and `profile validated` are separate milestones.
+Used only for reviewed `llama.cpp` engine variants (`cpu`, `cuda12`, `cuda13`). The manifest chooses the stable component ID, variant, and supported targets. Runtime code still owns the constrained official GitHub Releases API resolver and its exact asset-name selection rules. It requires official SHA-256 metadata, rejects ambiguous matches, pairs CUDA server/runtime archives from the same release, verifies both packages, and safely extracts them. A manifest cannot provide an arbitrary download URL, executable command, or install script.
 
-## What v1 does not mean
+### `pinned-gguf`
 
-A valid schema record does not make a component installable by itself. The current catalog is still a built-in reviewed allowlist with CPU/CUDA `llama.cpp` options and one pinned Qwen GGUF model. The versioned v1 metadata contract is validated against the actual API response in the HTTP smoke test; the install resolver remains explicit code until the planned manifest migration is complete.
+Used for the default Qwen GGUF starter model. The install record pins a reviewed Hugging Face model repository, immutable 40-character revision, exact filename, SHA-256 and byte size. Runtime validation requires the exact reviewed upstream URL namespace, a path-safe filename, a 64-character digest, a positive bounded size, and matching digest/size in the public metadata. A manifest cannot provide an executable command or install script.
+
+## Adding or changing a component safely
+
+1. Identify one concrete task/workspace and a maintained upstream project. Review the exact component license and redistribution terms.
+2. Select one of the explicitly supported installer strategies. Do not add an arbitrary URL, command, script, repository-controlled installer, or remote manifest source.
+3. Pin immutable upstream revision, exact filename, size and SHA-256 for `pinned-gguf`; for `llama-release`, update the constrained official asset selector and regression tests only after the exact upstream asset naming and companion runtime have been reviewed.
+4. Update `catalog/manifest-v1.json`. Keep `install.targets` exactly equal to the component metadata's `compatibility.targets`; validate the public metadata against component-v1.
+5. Run `tests/catalog_manifest_contract.py`, the C++ core tests, and HTTP smoke. These cover unique IDs, default-model uniqueness, target parity, installer allowlist, immutable model pin, actual `/v1/catalog` schema and rejection of unknown download IDs.
+6. Add regression tests for unsupported targets, license acknowledgement, checksum mismatch, cancellation, extraction, activation rollback and uninstall/update behavior.
+7. Add a real task smoke test for each claimed target profile. Record OS, CPU/GPU, driver, RAM/VRAM, model revision/quantization, context, output success and memory observations. Hosted fake-engine CI is not real-task evidence.
+8. Keep component state honest: `listed`, `package verified`, `installed`, `process ready`, `task tested`, and `profile validated` are separate milestones.
+
+## Security invariants
+
+- The manifest is embedded in the shipped executable at build time; local users cannot replace its install allowlist by editing a JSON file.
+- `installable` must be explicit and the installer strategy must be compiled into v1. Unknown IDs, strategies, targets, URLs, filenames, or digests are rejected.
+- Metadata target declarations must equal the install allowlist targets.
+- A valid metadata schema record does not make a component installable by itself.
+- No model or engine is automatically installed or updated from a catalog refresh.
+- “Detected” does not mean “supported”; “package installed” does not mean “real inference tested.”
+
+The v1 manifest currently contains the reviewed `llama.cpp` CPU/CUDA 12/CUDA 13 entries and one pinned Qwen2.5 1.5B GGUF model. It is the single source for those components' display metadata and installer allowlist, not yet a catalog of every relevant C/C++ engine or model.

@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://azmisahin-ai.github.io/local-ai-runtime/schemas/manifest-v1.schema.json",
+  "title": "Local AI Runtime compiled component authoring manifest v1",
+  "description": "Reviewed build-time source for public component metadata and the local installer allowlist. The manifest is embedded into the runtime binary; it is never downloaded or loaded from a user-writable path.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "manifest_version", "components"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "manifest_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "components": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "kind", "installable", "default_model", "install", "metadata_json"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" },
+          "kind": { "enum": ["engine", "model"] },
+          "installable": { "const": true },
+          "default_model": { "type": "boolean" },
+          "install": {
+            "type": "object",
+            "required": ["strategy", "targets"],
+            "properties": {
+              "strategy": { "enum": ["llama-release", "pinned-gguf"] },
+              "variant": { "enum": ["cpu", "cuda12", "cuda13"] },
+              "filename": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$" },
+              "url": { "type": "string", "pattern": "^https://huggingface\\.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/[a-fA-F0-9]{40}/[A-Za-z0-9._-]+$" },
+              "sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" },
+              "size_bytes": { "type": "integer", "minimum": 1 },
+              "targets": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["platform", "architecture"],
+                  "properties": {
+                    "platform": { "enum": ["windows", "linux", "macos"] },
+                    "architecture": { "enum": ["x64", "arm64"] }
+                  }
+                }
+              }
+            },
+            "allOf": [
+              {
+                "if": { "properties": { "strategy": { "const": "llama-release" } }, "required": ["strategy"] },
+                "then": { "required": ["variant"], "properties": { "filename": false, "url": false, "sha256": false, "size_bytes": false } }
+              },
+              {
+                "if": { "properties": { "strategy": { "const": "pinned-gguf" } }, "required": ["strategy"] },
+                "then": { "required": ["filename", "url", "sha256", "size_bytes"], "properties": { "variant": false } }
+              }
+            ]
+          },
+          "metadata_json": { "type": "string", "minLength": 2, "pattern": "^\\{.*\\}$" }
+        }
+      }
+    }
+  }
+}

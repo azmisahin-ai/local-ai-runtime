@@ -1,0 +1,5 @@
+#pragma once
+
+namespace lar::catalog::detail {
+inline constexpr char embedded_manifest_json[] = R"LARCAT(@LAR_CATALOG_MANIFEST_JSON@)LARCAT";
+} // namespace lar::catalog::detail

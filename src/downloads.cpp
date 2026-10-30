@@ -75,13 +75,26 @@ namespace pt = boost::property_tree;
 
 constexpr char kGitHubReleasesUrl[] = "https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=30";
 constexpr char kGitHubAssetPrefix[] = "https://github.com/ggml-org/llama.cpp/releases/download/";
-constexpr char kModelUrl[] = "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/dd26da440ef0330c47919d1ecae0966d24022222/qwen2.5-1.5b-instruct-q4_k_m.gguf";
-constexpr char kModelSha256[] = "6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e";
-constexpr std::uint64_t kModelSize = 1117320736ULL;
-constexpr char kModelFileName[] = "qwen2.5-1.5b-instruct-q4_k_m.gguf";
 constexpr std::uint64_t kMaximumArchiveExpandedBytes = 3ULL * 1024ULL * 1024ULL * 1024ULL;
 constexpr std::uint64_t kMaximumReleaseAssetBytes = 2ULL * 1024ULL * 1024ULL * 1024ULL;
 constexpr std::uint64_t kMaximumRuntimeUpdateBytes = 256ULL * 1024ULL * 1024ULL;
+
+const catalog::ComponentDefinition& pinned_model_component(std::string_view id) {
+    const auto* component = catalog::find_component(id);
+    if (!component || !component->installable || component->installer != "pinned-gguf" ||
+        component->kind != "model") {
+        throw std::runtime_error("The requested model is not present in the compiled reviewed catalog manifest.");
+    }
+    return *component;
+}
+
+const catalog::ComponentDefinition& default_model_component_or_throw() {
+    const auto* component = catalog::default_model_component();
+    if (!component || !component->installable || component->installer != "pinned-gguf") {
+        throw std::runtime_error("The compiled catalog manifest does not contain a valid default model.");
+    }
+    return *component;
+}
 
 std::once_flag curl_init_flag;
 CURLcode curl_init_result = CURLE_FAILED_INIT;
@@ -430,6 +443,9 @@ std::optional<ReleaseAsset> choose_cuda_runtime_asset(std::vector<ReleaseAsset> 
 }
 
 ResolvedEngineAssets resolve_engine_assets(const std::string& variant) {
+    if (!catalog::is_known_engine_variant(variant)) {
+        throw std::runtime_error("The requested engine variant is not present in the compiled reviewed catalog manifest.");
+    }
     // CUDA releases ship two distinct files: the llama-server binary and an
     // official companion archive containing CUDA runtime DLLs/libraries. Both
     // must be pinned to official release metadata and verified before activation.
@@ -678,19 +694,9 @@ bool is_retryable_job(const DownloadManager::Job& job) {
                job.expected_size <= kMaximumRuntimeUpdateBytes;
     }
     if (!job.license_accepted) return false;
-    if ((job.item_id == "llama.cpp-cpu" || job.item_id == "llama.cpp-cuda12" || job.item_id == "llama.cpp-cuda13") &&
-        job.kind != "engine") return false;
-    if (job.item_id == "qwen2.5-1.5b-q4km" && job.kind != "model") return false;
-    const auto os = host_os();
-    const auto arch = host_architecture();
-    if (job.item_id == "llama.cpp-cpu") {
-        return ((os == "windows" || os == "linux") && arch == "x64") ||
-               (os == "macos" && (arch == "x64" || arch == "arm64"));
-    }
-    if (job.item_id == "llama.cpp-cuda12" || job.item_id == "llama.cpp-cuda13") {
-        return (os == "windows" || os == "linux") && arch == "x64";
-    }
-    return job.item_id == "qwen2.5-1.5b-q4km";
+    const auto* component = catalog::find_component(job.item_id);
+    if (!component || !component->installable || component->kind != job.kind) return false;
+    return catalog::supports_target(*component, host_os(), host_architecture());
 }
 
 void mutate_job(const std::shared_ptr<DownloadManager::Job>& job,
@@ -805,11 +811,11 @@ void download_to_file(const std::string& url, const std::filesystem::path& desti
 namespace catalog {
 bool is_supported_engine_archive(const std::string& name, const std::string& variant,
                                  const std::string& os, const std::string& architecture) {
-    return is_supported_engine_asset_name_for_host(name, variant, os, architecture);
+    return is_known_engine_variant(variant) && is_supported_engine_asset_name_for_host(name, variant, os, architecture);
 }
 bool is_supported_cuda_runtime_archive(const std::string& name, const std::string& variant,
                                        const std::string& os, const std::string& architecture) {
-    return is_supported_cuda_runtime_asset_name_for_host(name, variant, os, architecture);
+    return is_known_engine_variant(variant) && is_supported_cuda_runtime_asset_name_for_host(name, variant, os, architecture);
 }
 } // namespace catalog
 
@@ -1102,113 +1108,59 @@ std::string DownloadManager::sha256_file(const std::filesystem::path& path) {
 
 std::string DownloadManager::catalog_json() const {
     const auto root = user_data_directory();
-    const auto model_path = root / "models" / kModelFileName;
-    std::error_code fs_error;
-    bool model_installed = false;
-    if (std::filesystem::is_regular_file(model_path, fs_error) && !fs_error) {
-        const auto model_size = std::filesystem::file_size(model_path, fs_error);
-        if (!fs_error && model_size == kModelSize) {
-            try {
-                // Catalog UI must not label a same-size but corrupted file as verified.
-                model_installed = sha256_file(model_path) == kModelSha256;
-            } catch (...) {
-                model_installed = false;
-            }
-        }
-    }
-    const auto engine_root = root / "engines" / "llama.cpp";
     const auto os = host_os();
     const auto arch = host_architecture();
-    // Only show combinations whose upstream asset naming/availability is covered by
-    // the current selector. Linux ARM64 is intentionally hidden until a specific
-    // official release asset is included in CI validation.
-    const bool can_download_cpu =
-        ((os == "windows" || os == "linux") && arch == "x64") ||
-        (os == "macos" && (arch == "x64" || arch == "arm64"));
-    const bool can_download_cuda12 = (os == "windows" || os == "linux") && arch == "x64";
-    const bool can_download_cuda13 = (os == "windows" || os == "linux") && arch == "x64";
     std::ostringstream out;
     out << "{\"schema_version\":1,\"data\":[";
     bool first = true;
-    const auto write_engine = [&](const std::string& id, const std::string& variant, const std::string& title,
-                                  const std::string& backend, bool supported) {
-        if (!supported) return;
-        if (!first) out << ',';
-        first = false;
-        std::filesystem::path installed_dir;
-        std::error_code scan_error;
-        if (std::filesystem::exists(engine_root, scan_error) && !scan_error) {
-            for (std::filesystem::directory_iterator it(engine_root, scan_error), end; it != end && !scan_error; it.increment(scan_error)) {
-                if (!it->is_directory(scan_error) || scan_error) { scan_error.clear(); continue; }
-                const auto candidate_name = it->path().filename().string();
-                const auto suffix = std::string("-") + variant;
-                if (candidate_name.size() >= suffix.size() && candidate_name.compare(candidate_name.size() - suffix.size(), suffix.size(), suffix) == 0 && find_llama_server(it->path())) {
-                    installed_dir = it->path();
-                    break;
+    for (const auto& component : catalog::components()) {
+        if (!component.installable || !catalog::supports_target(component, os, arch)) continue;
+
+        bool installed = false;
+        std::filesystem::path installed_path;
+        std::error_code fs_error;
+        if (component.installer == "pinned-gguf") {
+            installed_path = root / "models" / component.filename;
+            if (std::filesystem::is_regular_file(installed_path, fs_error) && !fs_error) {
+                const auto actual_size = std::filesystem::file_size(installed_path, fs_error);
+                if (!fs_error && actual_size == component.size_bytes) {
+                    try {
+                        installed = sha256_file(installed_path) == component.sha256;
+                    } catch (...) {
+                        installed = false;
+                    }
+                }
+            }
+        } else if (component.installer == "llama-release") {
+            const auto engine_root = root / "engines" / "llama.cpp";
+            if (std::filesystem::exists(engine_root, fs_error) && !fs_error) {
+                for (std::filesystem::directory_iterator it(engine_root, fs_error), end; it != end && !fs_error; it.increment(fs_error)) {
+                    if (!it->is_directory(fs_error) || fs_error) { fs_error.clear(); continue; }
+                    const auto candidate_name = it->path().filename().string();
+                    const auto suffix = std::string("-") + component.variant;
+                    if (candidate_name.size() >= suffix.size() &&
+                        candidate_name.compare(candidate_name.size() - suffix.size(), suffix.size(), suffix) == 0 &&
+                        find_llama_server(it->path())) {
+                        installed_path = it->path();
+                        installed = true;
+                        break;
+                    }
                 }
             }
         }
-        const bool installed = !installed_dir.empty();
-        const bool cpu = backend == "cpu";
-        const std::string compatibility_targets = cpu
-            ? R"([{"platform":"windows","architecture":"x64"},{"platform":"linux","architecture":"x64"},{"platform":"macos","architecture":"x64"},{"platform":"macos","architecture":"arm64"}])"
-            : R"([{"platform":"windows","architecture":"x64"},{"platform":"linux","architecture":"x64"}])";
-        const std::string driver_requirements = cpu ? "[]" : "[\"NVIDIA driver compatible with the selected CUDA runtime\"]";
-        const std::string known_limits = cpu
-            ? R"(["CPU performance depends on model size, quantization, context and available system memory."])"
-            : R"(["GPU execution is not guaranteed by package installation.","NVIDIA driver, VRAM, model and context must be validated on the target machine.","The current GPU observation measures system-wide activity and may include other applications."])";
-        const std::string dependencies = backend == "cuda12"
-            ? R"([{"id":"llama.cpp-cudart-cuda12","kind":"runtime-archive","resolution":"same official release and matching CUDA 12 runtime"}])"
-            : backend == "cuda13"
-                ? R"([{"id":"llama.cpp-cudart-cuda13","kind":"runtime-archive","resolution":"same official release and matching CUDA 13 runtime"}])"
-                : "[]";
-        out << "{\"schema_version\":1,\"id\":" << json_quote(id)
-            << ",\"type\":\"engine\",\"name\":" << json_quote(title)
-            << ",\"description\":" << json_quote(
-                cpu
-                    ? "Finds the newest compatible official llama.cpp server package, preferring stable releases and falling back to an official prerelease only when no stable binary is published. Verifies GitHub's SHA-256 digest, safely extracts the archive and registers the engine."
-                    : "Downloads the matching official llama.cpp CUDA server and CUDA runtime/DLL archives from the same release. Both archives must have official SHA-256 digests; both are verified before activation. Successful installation does not by itself prove GPU inference: driver, VRAM, model and real-task validation are still required.")
-            << ",\"family\":\"llama.cpp\",\"workspaces\":[\"language-chat\"],\"tasks\":[\"chat\",\"text-generation\"],"
-            << "\"modalities\":[\"text\"],\"input_formats\":[\"OpenAI-compatible chat JSON\"],\"output_formats\":[\"OpenAI-compatible chat JSON\"],"
-            << "\"version\":\"latest-compatible\",\"backend\":" << json_quote(backend)
-            << ",\"compatibility\":{\"targets\":" << compatibility_targets
-            << ",\"backends\":[" << json_quote(backend) << "],\"cpu_features\":[],\"driver_requirements\":" << driver_requirements
-            << ",\"known_limits\":" << known_limits << "},"
-            << "\"resources\":{\"download_bytes\":null,\"download_size_policy\":\"resolved-from-official-release\","
-            << "\"minimum_system_ram_bytes\":null,\"recommended_system_ram_bytes\":null,\"minimum_vram_bytes\":null,\"recommended_vram_bytes\":null,\"estimate_confidence\":\"not-estimated-for-engine-only\","
-            << "\"notes\":\"Memory needs depend on the selected model, quantization, context and offloaded layers.\"},"
-            << "\"provenance\":{\"source_url\":\"https://github.com/ggml-org/llama.cpp/releases\",\"revision_policy\":\"latest-compatible-official-release\",\"revision\":null,"
-            << "\"license_id\":\"MIT\",\"license_url\":\"https://github.com/ggml-org/llama.cpp/blob/master/LICENSE\",\"digest_policy\":\"official-sha256-required-at-install\",\"dependencies\":" << dependencies << "},"
-            << "\"evidence\":{\"metadata_review\":\"reviewed\",\"package_verification\":\"sha256-at-install\",\"real_task_test\":\"not-verified-by-hosted-ci\",\"profile_validation\":\"not-validated\"},"
-            << "\"lifecycle\":{\"install_scope\":\"per-user-data-directory\",\"user_data_separate\":true,\"update_policy\":\"versioned-managed-component\",\"automatic_update\":false},"
-            << "\"license\":\"MIT\",\"license_url\":\"https://github.com/ggml-org/llama.cpp/blob/master/LICENSE\","
-            << "\"source_url\":\"https://github.com/ggml-org/llama.cpp/releases\",\"size_bytes\":0,\"installed\":" << (installed ? "true" : "false")
-            << ",\"installed_path\":" << json_quote(installed ? path_to_utf8(installed_dir) : std::string{}) << '}';
-    };
-    write_engine("llama.cpp-cpu", "cpu", "llama.cpp server — CPU", "cpu", can_download_cpu);
-    write_engine("llama.cpp-cuda12", "cuda12", "llama.cpp server — NVIDIA CUDA 12", "cuda12", can_download_cuda12);
-    write_engine("llama.cpp-cuda13", "cuda13", "llama.cpp server — NVIDIA CUDA 13", "cuda13", can_download_cuda13);
-    if (!first) out << ',';
-    out << "{\"schema_version\":1,\"id\":\"qwen2.5-1.5b-q4km\",\"type\":\"model\",\"name\":\"Qwen2.5 1.5B Instruct — Q4_K_M\","
-        << "\"description\":\"Small starter chat model in GGUF format. The download is about 1.12 GB; context and runtime memory add to this.\","
-        << "\"family\":\"Qwen2.5\",\"workspaces\":[\"language-chat\"],\"tasks\":[\"chat\",\"text-generation\"],\"modalities\":[\"text\"],"
-        << "\"input_formats\":[\"GGUF\"],\"output_formats\":[\"text\"],"
-        << "\"version\":\"dd26da440ef0330c47919d1ecae0966d24022222\",\"backend\":\"gguf\","
-        << "\"compatibility\":{\"targets\":[{\"platform\":\"windows\",\"architecture\":\"x64\"},{\"platform\":\"linux\",\"architecture\":\"x64\"},{\"platform\":\"macos\",\"architecture\":\"x64\"},{\"platform\":\"macos\",\"architecture\":\"arm64\"}],"
-        << "\"backends\":[\"llama.cpp-cpu\",\"llama.cpp-cuda12\",\"llama.cpp-cuda13\"],\"cpu_features\":[],\"driver_requirements\":[],"
-        << "\"known_limits\":[\"Model fit depends on context and runtime overhead.\",\"CUDA compatibility and GPU placement must be tested on the target machine.\"]},"
-        << "\"resources\":{\"download_bytes\":" << kModelSize << ",\"download_size_policy\":\"pinned-exact-size\","
-        << "\"minimum_system_ram_bytes\":4294967296,\"recommended_system_ram_bytes\":8589934592,\"minimum_vram_bytes\":null,\"recommended_vram_bytes\":null,\"estimate_confidence\":\"heuristic\","
-        << "\"notes\":\"RAM guidance is heuristic; context size, runtime overhead and GPU offload change memory needs.\"},"
-        << "\"provenance\":{\"source_url\":\"https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF\",\"revision_policy\":\"pinned-revision\",\"revision\":\"dd26da440ef0330c47919d1ecae0966d24022222\","
-        << "\"license_id\":\"Apache-2.0\",\"license_url\":\"https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/blob/dd26da440ef0330c47919d1ecae0966d24022222/LICENSE\","
-        << "\"digest_policy\":\"pinned-sha256-and-exact-size\",\"dependencies\":[]},"
-        << "\"evidence\":{\"metadata_review\":\"reviewed\",\"package_verification\":\"sha256-and-header-at-install\",\"real_task_test\":\"not-verified-by-hosted-ci\",\"profile_validation\":\"not-validated\"},"
-        << "\"lifecycle\":{\"install_scope\":\"per-user-data-directory\",\"user_data_separate\":true,\"update_policy\":\"pinned-model-revision\",\"automatic_update\":false},"
-        << "\"license\":\"Apache-2.0\",\"license_url\":\"https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/blob/dd26da440ef0330c47919d1ecae0966d24022222/LICENSE\","
-        << "\"source_url\":\"https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF\",\"size_bytes\":" << kModelSize << ",\"sha256\":" << json_quote(kModelSha256)
-        << ",\"installed\":" << (model_installed ? "true" : "false")
-        << ",\"installed_path\":" << json_quote(model_installed ? path_to_utf8(model_path) : std::string{}) << "}]}";
+
+        if (!first) out << ',';
+        first = false;
+        auto metadata = component.metadata_json;
+        const auto close = metadata.find_last_of('}');
+        if (close == std::string::npos || close + 1U != metadata.size()) {
+            throw std::runtime_error("Compiled catalog metadata is not a valid JSON object: " + component.id);
+        }
+        metadata.resize(close);
+        out << metadata << ",\"installed\":" << (installed ? "true" : "false")
+            << ",\"installed_path\":" << json_quote(installed ? path_to_utf8(installed_path) : std::string{}) << '}';
+    }
+    out << "]}";
     return out.str();
 }
 
@@ -1276,25 +1228,18 @@ std::optional<std::string> DownloadManager::job_json(const std::string& id) cons
 bool DownloadManager::start(const std::string& item_id, bool accept_license,
                             std::string& job_id, std::string& error) {
     if (!accept_license) { error = "Confirm that you reviewed the upstream license before downloading."; return false; }
-    if (item_id != "llama.cpp-cpu" && item_id != "llama.cpp-cuda12" && item_id != "llama.cpp-cuda13" && item_id != "qwen2.5-1.5b-q4km") {
-        error = "This item is not in the built-in reviewed catalog.";
+    const auto* component = catalog::find_component(item_id);
+    if (!component || !component->installable ||
+        (component->installer != "llama-release" && component->installer != "pinned-gguf")) {
+        error = "This item is not in the compiled reviewed catalog manifest.";
+        return false;
+    }
+    if (!catalog::supports_target(*component, host_os(), host_architecture())) {
+        error = "This catalog item is not supported on the current OS/architecture.";
         return false;
     }
     if (any_engine_running(engines_)) {
         error = "Stop running engines before installing or changing runtime components.";
-        return false;
-    }
-    const auto os = host_os();
-    const auto arch = host_architecture();
-    if (item_id == "llama.cpp-cpu" &&
-        !(((os == "windows" || os == "linux") && arch == "x64") ||
-          (os == "macos" && (arch == "x64" || arch == "arm64")))) {
-        error = "A verified official CPU server archive is not catalogued for this OS/architecture yet.";
-        return false;
-    }
-    if ((item_id == "llama.cpp-cuda12" || item_id == "llama.cpp-cuda13") &&
-        !((os == "windows" || os == "linux") && arch == "x64")) {
-        error = "A verified official CUDA server archive is not catalogued for this OS/architecture yet.";
         return false;
     }
     {
@@ -1327,7 +1272,7 @@ bool DownloadManager::start(const std::string& item_id, bool accept_license,
         auto job = std::make_shared<Job>();
         job->id = "download-" + std::to_string(next_job_number_++);
         job->item_id = item_id;
-        job->kind = item_id.rfind("llama.cpp-", 0) == 0 ? "engine" : "model";
+        job->kind = component->kind;
         job->license_accepted = accept_license;
         job->created_at = unix_time_millis();
         job->updated_at = job->created_at;
@@ -1526,15 +1471,10 @@ bool DownloadManager::retry(const std::string& job_id, std::string& error) {
         return false;
     }
     if (job->item_id != "runtime-update") {
-        const auto os = host_os();
-        const auto arch = host_architecture();
-        const bool cpu_supported = job->item_id != "llama.cpp-cpu" ||
-            (((os == "windows" || os == "linux") && arch == "x64") ||
-             (os == "macos" && (arch == "x64" || arch == "arm64")));
-        const bool cuda_supported = (job->item_id != "llama.cpp-cuda12" && job->item_id != "llama.cpp-cuda13") ||
-            ((os == "windows" || os == "linux") && arch == "x64");
-        if (!cpu_supported || !cuda_supported) {
-            error = "This catalog item is not supported on the current OS/architecture and cannot be retried.";
+        const auto* component = catalog::find_component(job->item_id);
+        if (!component || !component->installable || component->kind != job->kind ||
+            !catalog::supports_target(*component, host_os(), host_architecture())) {
+            error = "This catalog item is not in the reviewed manifest for the current OS/architecture and cannot be retried.";
             return false;
         }
     }
@@ -1618,12 +1558,18 @@ void DownloadManager::run_job(const std::shared_ptr<Job>& job) {
     log_diagnostic("INFO", "download.started", "job=" + job->id + " item=" + job->item_id);
     try {
         if (job->cancel_requested.load()) throw std::runtime_error("Download canceled by the user.");
-        if (job->item_id == "runtime-update") download_runtime_update(job);
-        else if (job->item_id == "qwen2.5-1.5b-q4km") download_model(job);
-        else if (job->item_id == "llama.cpp-cpu") download_engine(job, "cpu");
-        else if (job->item_id == "llama.cpp-cuda12") download_engine(job, "cuda12");
-        else if (job->item_id == "llama.cpp-cuda13") download_engine(job, "cuda13");
-        else throw std::runtime_error("Unknown catalog item.");
+        if (job->item_id == "runtime-update") {
+            download_runtime_update(job);
+        } else {
+            const auto* component = catalog::find_component(job->item_id);
+            if (!component || !component->installable || component->kind != job->kind ||
+                !catalog::supports_target(*component, host_os(), host_architecture())) {
+                throw std::runtime_error("Saved job no longer matches an installable component in the compiled catalog manifest.");
+            }
+            if (component->installer == "pinned-gguf") download_model(job);
+            else if (component->installer == "llama-release") download_engine(job, component->variant);
+            else throw std::runtime_error("The catalog manifest contains an unsupported installer strategy.");
+        }
         mutate_job(job, [](DownloadManager::Job& current) {
             current.state = "succeeded";
             if (current.item_id != "runtime-update") current.phase = "Installed and configured";
@@ -1655,9 +1601,10 @@ void DownloadManager::run_job(const std::shared_ptr<Job>& job) {
         // Keep models/<name>.part: download_model only leaves this final staging
         // file behind after the size, SHA-256 and GGUF checks have all passed.
         // A retry can finalize it without downloading another gigabyte.
-        if (job->item_id == "qwen2.5-1.5b-q4km") {
+        if (const auto* component = catalog::find_component(job->item_id);
+            component && component->installer == "pinned-gguf") {
             ignored.clear();
-            std::filesystem::remove(root / "models" / (std::string(kModelFileName) + ".part.part"), ignored);
+            std::filesystem::remove(root / "models" / (component->filename + ".part.part"), ignored);
         }
     }
 }
@@ -1751,15 +1698,16 @@ void DownloadManager::download_runtime_update(const std::shared_ptr<Job>& job) {
 }
 
 void DownloadManager::download_model(const std::shared_ptr<Job>& job) {
+    const auto& model = pinned_model_component(job->item_id);
     const auto root = user_data_directory();
     const auto directory = root / "models";
-    const auto final_path = directory / kModelFileName;
+    const auto final_path = directory / model.filename;
     auto partial = final_path;
     partial += ".part";
-    mutate_job(job, [](DownloadManager::Job& current) {
+    mutate_job(job, [&](DownloadManager::Job& current) {
         current.state = "downloading";
-        current.phase = "Downloading Qwen2.5 1.5B Instruct Q4_K_M (about 1.12 GB)";
-        current.total_bytes = kModelSize;
+        current.phase = "Downloading " + job->item_id;
+        current.total_bytes = model.size_bytes;
     });
     log_diagnostic("INFO", "model.install.begin", "job=" + job->id + " item=" + job->item_id);
     std::error_code fs_error;
@@ -1769,14 +1717,14 @@ void DownloadManager::download_model(const std::shared_ptr<Job>& job) {
         bool existing_model_verified = false;
         try {
             const auto size = std::filesystem::file_size(final_path, fs_error);
-            existing_model_verified = !fs_error && size == kModelSize && sha256_file(final_path) == kModelSha256 && has_gguf_header(final_path);
+            existing_model_verified = !fs_error && size == model.size_bytes && sha256_file(final_path) == model.sha256 && has_gguf_header(final_path);
         } catch (...) {
             existing_model_verified = false;
         }
         if (existing_model_verified) {
             mutate_job(job, [&](DownloadManager::Job& current) {
-                current.downloaded_bytes = kModelSize;
-                current.total_bytes = kModelSize;
+                current.downloaded_bytes = model.size_bytes;
+                current.total_bytes = model.size_bytes;
                 current.installed_path = path_to_utf8(final_path);
                 current.phase = "Model already installed and verified";
             });
@@ -1795,18 +1743,18 @@ void DownloadManager::download_model(const std::shared_ptr<Job>& job) {
     if (std::filesystem::exists(partial, fs_error) && !fs_error) {
         try {
             const auto staged_size = std::filesystem::file_size(partial, fs_error);
-            reusable_staging_file = !fs_error && staged_size == kModelSize &&
-                                    sha256_file(partial) == kModelSha256 && has_gguf_header(partial);
+            reusable_staging_file = !fs_error && staged_size == model.size_bytes &&
+                                    sha256_file(partial) == model.sha256 && has_gguf_header(partial);
         } catch (...) {
             reusable_staging_file = false;
         }
         if (reusable_staging_file) {
-            mutate_job(job, [](DownloadManager::Job& current) {
-                current.downloaded_bytes = kModelSize;
-                current.total_bytes = kModelSize;
+            mutate_job(job, [&](DownloadManager::Job& current) {
+                current.downloaded_bytes = model.size_bytes;
+                current.total_bytes = model.size_bytes;
                 current.phase = "Reusing downloaded model after SHA-256 and GGUF verification";
             });
-            log_diagnostic("INFO", "model.install.reusing_verified_staging_file", "job=" + job->id + " bytes=" + std::to_string(kModelSize));
+            log_diagnostic("INFO", "model.install.reusing_verified_staging_file", "job=" + job->id + " bytes=" + std::to_string(model.size_bytes));
         } else {
             fs_error.clear();
             std::filesystem::remove(partial, fs_error);
@@ -1817,17 +1765,17 @@ void DownloadManager::download_model(const std::shared_ptr<Job>& job) {
 
     if (!reusable_staging_file) {
         const auto space = std::filesystem::space(directory, fs_error);
-        if (fs_error || space.available < kModelSize + 256ULL * 1024ULL * 1024ULL) {
+        if (fs_error || space.available < model.size_bytes + 256ULL * 1024ULL * 1024ULL) {
             throw std::runtime_error("Not enough free disk space. At least 1.4 GB is required for a new model download and staging.");
         }
-        log_diagnostic("INFO", "model.download.begin", "job=" + job->id + " expected_bytes=" + std::to_string(kModelSize));
-        download_to_file(kModelUrl, partial, kModelSize, job);
-        log_diagnostic("INFO", "model.download.completed", "job=" + job->id + " bytes=" + std::to_string(kModelSize));
+        log_diagnostic("INFO", "model.download.begin", "job=" + job->id + " expected_bytes=" + std::to_string(model.size_bytes));
+        download_to_file(model.url, partial, model.size_bytes, job);
+        log_diagnostic("INFO", "model.download.completed", "job=" + job->id + " bytes=" + std::to_string(model.size_bytes));
     }
     mutate_job(job, [](DownloadManager::Job& current) { current.state = "verifying"; current.phase = "Verifying model size and SHA-256"; });
     const auto actual_size = std::filesystem::file_size(partial, fs_error);
-    if (fs_error || actual_size != kModelSize) throw std::runtime_error("Downloaded model size does not match the pinned catalog.");
-    if (sha256_file(partial) != kModelSha256) {
+    if (fs_error || actual_size != model.size_bytes) throw std::runtime_error("Downloaded model size does not match the pinned catalog.");
+    if (sha256_file(partial) != model.sha256) {
         std::filesystem::remove(partial, fs_error);
         throw std::runtime_error("Model SHA-256 did not match the catalog. The partial file was discarded.");
     }
@@ -1835,17 +1783,17 @@ void DownloadManager::download_model(const std::shared_ptr<Job>& job) {
         std::filesystem::remove(partial, fs_error);
         throw std::runtime_error("Downloaded file does not have a GGUF header.");
     }
-    log_diagnostic("INFO", "model.verify.succeeded", "job=" + job->id + " sha256=" + kModelSha256);
+    log_diagnostic("INFO", "model.verify.succeeded", "job=" + job->id + " sha256=" + model.sha256);
 
     mutate_job(job, [](DownloadManager::Job& current) { current.phase = "Finalizing verified model file"; });
     std::filesystem::rename(partial, final_path, fs_error);
     if (fs_error) {
         const auto os_error = fs_error.message();
-        log_diagnostic("ERROR", "model.finalize.failed", "job=" + job->id + " verified_bytes=" + std::to_string(kModelSize) + " os_error=" + os_error + " recovery=verified_staging_file_preserved");
+        log_diagnostic("ERROR", "model.finalize.failed", "job=" + job->id + " verified_bytes=" + std::to_string(model.size_bytes) + " os_error=" + os_error + " recovery=verified_staging_file_preserved");
         throw std::runtime_error("The model downloaded completely and passed SHA-256 verification, but Windows could not move it into place. The verified staging file was kept; close programs that may be using this GGUF file and select Download & install again. It will retry finalization without downloading the model again. Details: " + os_error);
     }
     mutate_job(job, [&](DownloadManager::Job& current) { current.installed_path = path_to_utf8(final_path); });
-    log_diagnostic("INFO", "model.install.finalized", "job=" + job->id + " bytes=" + std::to_string(kModelSize));
+    log_diagnostic("INFO", "model.install.finalized", "job=" + job->id + " bytes=" + std::to_string(model.size_bytes));
     const auto configs = engines_.configurations();
     const auto current = std::find_if(configs.begin(), configs.end(), [](const EngineConfig& e) { return e.id == "llama-cpp" && !e.executable_path.empty(); });
     if (current != configs.end()) configure_llama_engine(current->executable_path, final_path, configured_gpu_layers(*current) == "0" ? "cpu" : "gpu");
@@ -1962,12 +1910,13 @@ void DownloadManager::download_engine(const std::shared_ptr<Job>& job, const std
     const auto installed_server = find_llama_server(final_dir);
     if (!installed_server) throw std::runtime_error("Could not find llama-server after extraction.");
     std::filesystem::remove_all(stage_root, fs_error);
-    const auto known_model = data_root / "models" / kModelFileName;
+    const auto& default_model = default_model_component_or_throw();
+    const auto known_model = data_root / "models" / default_model.filename;
     std::filesystem::path model_for_config;
     std::error_code model_error;
     if (std::filesystem::is_regular_file(known_model, model_error) && !model_error) {
         try {
-            if (std::filesystem::file_size(known_model, model_error) == kModelSize && !model_error && sha256_file(known_model) == kModelSha256) {
+            if (std::filesystem::file_size(known_model, model_error) == default_model.size_bytes && !model_error && sha256_file(known_model) == default_model.sha256) {
                 model_for_config = known_model;
             }
         } catch (...) {
@@ -2001,9 +1950,10 @@ void DownloadManager::configure_llama_engine(const std::filesystem::path& execut
     if (!executable.empty()) engine.executable_path = executable;
     if (!model.empty()) engine.model_path = model;
     if (engine.model_path.empty()) {
-        const auto default_model = user_data_directory() / "models" / kModelFileName;
+        const auto& default_model_spec = default_model_component_or_throw();
+        const auto default_model_path = user_data_directory() / "models" / default_model_spec.filename;
         std::error_code ec;
-        if (std::filesystem::is_regular_file(default_model, ec) && !ec) engine.model_path = default_model;
+        if (std::filesystem::is_regular_file(default_model_path, ec) && !ec) engine.model_path = default_model_path;
     }
     if (engine.executable_path.empty()) return; // Model can be downloaded before an engine is installed.
     engine.working_directory = engine.executable_path.parent_path();

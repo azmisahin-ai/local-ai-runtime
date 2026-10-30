@@ -18,6 +18,19 @@ if(NOT Boost_FOUND)
         "On Ubuntu/Debian, install them with: sudo apt-get install build-essential cmake libboost-dev libcurl4-openssl-dev libarchive-dev libssl-dev. "
         "If using CMake directly on Windows, pass -DCMAKE_TOOLCHAIN_FILE=<vcpkg-root>/scripts/buildsystems/vcpkg.cmake.")
 endif()
+# The reviewed component manifest is the single source for catalog metadata
+# and install allowlisting. Embed it into the binary so users cannot replace it
+# with arbitrary URLs or installer strategies from a writable data directory.
+set(LAR_CATALOG_MANIFEST_FILE "${CMAKE_CURRENT_SOURCE_DIR}/catalog/manifest-v1.json")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${LAR_CATALOG_MANIFEST_FILE}")
+file(READ "${LAR_CATALOG_MANIFEST_FILE}" LAR_CATALOG_MANIFEST_JSON)
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated/lar")
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/catalog_manifest_embedded.hpp.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/lar/catalog_manifest_embedded.hpp"
+    @ONLY
+)
+
 find_package(Threads REQUIRED)
 find_package(LibArchive REQUIRED)
 find_package(OpenSSL REQUIRED)
@@ -34,6 +47,7 @@ endif()
 
 add_library(lar_core
     src/config.cpp
+    src/catalog.cpp
     src/process.cpp
     src/downloads.cpp
     src/activity_jobs.cpp
@@ -43,7 +57,8 @@ add_library(lar_core
     src/gpu_monitor.cpp
     src/resource_monitor.cpp
 )
-target_include_directories(lar_core PUBLIC include ${Boost_INCLUDE_DIRS})
+target_include_directories(lar_core PUBLIC include ${Boost_INCLUDE_DIRS}
+    PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_compile_definitions(lar_core PUBLIC BOOST_ERROR_CODE_HEADER_ONLY BOOST_SYSTEM_NO_DEPRECATED)
 target_link_libraries(lar_core PUBLIC Threads::Threads ${LAR_CURL_TARGET} LibArchive::LibArchive OpenSSL::Crypto)
 if(WIN32)
@@ -105,6 +120,10 @@ if(LAR_BUILD_TESTS)
     # remain available on machines without Python; CI installs Python explicitly.
     find_package(Python3 COMPONENTS Interpreter QUIET)
     if(Python3_Interpreter_FOUND)
+        add_test(
+            NAME lar_catalog_manifest_contract
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/catalog_manifest_contract.py"
+        )
         add_test(
             NAME lar_http_smoke
             COMMAND "${Python3_EXECUTABLE}"

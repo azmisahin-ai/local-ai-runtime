@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased — manifest-driven component catalog
+
+- Add `catalog/manifest-v1.json` as the versioned source of truth for the reviewed component display metadata and installation allowlist.
+- Embed the manifest into the runtime binary at CMake configure time; do not load install policy from a user-writable data folder or a remote source.
+- Drive `/v1/catalog` output, component start/retry allowlisting, engine variant dispatch, default-model selection and pinned GGUF URL/filename/size/SHA-256 from the compiled manifest.
+- Fail closed on duplicate/invalid IDs, unsupported install strategies or targets, mismatched metadata identity, unsafe model filenames, non-immutable upstream revisions, invalid digests and metadata/install target drift.
+- Keep the only v1 installer strategies constrained to official `llama.cpp` release resolution and the reviewed pinned Qwen GGUF model; arbitrary URLs, commands and install scripts remain prohibited.
+- Add `manifest-v1.schema.json`, a dependency-free manifest contract test, C++ loader tests and live `/v1/catalog` HTTP schema regression coverage.
+- Update catalog authoring and roadmap guidance to distinguish the manifest candidate from a release until four-platform publisher CI passes.
+
 ## Unreleased — CI diagnostics and deterministic test-process cleanup
 
 - Extend the bundled PowerShell release gate to list failed GitHub Actions jobs and steps, retrieve check-run annotations, download each failed job log, and print focused error excerpts while preserving the full logs under `Downloads/local-ai-runtime-ci-diagnostics/run-<id>`; public repositories work without a token, while `GH_TOKEN`/`GITHUB_TOKEN` are used when supplied.
@@ -14,7 +24,7 @@
 - Expand English/Turkish localization across dynamic update guidance/progress, Activity job states/phases, engine state/package/GPU evidence labels, model resource guidance, and user-facing error framing.
 - Re-render dynamic panels when the locale changes and keep upstream component names, engine capabilities, license text, and source-provided diagnostic details intact.
 - Add CI checks for identical locale keys, matching interpolation placeholders, complete HTML translation attributes and direct JavaScript translation references, plus onboarding/accessibility smoke assertions.
-- Update the roadmap and product documentation to reflect the published `v0.1.16-alpha` baseline and distinguish the current phase-6 candidate from a released milestone.
+- Update the roadmap and product documentation to reflect the published `v0.1.17-alpha` baseline and distinguish the current manifest candidate from a released milestone.
 
 ## Unreleased — live runtime resource manager
 

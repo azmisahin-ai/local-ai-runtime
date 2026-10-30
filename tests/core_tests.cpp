@@ -33,6 +33,30 @@ int main() {
         require(!lar::is_valid_engine_id("../llama"), "path traversal engine id accepted");
         require(!lar::is_valid_engine_id(""), "empty engine id accepted");
 
+        stage("compiled reviewed component manifest");
+        const auto& manifest_components = lar::catalog::components();
+        require(manifest_components.size() == 4, "compiled catalog manifest should contain exactly four reviewed components");
+        const auto* cpu_catalog_item = lar::catalog::find_component("llama.cpp-cpu");
+        const auto* cuda12_catalog_item = lar::catalog::find_component("llama.cpp-cuda12");
+        const auto* cuda13_catalog_item = lar::catalog::find_component("llama.cpp-cuda13");
+        const auto* starter_model = lar::catalog::default_model_component();
+        require(cpu_catalog_item && cpu_catalog_item->installer == "llama-release" && cpu_catalog_item->variant == "cpu",
+                "CPU engine should resolve through the compiled manifest");
+        require(cuda12_catalog_item && cuda12_catalog_item->installer == "llama-release" && cuda12_catalog_item->variant == "cuda12",
+                "CUDA 12 engine should resolve through the compiled manifest");
+        require(cuda13_catalog_item && cuda13_catalog_item->installer == "llama-release" && cuda13_catalog_item->variant == "cuda13",
+                "CUDA 13 engine should resolve through the compiled manifest");
+        require(starter_model && starter_model->installer == "pinned-gguf" && starter_model->filename == "qwen2.5-1.5b-instruct-q4_k_m.gguf",
+                "the default GGUF model should resolve from the manifest");
+        require(lar::catalog::supports_target(*cpu_catalog_item, "windows", "x64"),
+                "manifest should allow the reviewed Windows x64 CPU engine target");
+        require(!lar::catalog::supports_target(*cuda12_catalog_item, "macos", "arm64"),
+                "manifest should reject unsupported macOS CUDA targets");
+        require(!lar::catalog::find_component("https://example.invalid/payload"),
+                "arbitrary URLs must never resolve as installable catalog IDs");
+        require(lar::catalog::is_known_engine_variant("cuda13") && !lar::catalog::is_known_engine_variant("unreviewed"),
+                "engine release resolver must only accept manifest-defined variants");
+
         stage("runtime update version ordering");
         require(lar::DownloadManager::is_newer_release_tag("v0.1.1-alpha", "0.1.0-alpha"),
                 "a newer patch release should be allowed for update");
