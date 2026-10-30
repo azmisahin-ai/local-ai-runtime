@@ -814,7 +814,9 @@ jobs:
           - runner: macos-15
             arch: arm64
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 20
+    # macOS runners are slower for the full test + repeat-smoke + portable package path.
+    # Individual CTest cases have their own shorter timeout so a hang fails diagnostically.
+    timeout-minutes: 35
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -902,7 +904,8 @@ jobs:
         run: |
           set +e
           started=$SECONDS
-          ctest --test-dir build --output-on-failure
+          # Verbose output identifies the exact core-test stage if a platform stalls.
+          ctest --test-dir build --output-on-failure --verbose
           result=$?
           echo "seconds=$((SECONDS - started))" >> "$GITHUB_OUTPUT"
           exit "$result"

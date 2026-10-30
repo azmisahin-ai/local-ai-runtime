@@ -115,6 +115,9 @@ if(LAR_BUILD_TESTS)
     )
     add_dependencies(lar_core_tests lar_fake_engine)
     add_test(NAME lar_core_tests COMMAND lar_core_tests)
+    # Keep a stalled platform-specific core test from consuming the full CI job timeout.
+    # Verbose CTest output in CI makes the final [core-tests] stage visible on timeout.
+    set_tests_properties(lar_core_tests PROPERTIES TIMEOUT 180)
 
     # Full HTTP smoke coverage uses only Python's standard library. Core tests
     # remain available on machines without Python; CI installs Python explicitly.
