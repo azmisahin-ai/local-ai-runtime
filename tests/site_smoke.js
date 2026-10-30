@@ -150,7 +150,7 @@ async function main() {
   assert(dashboardScript.includes('/v1/diagnostics/gpu-observation') && dashboardScript.includes('ui.gpu_observation.completed'), 'GPU observation should run through the local API and record privacy-safe summary metrics');
   assert(windowsLauncher.includes('function Test-PortCanBind') && windowsLauncher.includes('launcher.port_owner_unresolved_but_bindable'), 'Windows launcher should reuse a configured port when a direct bind probe succeeds despite an unresolved listener owner');
   assert(dashboardHtml.includes('Chat with your model'), 'dashboard should present chat as a user task, not a developer test');
-  assert(dashboardHtml.includes('data-i18n="chat.composerHint"') && dashboardHtml.includes('data-prompt='), 'chat should include keyboard guidance and useful starter prompts');
+  assert(dashboardHtml.includes('data-i18n="chat.composerHint"') && dashboardHtml.includes('data-prompt-key='), 'chat should include keyboard guidance and useful starter prompts');
   assert(dashboardScript.includes('setInterval(() => { if (Date.now() - lastUpdateCheckAt > 6 * 60 * 60 * 1000) checkForUpdates(); }'), 'dashboard should refresh update metadata periodically');
   assert(collectText(grid.afterChildren[0]).includes('SHA256SUMS.txt'));
   process.stdout.write('Site smoke test passed: four platform assets, checksums, and user-first launch/update flow.\n');

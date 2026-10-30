@@ -9,7 +9,7 @@ Local AI Runtime is a private AI workspace for a person's own computer. The inte
 The app uses five persistent destinations:
 
 - **Overview** — current model/runtime readiness, a compact device summary, and recommendations with explicit evidence labels.
-- **Chat** — the primary available workflow. It should become a streaming conversation with stop/regenerate, history, model selection, and optional system instructions. Until streaming/history exist, the UI must not imply they do.
+- **Chat** — the primary available workflow. It now streams SSE deltas, lets the user stop generation, and persists a bounded conversation list in the local WebView/browser profile. Regenerate, explicit model selection, system instructions and richer conversation management remain planned.
 - **Models** — discover, compare, install, update, and remove models and their required engine/dependency packages. Show license, file size, storage needs, memory guidance, backend/platform requirements, provenance, and evidence without flooding the default card view.
 - **Activity** — one view of current downloads, verification, installation, engine lifecycle, inference, updates, and recovery. The current `/v1/activity` v1 endpoint is only a live snapshot of download/update jobs plus engine state; a durable event ledger is still required.
 - **Settings** — language, updates, storage, privacy, and advanced/manual configuration.
@@ -42,7 +42,7 @@ English and Turkish are the initial locales. All UI-authored strings, dynamic st
 
 ## Honest capability presentation
 
-The UI must separate `Listed`, `Package verified`, `Installed`, `Process ready`, `Task tested`, and `Profile validated`. Hardware detection, package installation, CUDA initialization, or an offload message alone is not a real GPU task test. Current chat uses a non-streaming API and a starter model; do not advertise model history, GPU execution, or multimodal features until implemented and validated.
+The UI must separate `Listed`, `Package verified`, `Installed`, `Process ready`, `Task tested`, and `Profile validated`. Hardware detection, package installation, CUDA initialization, or an offload message alone is not a real GPU task test. Chat streaming and local history are implemented and covered by the fake-engine HTTP smoke; this does not prove every third-party OpenAI-compatible backend implements SSE identically. Do not advertise GPU execution or multimodal features until implemented and validated.
 
 ## Implementation sequence
 

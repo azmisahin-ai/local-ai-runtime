@@ -8,8 +8,6 @@ const hardwareRefreshButton = document.querySelector('#hardware-refresh');
 const gpuObservationButton = document.querySelector('#gpu-observation-run');
 const gpuObservationStatus = document.querySelector('#gpu-observation-status');
 const chatError = document.querySelector('#chat-error');
-const answerWrap = document.querySelector('#answer-wrap');
-const answer = document.querySelector('#answer');
 const updateNotice = document.querySelector('#update-notice');
 const updateTitle = document.querySelector('#update-title');
 const updateCopy = document.querySelector('#update-copy');
@@ -48,8 +46,18 @@ const activityActiveJobs = document.querySelector('#activity-active-jobs');
 const activityReadyEngines = document.querySelector('#activity-ready-engines');
 const activityTotalEngines = document.querySelector('#activity-total-engines');
 const chatWelcome = document.querySelector('#chat-welcome');
+const chatMessages = document.querySelector('#chat-messages');
+const chatConversationList = document.querySelector('#chat-conversation-list');
+const chatNewButton = document.querySelector('#chat-new');
+const chatClearHistoryButton = document.querySelector('#chat-clear-history');
+const chatStopButton = document.querySelector('#chat-stop');
+const chatMessageInput = document.querySelector('#message');
 
 const SUPPORTED_LOCALES = ['en', 'tr'];
+const CHAT_HISTORY_KEY = 'lar.chat.history.v1';
+const MAX_CHAT_CONVERSATIONS = 24;
+const MAX_CHAT_MESSAGES = 80;
+const MAX_CHAT_CONTEXT_MESSAGES = 24;
 const VIEW_COPY_KEYS = {
   overview: ['page.overview.title', 'page.overview.description'],
   chat: ['page.chat.title', 'page.chat.description'],
@@ -61,6 +69,10 @@ const LEGACY_VIEW_HASHES = { 'chat-panel': 'chat', 'catalog-panel': 'models', 'r
 let currentView = 'overview';
 let currentLocale = 'en';
 let localeMessages = {};
+let chatConversations = [];
+let activeChatId = null;
+let activeChatController = null;
+let activeAssistantMessageElement = null;
 
 function translation(key, fallback = key) {
   return Object.prototype.hasOwnProperty.call(localeMessages, key) ? localeMessages[key] : fallback;
@@ -109,6 +121,7 @@ async function setLocale(locale) {
     try { localStorage.setItem('lar.locale', requested); } catch (_) { /* Preference persistence is optional. */ }
     applyLocale();
     renderCatalog();
+    renderChatWorkspace();
     reportDiagnosticEvent('ui.locale.changed', `locale=${requested}`);
   } catch (error) {
     if (requested !== 'en') {
@@ -1205,73 +1218,337 @@ diagnosticsExportButton.addEventListener('click', async () => {
   }
 });
 
+function createChatId() {
+  if (window.crypto && typeof window.crypto.randomUUID === 'function') return window.crypto.randomUUID();
+  return `chat-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
+}
+
+function loadChatHistory() {
+  try {
+    const raw = localStorage.getItem(CHAT_HISTORY_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((conversation) => conversation && typeof conversation.id === 'string' && Array.isArray(conversation.messages))
+      .slice(0, MAX_CHAT_CONVERSATIONS)
+      .map((conversation) => ({
+        id: conversation.id.slice(0, 100),
+        title: typeof conversation.title === 'string' ? conversation.title.slice(0, 90) : '',
+        updated_at: Number.isFinite(conversation.updated_at) ? conversation.updated_at : Date.now(),
+        messages: conversation.messages.slice(-MAX_CHAT_MESSAGES).filter((message) =>
+          message && ['user', 'assistant'].includes(message.role) && typeof message.content === 'string')
+          .map((message) => ({ role: message.role, content: message.content.slice(0, 40000), state: ['stopped', 'generating'].includes(message.state) ? 'stopped' : 'complete' })),
+      }))
+      .sort((left, right) => right.updated_at - left.updated_at);
+  } catch (error) {
+    reportDiagnosticEvent('ui.chat.history_load_failed', String(error.message || error).slice(0, 180));
+    return [];
+  }
+}
+
+function saveChatHistory() {
+  chatConversations = chatConversations
+    .sort((left, right) => right.updated_at - left.updated_at)
+    .slice(0, MAX_CHAT_CONVERSATIONS);
+  for (const conversation of chatConversations) conversation.messages = conversation.messages.slice(-MAX_CHAT_MESSAGES);
+  try {
+    localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(chatConversations));
+    return true;
+  } catch (error) {
+    // A browser storage quota should never interrupt local inference. Retain the
+    // newest conversations and make one bounded retry before reporting failure.
+    chatConversations = chatConversations.slice(0, 8).map((conversation) => ({
+      ...conversation,
+      messages: conversation.messages.slice(-24).map((message) => ({ ...message, content: message.content.slice(-16000) })),
+    }));
+    try {
+      localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(chatConversations));
+      return true;
+    } catch (retryError) {
+      reportDiagnosticEvent('ui.chat.history_save_failed', String(retryError.message || error.message || error).slice(0, 180));
+      return false;
+    }
+  }
+}
+
+function activeConversation() {
+  return chatConversations.find((conversation) => conversation.id === activeChatId) || null;
+}
+
+function conversationTitle(conversation) {
+  if (conversation.title) return conversation.title;
+  const firstUserMessage = conversation.messages.find((message) => message.role === 'user');
+  if (!firstUserMessage) return translation('chat.untitled', 'New conversation');
+  const compact = firstUserMessage.content.replace(/\s+/g, ' ').trim();
+  return compact.length > 52 ? `${compact.slice(0, 51)}…` : compact;
+}
+
+function formatChatDate(timestamp) {
+  const date = new Date(timestamp);
+  if (!Number.isFinite(date.getTime())) return '';
+  const today = new Date();
+  if (date.toDateString() === today.toDateString()) {
+    return date.toLocaleTimeString(currentLocale === 'tr' ? 'tr-TR' : 'en-US', { hour: '2-digit', minute: '2-digit' });
+  }
+  return date.toLocaleDateString(currentLocale === 'tr' ? 'tr-TR' : 'en-US', { month: 'short', day: 'numeric' });
+}
+
+function renderChatHistory() {
+  if (!chatConversationList) return;
+  chatConversationList.replaceChildren();
+  if (chatConversations.length === 0) {
+    chatConversationList.append(make('p', 'chat-history-empty', translation('chat.noHistory', 'No conversations yet.')));
+    if (chatClearHistoryButton) chatClearHistoryButton.disabled = true;
+    return;
+  }
+  if (chatClearHistoryButton) chatClearHistoryButton.disabled = Boolean(activeChatController);
+  for (const conversation of chatConversations) {
+    const button = make('button', `chat-history-item${conversation.id === activeChatId ? ' active' : ''}`);
+    button.type = 'button';
+    button.dataset.conversationId = conversation.id;
+    button.disabled = Boolean(activeChatController);
+    const title = make('span', 'chat-history-item-title', conversationTitle(conversation));
+    const date = make('small', 'chat-history-item-date', formatChatDate(conversation.updated_at));
+    button.append(title, date);
+    chatConversationList.append(button);
+  }
+}
+
+function renderChatMessages() {
+  if (!chatMessages) return;
+  chatMessages.replaceChildren();
+  const conversation = activeConversation();
+  const messages = conversation ? conversation.messages : [];
+  if (chatWelcome) chatWelcome.hidden = messages.length > 0;
+  chatMessages.hidden = messages.length === 0;
+  activeAssistantMessageElement = null;
+  for (const message of messages) {
+    const article = make('article', `chat-message ${message.role}${message.state === 'generating' ? ' generating' : ''}`);
+    const heading = make('div', 'chat-message-heading');
+    heading.append(make('strong', '', message.role === 'user'
+      ? translation('chat.you', 'You') : translation('chat.assistant', 'Local model')));
+    if (message.role === 'assistant' && message.state === 'stopped') {
+      heading.append(make('span', 'tag', translation('chat.stopped', 'Stopped')));
+    } else if (message.role === 'assistant' && message.state === 'generating') {
+      heading.append(make('span', 'tag loading', translation('chat.generating', 'Generating…')));
+    }
+    const content = make('div', 'chat-message-content', message.content || (message.state === 'generating' ? ' ' : ''));
+    article.append(heading, content);
+    chatMessages.append(article);
+    if (message.role === 'assistant' && message.state === 'generating') activeAssistantMessageElement = content;
+  }
+  chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+function renderChatWorkspace() {
+  renderChatHistory();
+  renderChatMessages();
+}
+
+function createNewConversation() {
+  if (activeChatController) activeChatController.abort();
+  const conversation = { id: createChatId(), title: '', updated_at: Date.now(), messages: [] };
+  chatConversations.unshift(conversation);
+  activeChatId = conversation.id;
+  saveChatHistory();
+  renderChatWorkspace();
+  chatError.textContent = '';
+  chatMessageInput.value = '';
+  chatSendButton.disabled = true;
+  chatMessageInput.focus();
+}
+
+function stopChatGeneration() {
+  if (activeChatController) activeChatController.abort();
+}
+
+function appendAssistantDelta(conversation, message, text) {
+  if (!text) return;
+  message.content += text;
+  conversation.updated_at = Date.now();
+  if (conversation.id === activeChatId && activeAssistantMessageElement) {
+    activeAssistantMessageElement.textContent = message.content;
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+  }
+}
+
+function consumeSseBlock(block, onText) {
+  const dataLines = block.split(/\r?\n/).filter((line) => line.startsWith('data:'));
+  if (dataLines.length === 0) return false;
+  const data = dataLines.map((line) => line.slice(5).replace(/^ /, '')).join('\n');
+  if (data === '[DONE]') return true;
+  let event;
+  try { event = JSON.parse(data); }
+  catch (_) { throw new Error(translation('chat.invalidStream', 'The model returned an invalid streaming response.')); }
+  if (event?.error?.message) throw new Error(String(event.error.message));
+  const choices = Array.isArray(event?.choices) ? event.choices : [];
+  for (const choice of choices) {
+    const delta = choice?.delta?.content;
+    if (typeof delta === 'string') onText(delta);
+  }
+  return false;
+}
+
+async function readChatStream(response, onText) {
+  if (!response.body || typeof response.body.getReader !== 'function') {
+    throw new Error(translation('chat.streamingUnsupported', 'Streaming is not available in this desktop web runtime.'));
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder('utf-8');
+  let pending = '';
+  let receivedDone = false;
+  let streamEnded = false;
+  while (!streamEnded) {
+    const part = await reader.read();
+    pending += decoder.decode(part.value || new Uint8Array(), { stream: !part.done });
+    while (true) {
+      const separator = pending.match(/\r?\n\r?\n/);
+      if (!separator || separator.index === undefined) break;
+      const block = pending.slice(0, separator.index);
+      pending = pending.slice(separator.index + separator[0].length);
+      if (!receivedDone && consumeSseBlock(block, onText)) receivedDone = true;
+    }
+    if (part.done) streamEnded = true;
+  }
+  pending += decoder.decode();
+  if (!receivedDone && pending.trim()) receivedDone = consumeSseBlock(pending, onText);
+  if (!receivedDone) throw new Error(translation('chat.streamIncomplete', 'The model stream ended before completion.'));
+}
+
+async function parseChatError(response) {
+  const raw = await response.text();
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed?.error?.message || raw || `Request failed (${response.status})`;
+  } catch (_) {
+    return raw || `Request failed (${response.status})`;
+  }
+}
+
+chatConversations = loadChatHistory();
+activeChatId = chatConversations[0]?.id || null;
+renderChatWorkspace();
+
+if (chatNewButton) chatNewButton.addEventListener('click', createNewConversation);
+if (chatStopButton) chatStopButton.addEventListener('click', stopChatGeneration);
+if (chatClearHistoryButton) chatClearHistoryButton.addEventListener('click', () => {
+  if (activeChatController) return;
+  if (!window.confirm(translation('chat.confirmClear', 'Delete all locally stored conversations?'))) return;
+  chatConversations = [];
+  activeChatId = null;
+  saveChatHistory();
+  renderChatWorkspace();
+  chatError.textContent = '';
+});
+if (chatConversationList) chatConversationList.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-conversation-id]');
+  if (!button || activeChatController) return;
+  const selected = chatConversations.find((conversation) => conversation.id === button.dataset.conversationId);
+  if (!selected) return;
+  activeChatId = selected.id;
+  chatError.textContent = '';
+  renderChatWorkspace();
+});
+
+chatMessageInput.addEventListener('input', () => {
+  chatSendButton.disabled = Boolean(activeChatController) || chatMessageInput.value.trim().length === 0;
+});
+
 document.querySelector('#chat-form').addEventListener('submit', async (event) => {
   event.preventDefault();
+  if (activeChatController) return;
   chatError.textContent = '';
-  answerWrap.hidden = true;
-  if (chatWelcome) chatWelcome.hidden = true;
-  const message = document.querySelector('#message').value.trim();
-  if (!message) return;
-  const send = document.querySelector('#send');
+  const messageText = chatMessageInput.value.trim();
+  if (!messageText) return;
+  let conversation = activeConversation();
+  if (!conversation) {
+    conversation = { id: createChatId(), title: '', updated_at: Date.now(), messages: [] };
+    chatConversations.unshift(conversation);
+    activeChatId = conversation.id;
+  }
+  conversation.messages.push({ role: 'user', content: messageText, state: 'complete' });
+  if (!conversation.title) conversation.title = messageText.replace(/\s+/g, ' ').slice(0, 52);
+  conversation.updated_at = Date.now();
+  chatMessageInput.value = '';
+  chatSendButton.disabled = true;
+  const assistantMessage = { role: 'assistant', content: '', state: 'generating' };
+  conversation.messages.push(assistantMessage);
+  if (conversation.messages.length > MAX_CHAT_MESSAGES) conversation.messages = conversation.messages.slice(-MAX_CHAT_MESSAGES);
+  saveChatHistory();
+  renderChatWorkspace();
+  const controller = new AbortController();
+  activeChatController = controller;
+  chatStopButton.hidden = false;
+  chatSendButton.disabled = true;
+  chatMessageInput.disabled = true;
+  renderChatHistory();
+  reportDiagnosticEvent('ui.chat.request_started', `input_chars=${messageText.length}; stream=true`);
   const startedAt = performance.now();
-  send.disabled = true;
-  send.textContent = currentLocale === 'tr' ? 'Yanıt bekleniyor…' : 'Thinking…';
-  reportDiagnosticEvent('ui.chat.request_started', `input_chars=${message.length}; stream=false`);
   try {
-    const result = await api('/v1/chat/completions', {
-      method: 'POST',
-      body: JSON.stringify({
-        model: 'local-model',
-        messages: [
-          {
-            role: 'system',
-            content: 'You are a helpful assistant. Answer the user directly and concisely in the same language as the user. Do not claim you cannot answer ordinary greetings or requests. Do not provide code unless the user asks for code.',
-          },
-          { role: 'user', content: message },
-        ],
-        temperature: 0.2,
-        max_tokens: 256,
-        stream: false,
-      }),
-    });
-    const choice = result?.choices?.[0];
-    const content = choice?.message?.content;
-    answer.textContent = typeof content === 'string' ? content : JSON.stringify(result, null, 2);
-    answerWrap.hidden = false;
-    const metrics = [
-      `elapsed_ms=${Math.round(performance.now() - startedAt)}`,
-      `input_chars=${message.length}`,
-      `choice_count=${Array.isArray(result?.choices) ? result.choices.length : 0}`,
-      `response_chars=${typeof content === 'string' ? content.length : 0}`,
-      `finish_reason=${String(choice?.finish_reason || 'unknown').slice(0, 40)}`,
+    const conversationMessages = [
+      {
+        role: 'system',
+        content: translation('chat.systemPrompt', 'You are a helpful assistant. Answer directly and concisely in the same language as the user.'),
+      },
+      ...conversation.messages.filter((item) => item.role === 'user' || item.role === 'assistant').slice(-MAX_CHAT_CONTEXT_MESSAGES).map((item) => ({ role: item.role, content: item.content })),
     ];
-    const usage = result?.usage;
-    for (const key of ['prompt_tokens', 'completion_tokens', 'total_tokens']) {
-      if (Number.isFinite(usage?.[key])) metrics.push(`${key}=${usage[key]}`);
+    // The current assistant placeholder is not part of the request yet.
+    conversationMessages.pop();
+    const response = await fetch('/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      cache: 'no-store',
+      signal: controller.signal,
+      body: JSON.stringify({ model: 'local-model', messages: conversationMessages, temperature: 0.2, max_tokens: 512, stream: true }),
+    });
+    if (!response.ok) throw new Error(await parseChatError(response));
+    const contentType = response.headers.get('content-type') || '';
+    if (contentType.toLowerCase().includes('text/event-stream')) {
+      await readChatStream(response, (delta) => appendAssistantDelta(conversation, assistantMessage, delta));
+    } else {
+      const result = await response.json();
+      const content = result?.choices?.[0]?.message?.content;
+      if (typeof content === 'string') appendAssistantDelta(conversation, assistantMessage, content);
+      else throw new Error(translation('chat.emptyResponse', 'The model returned an empty response.'));
     }
-    reportDiagnosticEvent('ui.chat.request_succeeded', metrics.join('; '));
+    assistantMessage.state = 'complete';
+    if (!assistantMessage.content) assistantMessage.content = translation('chat.emptyResponse', 'The model returned an empty response.');
+    conversation.updated_at = Date.now();
+    saveChatHistory();
+    if (conversation.id === activeChatId) renderChatWorkspace();
+    reportDiagnosticEvent('ui.chat.request_succeeded', `elapsed_ms=${Math.round(performance.now() - startedAt)}; input_chars=${messageText.length}; response_chars=${assistantMessage.content.length}; stream=true`);
   } catch (error) {
-    chatError.textContent = error.message;
-    reportDiagnosticEvent('ui.chat.request_failed', [
-      `elapsed_ms=${Math.round(performance.now() - startedAt)}`,
-      `input_chars=${message.length}`,
-      `http_status=${Number.isInteger(error?.httpStatus) ? error.httpStatus : 0}`,
-      `error_type=${String(error?.name || 'Error').slice(0, 40)}`,
-    ].join('; '));
+    if (error && error.name === 'AbortError') {
+      assistantMessage.state = 'stopped';
+      if (!assistantMessage.content) assistantMessage.content = translation('chat.stoppedBeforeResponse', 'Generation stopped before a response arrived.');
+      reportDiagnosticEvent('ui.chat.request_stopped', `elapsed_ms=${Math.round(performance.now() - startedAt)}; input_chars=${messageText.length}`);
+    } else {
+      assistantMessage.state = assistantMessage.content ? 'stopped' : 'complete';
+      if (!assistantMessage.content) conversation.messages = conversation.messages.filter((item) => item !== assistantMessage);
+      chatError.textContent = error.message;
+      reportDiagnosticEvent('ui.chat.request_failed', `elapsed_ms=${Math.round(performance.now() - startedAt)}; input_chars=${messageText.length}; error_type=${String(error?.name || 'Error').slice(0, 40)}`);
+    }
+    conversation.updated_at = Date.now();
+    saveChatHistory();
+    if (conversation.id === activeChatId) renderChatWorkspace();
   } finally {
-    send.disabled = false;
-    send.textContent = translation('chat.send', 'Send');
+    if (activeChatController === controller) activeChatController = null;
+    chatStopButton.hidden = true;
+    chatMessageInput.disabled = false;
+    chatSendButton.disabled = chatMessageInput.value.trim().length === 0;
+    renderChatHistory();
+    chatMessageInput.focus();
   }
 });
 
-document.querySelectorAll('[data-prompt]').forEach((button) => {
+document.querySelectorAll('[data-prompt-key]').forEach((button) => {
   button.addEventListener('click', () => {
-    const messageBox = document.querySelector('#message');
-    messageBox.value = button.dataset.prompt || '';
-    messageBox.focus();
+    chatMessageInput.value = translation(button.dataset.promptKey, '');
+    chatMessageInput.dispatchEvent(new Event('input', { bubbles: true }));
+    chatMessageInput.focus();
   });
 });
-document.querySelector('#message').addEventListener('keydown', (event) => {
+chatMessageInput.addEventListener('keydown', (event) => {
   if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
     event.preventDefault();
     if (!chatSendButton.disabled) document.querySelector('#chat-form').requestSubmit();

@@ -1,4 +1,13 @@
-﻿# Changelog
+# Changelog
+
+## Unreleased — streaming chat and local conversation history
+
+- Forward OpenAI-compatible chat `stream:true` responses as chunked Server-Sent Events so tokens reach the UI as they are generated.
+- Detect client disconnects during streamed reads and close the upstream request promptly; keep the same loopback Host/Origin policy for streaming calls.
+- Add streamed chat rendering, stop generation, a local conversation list, new-chat and clear-history actions. Store a bounded history in the per-user WebView/browser profile only; do not include prompt or response content in diagnostics.
+- Add delayed chunked fake-engine coverage proving that first SSE bytes are delivered before a full generation completes, plus the streaming route security test.
+- Improve Activity summary cards so job/engine counters remain clearly separated in the UI.
+
 
 ## Unreleased
 

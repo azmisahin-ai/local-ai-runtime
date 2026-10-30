@@ -15,6 +15,7 @@
 #include <boost/property_tree/ptree.hpp>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <csignal>
 #include <cstdlib>
@@ -903,6 +904,164 @@ ProxyResult proxy_chat(const EngineStatus& engine, const std::string& body) {
     return proxy_local_request(engine, http::verb::post, "/v1/chat/completions", body);
 }
 
+bool request_wants_chat_stream(const http::request<http::string_body>& request) {
+    if (request.method() != http::verb::post || request.target() != "/v1/chat/completions") return false;
+    try {
+        std::istringstream input(request.body());
+        boost::property_tree::ptree payload;
+        boost::property_tree::read_json(input, payload);
+        return payload.get<bool>("stream", false);
+    } catch (...) {
+        return false;
+    }
+}
+
+void write_http_chunk(beast::tcp_stream& stream, const char* data, std::size_t size) {
+    if (size == 0) return;
+    std::ostringstream prefix;
+    prefix << std::hex << size << "\r\n";
+    asio::write(stream, asio::buffer(prefix.str()));
+    asio::write(stream, asio::buffer(data, size));
+    asio::write(stream, asio::buffer("\r\n", 2));
+}
+
+bool downstream_client_disconnected(tcp::socket& socket) {
+    boost::system::error_code mode_error;
+    const bool was_non_blocking = socket.non_blocking();
+    socket.non_blocking(true, mode_error);
+    if (mode_error) return false;
+    std::array<char, 1> probe{};
+    boost::system::error_code receive_error;
+    const auto received = socket.receive(asio::buffer(probe), tcp::socket::message_peek, receive_error);
+    boost::system::error_code restore_error;
+    socket.non_blocking(was_non_blocking, restore_error);
+    if (receive_error == asio::error::eof || receive_error == asio::error::connection_reset ||
+        receive_error == asio::error::connection_aborted) return true;
+    return !receive_error && received == 0;
+}
+
+void proxy_chat_stream(beast::tcp_stream& client_stream,
+                       const http::request<http::string_body>& client_request,
+                       const RuntimeConfig& config, EngineManager& engines) {
+    const auto version = client_request.version();
+    const std::string host(client_request[http::field::host].data(), client_request[http::field::host].size());
+    if (!is_loopback_host(host, config.port)) {
+        auto response = error_response(http::status::forbidden, version, "Host header is not allowed.");
+        http::write(client_stream, response);
+        return;
+    }
+    const std::string origin(client_request[http::field::origin].data(), client_request[http::field::origin].size());
+    if (!origin_is_same_loopback(origin, config.port)) {
+        auto response = error_response(http::status::forbidden, version, "Cross-origin requests are disabled. Use the local dashboard origin.");
+        http::write(client_stream, response);
+        return;
+    }
+    if (client_request.body().empty()) {
+        auto response = error_response(http::status::bad_request, version, "Request body must contain a chat completion JSON object.");
+        http::write(client_stream, response);
+        return;
+    }
+    const auto engine = engines.default_chat_engine();
+    if (!engine) {
+        auto response = error_response(http::status::service_unavailable, version, "No chat engine is configured. Set upstream_base_url in config/engines.json.");
+        http::write(client_stream, response);
+        return;
+    }
+    if (engine->state != ProcessState::running) {
+        auto response = error_response(http::status::service_unavailable, version, "Configured engine is not running. Start it from the dashboard first.");
+        http::write(client_stream, response);
+        return;
+    }
+    const auto port_text = upstream_port(engine->config.upstream_base_url);
+    if (port_text.empty()) {
+        auto response = error_response(http::status::bad_gateway, version, "No valid local upstream_base_url is configured for this engine.");
+        http::write(client_stream, response);
+        return;
+    }
+
+    bool downstream_headers_sent = false;
+    try {
+        asio::io_context ioc;
+        tcp::resolver resolver(ioc);
+        beast::tcp_stream upstream(ioc);
+        upstream.expires_after(std::chrono::minutes(15));
+        const auto endpoints = resolver.resolve("127.0.0.1", port_text);
+        upstream.connect(endpoints);
+
+        http::request<http::string_body> upstream_request{http::verb::post, "/v1/chat/completions", 11};
+        upstream_request.set(http::field::host, "127.0.0.1:" + port_text);
+        upstream_request.set(http::field::user_agent, "local-ai-runtime/" LAR_VERSION);
+        upstream_request.set(http::field::content_type, "application/json");
+        upstream_request.keep_alive(false);
+        upstream_request.body() = client_request.body();
+        upstream_request.prepare_payload();
+        http::write(upstream, upstream_request);
+
+        beast::flat_buffer upstream_buffer;
+        http::response_parser<http::buffer_body> parser;
+        parser.body_limit(64U * 1024U * 1024U);
+        http::read_header(upstream, upstream_buffer, parser);
+
+        http::response<http::empty_body> downstream_response{parser.get().result(), version};
+        downstream_response.set(http::field::server, "local-ai-runtime/" LAR_VERSION);
+        const auto upstream_content_type = parser.get()[http::field::content_type];
+        if (!upstream_content_type.empty()) {
+            downstream_response.set(http::field::content_type,
+                std::string(upstream_content_type.data(), upstream_content_type.size()));
+        } else {
+            downstream_response.set(http::field::content_type, "text/event-stream; charset=utf-8");
+        }
+        downstream_response.set("X-Content-Type-Options", "nosniff");
+        downstream_response.set("Cache-Control", "no-store");
+        downstream_response.set("X-Accel-Buffering", "no");
+        downstream_response.keep_alive(false);
+        downstream_response.chunked(true);
+        http::response_serializer<http::empty_body> downstream_serializer{downstream_response};
+        http::write_header(client_stream, downstream_serializer);
+        downstream_headers_sent = true;
+
+        std::array<char, 16U * 1024U> body_buffer{};
+        const auto stream_deadline = std::chrono::steady_clock::now() + std::chrono::minutes(15);
+        while (!parser.is_done()) {
+            parser.get().body().data = body_buffer.data();
+            parser.get().body().size = body_buffer.size();
+            boost::system::error_code error;
+            const auto remaining = stream_deadline - std::chrono::steady_clock::now();
+            if (remaining <= std::chrono::steady_clock::duration::zero()) {
+                throw std::runtime_error("The local model stream exceeded the 15-minute request limit.");
+            }
+            const auto poll_window = std::min(remaining, std::chrono::steady_clock::duration(std::chrono::milliseconds(300)));
+            upstream.expires_after(std::chrono::duration_cast<std::chrono::steady_clock::duration>(poll_window));
+            http::read_some(upstream, upstream_buffer, parser, error);
+            const auto bytes_read = body_buffer.size() - parser.get().body().size;
+            if (bytes_read > 0) write_http_chunk(client_stream, body_buffer.data(), bytes_read);
+            if (error == beast::error::timeout) {
+                if (downstream_client_disconnected(client_stream.socket())) {
+                    throw std::runtime_error("The chat client canceled generation.");
+                }
+                continue;
+            }
+            if (error && error != http::error::need_buffer) {
+                if (error == asio::error::eof && parser.is_done()) break;
+                throw boost::system::system_error(error, "read streamed model response");
+            }
+            if (parser.is_done()) break;
+        }
+        asio::write(client_stream, asio::buffer("0\r\n\r\n", 5));
+    } catch (const std::exception& error) {
+        log_diagnostic("WARN", "chat.stream_failed", error.what());
+        if (!downstream_headers_sent) {
+            auto response = error_response(http::status::bad_gateway, version,
+                std::string("Could not stream response from the local model server: ") + error.what());
+            beast::error_code ignored;
+            http::write(client_stream, response, ignored);
+        }
+        // If the browser canceled generation, its socket closes. A failed write
+        // exits this loop and releases the upstream connection, stopping work
+        // at the model server as soon as it observes the disconnect.
+    }
+}
+
 bool has_nonempty_chat_choices(std::string_view response_body) {
     try {
         std::istringstream input{std::string(response_body)};
@@ -1349,6 +1508,16 @@ void serve_client(tcp::socket socket, RuntimeConfig config, EngineManager& engin
         parser.body_limit(4U * 1024U * 1024U);
         http::read(stream, buffer, parser);
         auto request = parser.release();
+        if (request_wants_chat_stream(request)) {
+            // Streaming completions use a chunked response so tokens are flushed
+            // as the local model server produces them instead of buffering the
+            // complete generation in memory.
+            stream.expires_after(std::chrono::minutes(15));
+            proxy_chat_stream(stream, request, config, engines);
+            beast::error_code ignored;
+            stream.socket().shutdown(tcp::socket::shutdown_send, ignored);
+            return;
+        }
         const bool is_shutdown_request = request.method() == http::verb::post &&
             request.target() == "/v1/runtime/shutdown";
         auto response = handle_request(request, config, engines, downloads, web_dir);

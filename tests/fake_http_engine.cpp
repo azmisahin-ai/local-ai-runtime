@@ -3,6 +3,9 @@
 
 #include <filesystem>
 #include <iostream>
+#include <sstream>
+#include <thread>
+#include <chrono>
 #include <stdexcept>
 #include <string>
 
@@ -26,6 +29,39 @@ unsigned short parse_port(int argc, char** argv) {
 }
 
 void respond(tcp::socket& socket, const http::request<http::string_body>& request) {
+    if (request.method() == http::verb::post && request.target() == "/v1/chat/completions" &&
+        (request.body().find("\"stream\": true") != std::string::npos ||
+         request.body().find("\"stream\":true") != std::string::npos)) {
+        http::response<http::empty_body> streaming_response{http::status::ok, request.version()};
+        streaming_response.set(http::field::server, "lar-fake-http-engine");
+        streaming_response.set(http::field::content_type, "text/event-stream; charset=utf-8");
+        streaming_response.set("Cache-Control", "no-store");
+        streaming_response.keep_alive(false);
+        streaming_response.chunked(true);
+        http::response_serializer<http::empty_body> serializer{streaming_response};
+        http::write_header(socket, serializer);
+        // Simulate real model prefill latency so the runtime's streamed-read
+        // timeout polling is exercised before the first token is available.
+        std::this_thread::sleep_for(std::chrono::milliseconds(450));
+        const std::string chunks[] = {
+            "data: {\"id\":\"chatcmpl-ci-stream\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl-ci-stream\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"LAR_STREAM_SMOKE_OK\"}}]}\n\n",
+            "data: [DONE]\n\n",
+        };
+        for (const auto& chunk : chunks) {
+            std::ostringstream prefix;
+            prefix << std::hex << chunk.size() << "\r\n";
+            asio::write(socket, asio::buffer(prefix.str()));
+            asio::write(socket, asio::buffer(chunk));
+            asio::write(socket, asio::buffer("\r\n", 2));
+            std::this_thread::sleep_for(std::chrono::milliseconds(120));
+        }
+        asio::write(socket, asio::buffer("0\r\n\r\n", 5));
+        beast::error_code ignored;
+        socket.shutdown(tcp::socket::shutdown_both, ignored);
+        socket.close(ignored);
+        return;
+    }
     http::response<http::string_body> response{http::status::ok, request.version()};
     response.set(http::field::server, "lar-fake-http-engine");
     response.set(http::field::content_type, "application/json; charset=utf-8");

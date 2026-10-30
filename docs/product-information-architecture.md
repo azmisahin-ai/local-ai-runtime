@@ -7,7 +7,7 @@ This document defines the user-facing organization of Local AI Runtime. The dash
 The current dashboard is organized into five persistent destinations:
 
 1. **Overview** — local runtime readiness, current chat model, hardware summary, and clearly-labelled available/planned workspaces.
-2. **Chat** — the primary user task, with a dedicated composer and local privacy guidance. The current chat API is non-streaming; streaming and durable conversation history are not yet implemented.
+2. **Chat** — the primary user task, with a dedicated composer, incremental SSE token streaming, stop-generation behavior, and a bounded local conversation history. Conversations are stored in browser/WebView local storage under the per-user profile and are never uploaded or included in diagnostics.
 3. **Models** — reviewed engines, models, dependencies, requirements, licenses, and installed state. The catalogue is still backed by reviewed built-in metadata; it is not yet a user-editable or remotely executable manifest.
 4. **Activity** — installed engine state and the current download/update job snapshot. `GET /v1/activity` follows [activity-v1](../catalog/schemas/activity-v1.schema.json). It is a point-in-time snapshot, not a durable event history; events remain in local diagnostics until a separate event ledger is implemented.
 5. **Settings** — language preference, release/update controls, advanced manual engine configuration, and privacy information.
@@ -92,7 +92,7 @@ Every job emits structured local events with `job_id`, `component_id`, stage/pha
 
 1. Establish the five-area UI shell, task-first Overview, dedicated Chat, and initial EN/TR resources (implemented as the first foundation slice).
 2. Unify current operation state in the `activity-v1` snapshot and evolve it into a durable job/event contract with safe retry/cancel semantics.
-3. Complete dynamic localization, accessible names/status announcements, first-run onboarding, and streaming chat with conversation persistence.
+3. Complete dynamic localization, accessible names/status announcements and first-run onboarding. Streaming Chat and bounded local conversation persistence are now implemented; regenerate, system instructions, model selection and richer history management remain future Chat improvements.
 4. Move reviewed model, engine and dependency definitions to a checked-in versioned authoring manifest that generates both API metadata and the install allowlist from one source.
 5. Finalize and test the shared engine adapter lifecycle against the existing `llama.cpp` integration.
 6. Validate reproducible CPU/GPU hardware profiles and add Qwen3.5/Gemma 4 as model-family pilots on the existing engine where formats and capabilities are verified.

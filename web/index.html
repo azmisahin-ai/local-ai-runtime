@@ -132,25 +132,38 @@
           <section id="chat-panel" class="panel chat-panel chat-workspace">
             <div class="chat-heading">
               <div><p class="eyebrow" data-i18n="chat.eyebrow">LOCAL CONVERSATION</p><h2 data-i18n="chat.title">Chat with your model</h2><p id="chat-readiness" class="hint" data-i18n="chat.notReady">Install and start a chat model to begin.</p></div>
-              <div class="chat-private-badge"><span class="local-indicator"></span><span data-i18n="common.privateSession">Private local session</span></div>
-            </div>
-            <div class="chat-welcome" id="chat-welcome">
-              <div class="chat-welcome-icon" aria-hidden="true">✦</div>
-              <h3 data-i18n="chat.welcomeTitle">What would you like to work on?</h3>
-              <p data-i18n="chat.welcomeDescription">Your prompt is sent to the model running on this computer. Nothing is uploaded by Local AI Runtime.</p>
-              <div class="prompt-suggestions">
-                <button type="button" class="suggestion" data-prompt="Explain a complex idea in simple terms."><span>✧</span><span data-i18n="chat.suggestionExplain">Explain something clearly</span></button>
-                <button type="button" class="suggestion" data-prompt="Help me plan a small project step by step."><span>↗</span><span data-i18n="chat.suggestionPlan">Plan a project</span></button>
-                <button type="button" class="suggestion" data-prompt="Review this text and suggest improvements."><span>✎</span><span data-i18n="chat.suggestionWrite">Improve a piece of writing</span></button>
+              <div class="chat-heading-actions">
+                <div class="chat-private-badge"><span class="local-indicator"></span><span data-i18n="common.privateSession">Private local session</span></div>
+                <button id="chat-new" class="button secondary" type="button" data-i18n="chat.new">New chat</button>
               </div>
             </div>
-            <form id="chat-form" class="chat-composer">
-              <label class="visually-hidden" for="message" data-i18n="chat.messageLabel">Message your local model</label>
-              <textarea id="message" rows="3" required maxlength="12000" data-i18n-placeholder="chat.placeholder" placeholder="Message your local model…"></textarea>
-              <div class="composer-footer"><span class="hint" data-i18n="chat.composerHint">Enter to send · Shift + Enter for a new line</span><button id="send" class="button primary" type="submit" disabled><span data-i18n="chat.send">Send</span><span aria-hidden="true">↑</span></button></div>
-            </form>
-            <p id="chat-error" class="error" role="status" aria-live="polite"></p>
-            <div id="answer-wrap" class="answer-wrap" hidden><div class="answer-heading"><h3 data-i18n="chat.response">Model response</h3><span class="tag" data-i18n="common.generatedLocally">Generated locally</span></div><pre id="answer"></pre></div>
+            <div class="chat-session-layout">
+              <aside class="chat-history-panel" aria-label="Conversation history" data-i18n-aria="chat.historyLabel">
+                <div class="chat-history-heading"><h3 data-i18n="chat.history">Recent chats</h3><button id="chat-clear-history" class="text-button" type="button" data-i18n="chat.clearHistory">Clear</button></div>
+                <div id="chat-conversation-list" class="chat-conversation-list"></div>
+                <p class="chat-history-note" data-i18n="chat.historyPrivacy">Conversations are stored only in this browser on this device.</p>
+              </aside>
+              <div class="chat-main">
+                <div class="chat-welcome" id="chat-welcome">
+                  <div class="chat-welcome-icon" aria-hidden="true">✦</div>
+                  <h3 data-i18n="chat.welcomeTitle">What would you like to work on?</h3>
+                  <p data-i18n="chat.welcomeDescription">Your prompt is sent to the model running on this computer. Nothing is uploaded by Local AI Runtime.</p>
+                  <div class="prompt-suggestions">
+                    <button type="button" class="suggestion" data-prompt-key="chat.promptExplain"><span>✧</span><span data-i18n="chat.suggestionExplain">Explain something clearly</span></button>
+                    <button type="button" class="suggestion" data-prompt-key="chat.promptPlan"><span>↗</span><span data-i18n="chat.suggestionPlan">Plan a project</span></button>
+                    <button type="button" class="suggestion" data-prompt-key="chat.promptWrite"><span>✎</span><span data-i18n="chat.suggestionWrite">Improve a piece of writing</span></button>
+                  </div>
+                </div>
+                <div id="chat-messages" class="chat-messages" role="log" aria-live="polite" aria-relevant="additions text"></div>
+                <form id="chat-form" class="chat-composer">
+                  <label class="visually-hidden" for="message" data-i18n="chat.messageLabel">Message your local model</label>
+                  <textarea id="message" rows="3" required maxlength="12000" data-i18n-placeholder="chat.placeholder" placeholder="Message your local model…"></textarea>
+                  <div class="composer-footer"><span class="hint" data-i18n="chat.composerHint">Enter to send · Shift + Enter for a new line</span><div class="composer-actions"><button id="chat-stop" class="button secondary" type="button" hidden data-i18n="chat.stop">Stop</button><button id="send" class="button primary" type="submit" disabled><span data-i18n="chat.send">Send</span><span aria-hidden="true">↑</span></button></div></div>
+                </form>
+                <p id="chat-error" class="error" role="status" aria-live="polite"></p>
+                <p class="chat-local-note" data-i18n="chat.localStorageNote">Chat history stays on this device. It is not included in diagnostics.</p>
+              </div>
+            </div>
           </section>
         </section>
 

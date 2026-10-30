@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """End-to-end smoke test: runtime -> child process -> local OpenAI-compatible API."""
 import argparse
+import http.client
 import json
+import os
+import shutil
 import socket
 import subprocess
-import shutil
-import os
 import sys
 import tempfile
 import time
@@ -160,6 +161,8 @@ def main():
             assert set(locale_resources["en"]) == set(locale_resources["tr"]), "English and Turkish resources must expose the same keys"
             assert locale_resources["en"].get("nav.overview") == "Overview"
             assert locale_resources["tr"].get("nav.overview") == "Genel Bakış"
+            for required_chat_key in ("chat.new", "chat.history", "chat.clearHistory", "chat.stop", "chat.localStorageNote", "chat.systemPrompt", "chat.promptExplain", "chat.promptPlan", "chat.promptWrite", "chat.streamIncomplete"):
+                assert required_chat_key in locale_resources["en"] and required_chat_key in locale_resources["tr"], required_chat_key
             try:
                 request(base + "/locales/fr.json")
                 raise AssertionError("The locale route must not expose arbitrary file paths.")
@@ -203,6 +206,22 @@ def main():
                 {"Origin": "https://attacker.invalid"},
                 "cross-origin browser request",
             )
+            stream_security_payload = json.dumps({
+                "model": "fake-model",
+                "messages": [{"role": "user", "content": "blocked"}],
+                "stream": True,
+            }).encode("utf-8")
+            stream_security_request = urllib.request.Request(
+                base + "/v1/chat/completions",
+                data=stream_security_payload,
+                headers={"Content-Type": "application/json", "Origin": "https://attacker.invalid"},
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(stream_security_request, timeout=2) as response:
+                    raise AssertionError(f"Streaming chat must reject cross-origin requests, got {response.status}")
+            except urllib.error.HTTPError as stream_security_error:
+                assert stream_security_error.code == 403
             status, page, content_type = request(base + "/")
             assert status == 200 and "text/html" in content_type and "Local AI Runtime" in page
             assert 'id="workspace-panel"' in page and "Language &amp; chat" in page
@@ -211,6 +230,10 @@ def main():
             assert 'data-view-target="overview"' in page and 'data-view-target="chat"' in page
             assert 'data-view-target="models"' in page and 'data-view-target="activity"' in page
             assert 'data-view-target="settings"' in page
+            assert 'id="chat-new"' in page and 'id="chat-clear-history"' in page
+            assert 'id="chat-conversation-list"' in page and 'id="chat-messages"' in page
+            assert 'id="chat-stop"' in page and 'data-i18n="chat.localStorageNote"' in page
+            assert 'data-prompt-key="chat.promptExplain"' in page and 'data-prompt-key="chat.promptPlan"' in page
             assert 'id="diagnostics-export"' in page and 'id="downloads-refresh"' in page
             assert 'id="include-engine-logs"' in page
             assert 'id="update-download"' in page
@@ -475,6 +498,38 @@ def main():
             assert status == 200 and "application/json" in content_type
             result = json.loads(raw)
             assert result["choices"][0]["message"]["content"] == "LAR_HTTP_SMOKE_OK"
+
+            # Streaming must be forwarded as a live SSE response (not buffered
+            # JSON), while preserving the same loopback-only security boundary.
+            status, streamed, stream_type = request(
+                base + "/v1/chat/completions", method="POST",
+                body={"model": "fake-model", "messages": [{"role": "user", "content": "hello"}], "stream": True},
+                timeout=10,
+            )
+            assert status == 200 and "text/event-stream" in stream_type, (status, stream_type, streamed)
+            assert "LAR_STREAM_SMOKE_OK" in streamed and "data: [DONE]" in streamed, streamed
+            # Prove the first SSE bytes arrive before the fake model finishes
+            # its deliberately delayed response; a buffered proxy would wait.
+            incremental_connection = http.client.HTTPConnection("127.0.0.1", runtime_port, timeout=4)
+            incremental_payload = json.dumps({
+                "model": "fake-model",
+                "messages": [{"role": "user", "content": "incremental"}],
+                "stream": True,
+            })
+            incremental_started = time.monotonic()
+            incremental_connection.request(
+                "POST", "/v1/chat/completions", body=incremental_payload,
+                headers={"Content-Type": "application/json"},
+            )
+            incremental_response = incremental_connection.getresponse()
+            assert incremental_response.status == 200
+            assert "text/event-stream" in incremental_response.getheader("Content-Type", "")
+            first_stream_bytes = incremental_response.read(6)
+            incremental_elapsed = time.monotonic() - incremental_started
+            assert first_stream_bytes == b"data: ", first_stream_bytes
+            assert incremental_elapsed < 1.0, f"First SSE bytes were buffered ({incremental_elapsed:.2f}s)"
+            incremental_connection.close()  # Exercise client-side cancellation/disconnect.
+            time.sleep(0.4)
 
             request(base + "/v1/engines/fake-engine/stop", method="POST", body={})
             status, engines_raw, _ = request(base + "/v1/engines")
