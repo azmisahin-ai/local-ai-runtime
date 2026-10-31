@@ -6,6 +6,7 @@
 #include "lar/backend_evidence.hpp"
 #include "lar/gpu_monitor.hpp"
 #include "lar/resource_monitor.hpp"
+#include "lar/engine_adapter.hpp"
 
 #ifndef LAR_VERSION
 #define LAR_VERSION "0.1.0-dev"
@@ -560,6 +561,9 @@ std::string engine_status_json(const EngineStatus& engine) {
         << ",\"pid\":" << engine.pid
         << ",\"exit_code\":" << engine.exit_code
         << ",\"last_error\":" << json_quoted(engine.last_error)
+        << ",\"adapter_id\":" << json_quoted(engine.adapter_id.empty() ? default_engine_adapter_id(engine.config.id) : engine.adapter_id)
+        << ",\"adapter_name\":" << json_quoted(engine.adapter_name)
+        << ",\"adapter_contract_version\":" << engine_adapter_contract_version
         << ",\"executable_configured\":" << (engine.config.executable_path.empty() ? "false" : "true")
         << ",\"model_configured\":" << (engine.config.model_path.empty() ? "false" : "true")
         << ",\"default_for_chat\":" << (engine.config.default_for_chat ? "true" : "false")
@@ -797,11 +801,16 @@ bool upstream_is_ready(const EngineStatus& engine) {
     if (engine.state != ProcessState::running || engine.config.upstream_base_url.empty()) return false;
     const auto port_text = upstream_port(engine.config.upstream_base_url);
     if (port_text.empty()) return false;
+    std::string adapter_error;
+    const auto adapter = create_engine_adapter(engine.config, adapter_error);
+    if (!adapter) return false;
     unsigned int status_code = 0;
-    if (!probe_status(port_text, "/health", status_code)) return false;
+    if (!probe_status(port_text, std::string(adapter->readiness_path()), status_code)) return false;
     if (status_code == 200) return true;
-    // Some older OpenAI-compatible engines do not implement /health.
-    if (status_code == 404 && probe_status(port_text, "/v1/models", status_code)) return status_code == 200;
+    const auto fallback = adapter->readiness_fallback_path();
+    // Adapters may define a protocol-specific fallback for older servers.
+    if (status_code == 404 && !fallback.empty() &&
+        probe_status(port_text, std::string(fallback), status_code)) return status_code == 200;
     return false;
 }
 
@@ -877,6 +886,7 @@ EngineConfig build_llama_config(const boost::property_tree::ptree& body, const R
 
     EngineConfig engine;
     engine.id = "llama-cpp";
+    engine.adapter_id = "llama.cpp";
     engine.display_name = "llama.cpp server";
     engine.executable_path = executable;
     engine.model_path = model;
@@ -945,7 +955,15 @@ ProxyResult proxy_local_request(const EngineStatus& engine, http::verb method,
 }
 
 ProxyResult proxy_chat(const EngineStatus& engine, const std::string& body) {
-    return proxy_local_request(engine, http::verb::post, "/v1/chat/completions", body);
+    std::string adapter_error;
+    const auto adapter = create_engine_adapter(engine.config, adapter_error);
+    if (!adapter) {
+        ProxyResult result;
+        result.status = http::status::service_unavailable;
+        result.body = "{\"error\":{\"message\":" + json_quoted("Engine adapter is unavailable: " + adapter_error) + "}}";
+        return result;
+    }
+    return proxy_local_request(engine, http::verb::post, std::string(adapter->chat_completions_path()), body);
 }
 
 bool request_wants_chat_stream(const http::request<http::string_body>& request) {
@@ -1053,7 +1071,13 @@ void proxy_chat_stream(beast::tcp_stream& client_stream,
         const auto endpoints = resolver.resolve("127.0.0.1", port_text);
         upstream.connect(endpoints);
 
-        http::request<http::string_body> upstream_request{http::verb::post, "/v1/chat/completions", 11};
+        std::string adapter_error;
+        const auto adapter = create_engine_adapter(engine->config, adapter_error);
+        if (!adapter) {
+            fail_before_stream(http::status::service_unavailable, "Chat adapter is unavailable", adapter_error);
+            return;
+        }
+        http::request<http::string_body> upstream_request{http::verb::post, std::string(adapter->chat_completions_path()), 11};
         upstream_request.set(http::field::host, "127.0.0.1:" + port_text);
         upstream_request.set(http::field::user_agent, "local-ai-runtime/" LAR_VERSION);
         upstream_request.set(http::field::content_type, "application/json");

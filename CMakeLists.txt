@@ -48,6 +48,7 @@ endif()
 add_library(lar_core
     src/config.cpp
     src/catalog.cpp
+    src/engine_adapter.cpp
     src/process.cpp
     src/downloads.cpp
     src/activity_jobs.cpp

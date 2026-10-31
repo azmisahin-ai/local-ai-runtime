@@ -5,6 +5,7 @@
 #include "lar/downloads.hpp"
 #include "lar/activity_jobs.hpp"
 #include "lar/process.hpp"
+#include "lar/engine_adapter.hpp"
 #include "lar/backend_evidence.hpp"
 #include "lar/gpu_monitor.hpp"
 #include "lar/resource_monitor.hpp"
@@ -59,6 +60,51 @@ int main() {
         require(lar::is_valid_engine_id("llama_cpp-1"), "valid engine id rejected");
         require(!lar::is_valid_engine_id("../llama"), "path traversal engine id accepted");
         require(!lar::is_valid_engine_id(""), "empty engine id accepted");
+        require(lar::is_valid_engine_adapter_id("llama.cpp"), "built-in llama.cpp adapter id rejected");
+        require(lar::is_valid_engine_adapter_id("openai-compatible-process"), "compatibility adapter id rejected");
+        require(!lar::is_valid_engine_adapter_id("custom-shell"), "unreviewed adapter id accepted");
+
+        stage("shared engine adapter registry");
+        {
+            lar::EngineConfig llama_config;
+            llama_config.id = "llama-cpp";
+            llama_config.adapter_id = "llama.cpp";
+            std::string adapter_error;
+            const auto llama_adapter = lar::create_engine_adapter(llama_config, adapter_error);
+            require(llama_adapter && llama_adapter->id() == "llama.cpp", "llama.cpp config should resolve the llama.cpp adapter");
+            require(llama_adapter->readiness_path() == "/health", "llama.cpp adapter should prefer its native health endpoint");
+            require(llama_adapter->readiness_fallback_path() == "/v1/models", "llama.cpp adapter should support the OpenAI-compatible readiness fallback");
+            require(llama_adapter->chat_completions_path() == "/v1/chat/completions", "llama.cpp adapter should expose the normalized chat completion route");
+
+            lar::EngineConfig generic_config;
+            generic_config.id = "fake-engine";
+            const auto generic_adapter = lar::create_engine_adapter(generic_config, adapter_error);
+            require(generic_adapter && generic_adapter->id() == "openai-compatible-process",
+                    "legacy non-llama process config should resolve the compatibility adapter");
+            require(generic_adapter->readiness_path() == "/v1/models" && generic_adapter->readiness_fallback_path().empty(),
+                    "generic OpenAI-compatible adapter should probe its models endpoint");
+
+            generic_config.adapter_id = "unreviewed-adapter";
+            require(!lar::create_engine_adapter(generic_config, adapter_error) && !adapter_error.empty(),
+                    "unknown adapter implementations must be rejected");
+
+            llama_config.executable_path = std::filesystem::path("/tmp/not-a-llama-server");
+            require(!lar::create_engine_adapter(llama_config, adapter_error),
+                    "llama.cpp adapter must reject an unrelated executable name");
+
+            const auto invalid_gguf_path = std::filesystem::temp_directory_path() /
+                ("lar-adapter-invalid-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".gguf");
+            {
+                std::ofstream invalid_gguf(invalid_gguf_path, std::ios::binary);
+                invalid_gguf << "NOPE";
+            }
+            llama_config.executable_path.clear();
+            llama_config.model_path = invalid_gguf_path;
+            require(!lar::create_engine_adapter(llama_config, adapter_error),
+                    "llama.cpp adapter must reject a GGUF filename without the GGUF magic header");
+            std::error_code ignored;
+            std::filesystem::remove(invalid_gguf_path, ignored);
+        }
 
         stage("compiled reviewed component manifest");
         const auto& manifest_components = lar::catalog::components();
@@ -554,6 +600,7 @@ int main() {
         require(config.port == 8000, "example port should be 8000");
         require(config.engines.size() == 1, "example must provide one llama.cpp adapter example");
         require(config.engines.front().id == "llama-cpp", "unexpected example engine id");
+        require(config.engines.front().adapter_id == "llama.cpp", "example config should select the explicit llama.cpp adapter");
         require(std::find(config.engines.front().args.begin(), config.engines.front().args.end(), "--cors-origins") != config.engines.front().args.end(),
                 "example llama.cpp args should restrict CORS to localhost");
         require(std::find(config.engines.front().args.begin(), config.engines.front().args.end(), "--no-cors-credentials") != config.engines.front().args.end(),
@@ -582,6 +629,7 @@ int main() {
         lar::save_config(roundtrip_path, roundtrip);
         const auto loaded_roundtrip = lar::load_config(roundtrip_path);
         require(loaded_roundtrip.engines.size() == roundtrip.engines.size(), "saved config engine count changed");
+        require(loaded_roundtrip.engines.front().adapter_id == "llama.cpp", "engine adapter id did not round-trip");
 
         stage("managed llama.cpp CORS migration");
         auto legacy_config = config;
@@ -599,7 +647,19 @@ int main() {
                              "--cors-credentials", "-m", "{model_path}"};
         const auto legacy_path = std::filesystem::temp_directory_path() / ("lar-legacy-config-" + suffix + ".json");
         lar::save_config(legacy_path, legacy_config);
+        // Simulate a pre-adapter config by removing the additive adapter_id field.
+        {
+            std::ifstream input(legacy_path, std::ios::binary);
+            std::string legacy_json((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+            const std::string adapter_line = "      \"adapter_id\": \"llama.cpp\",\n";
+            const auto adapter_at = legacy_json.find(adapter_line);
+            require(adapter_at != std::string::npos, "serialized engine config must include adapter_id");
+            legacy_json.erase(adapter_at, adapter_line.size());
+            std::ofstream output(legacy_path, std::ios::binary | std::ios::trunc);
+            output.write(legacy_json.data(), static_cast<std::streamsize>(legacy_json.size()));
+        }
         const auto migrated = lar::load_config(legacy_path);
+        require(migrated.engines.front().adapter_id == "llama.cpp", "legacy llama config should migrate to the llama.cpp adapter");
         const auto& migrated_args = migrated.engines.front().args;
         const auto cors_flag = std::find(migrated_args.begin(), migrated_args.end(), "--cors-origins");
         require(cors_flag != migrated_args.end() && std::next(cors_flag) != migrated_args.end() &&
@@ -675,6 +735,21 @@ int main() {
             require(!error.empty(), "unknown engine should return an actionable error");
         }
 
+        stage("unknown adapter rejection");
+        {
+            lar::EngineConfig unsupported;
+            unsupported.id = "test-engine";
+            unsupported.display_name = "Unsupported adapter fixture";
+            unsupported.adapter_id = "unreviewed-shell-adapter";
+            bool rejected = false;
+            try {
+                lar::EngineManager manager({unsupported});
+            } catch (const std::exception&) {
+                rejected = true;
+            }
+            require(rejected, "EngineManager must reject adapter IDs that are not registered");
+        }
+
         stage("child process start/stop");
         lar::EngineConfig fake;
         fake.id = "fake-engine";
@@ -683,6 +758,9 @@ int main() {
         fake.working_directory = std::filesystem::current_path();
         lar::EngineManager manager({fake});
         std::string error;
+        const auto fake_adapter = lar::create_engine_adapter(fake, error);
+        require(fake_adapter && fake_adapter->id() == "openai-compatible-process",
+                "EngineManager should use the reviewed compatibility adapter for generic process engines");
         require(manager.start("fake-engine", error), (std::string("fake engine should start: ") + error).c_str());
         auto statuses = manager.statuses();
         require(statuses.size() == 1 && statuses[0].state == lar::ProcessState::running,

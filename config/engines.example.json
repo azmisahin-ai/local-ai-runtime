@@ -6,6 +6,7 @@
   "engines": [
     {
       "id": "llama-cpp",
+      "adapter_id": "llama.cpp",
       "display_name": "llama.cpp server",
       "executable_path": "",
       "model_path": "",

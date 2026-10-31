@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <functional>
 #include <mutex>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -25,6 +26,8 @@
 
 namespace lar {
 
+class EngineAdapter;
+
 enum class ProcessState { stopped, running, failed };
 
 struct EngineStatus {
@@ -33,6 +36,8 @@ struct EngineStatus {
     std::int64_t pid{0};
     int exit_code{0};
     std::string last_error;
+    std::string adapter_id;
+    std::string adapter_name;
 };
 
 class ManagedProcess {
@@ -86,6 +91,7 @@ private:
     struct ManagedEngine {
         EngineConfig config;
         ManagedProcess process;
+        std::shared_ptr<EngineAdapter> adapter;
         std::string last_error;
     };
     std::mutex mutex_;

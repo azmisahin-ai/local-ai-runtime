@@ -8,6 +8,9 @@ namespace lar {
 
 struct EngineConfig {
     std::string id;
+    // Adapter implementation responsible for lifecycle and protocol behavior.
+    // Empty values from legacy configs are migrated from the engine ID.
+    std::string adapter_id;
     std::string display_name;
     std::filesystem::path executable_path;
     std::filesystem::path model_path;
@@ -37,5 +40,7 @@ RuntimeConfig load_config(const std::filesystem::path& path);
 void save_config(const std::filesystem::path& path, const RuntimeConfig& config);
 std::vector<std::string> expand_arguments(const EngineConfig& engine);
 bool is_valid_engine_id(const std::string& id);
+bool is_valid_engine_adapter_id(const std::string& id);
+std::string default_engine_adapter_id(const std::string& engine_id);
 
 } // namespace lar

@@ -1,4 +1,5 @@
 #include "lar/process.hpp"
+#include "lar/engine_adapter.hpp"
 #include "lar/diagnostics.hpp"
 #include "lar/backend_evidence.hpp"
 
@@ -471,8 +472,15 @@ int ManagedProcess::exit_code() const { return exit_code_; }
 EngineManager::EngineManager(std::vector<EngineConfig> configs) {
     engines_.reserve(configs.size());
     for (auto& config : configs) {
+        if (config.adapter_id.empty()) config.adapter_id = default_engine_adapter_id(config.id);
+        std::string adapter_error;
+        auto adapter = create_engine_adapter(config, adapter_error);
+        if (!adapter) {
+            throw std::runtime_error("Could not create adapter for engine '" + config.id + "': " + adapter_error);
+        }
         ManagedEngine engine;
         engine.config = std::move(config);
+        engine.adapter = std::move(adapter);
         engines_.push_back(std::move(engine));
     }
 }
@@ -481,7 +489,8 @@ EngineManager::~EngineManager() {
     std::lock_guard<std::mutex> lock(mutex_);
     for (auto& engine : engines_) {
         std::string ignored;
-        (void)engine.process.stop(ignored);
+        if (engine.adapter) (void)engine.adapter->stop(engine.process, ignored);
+        else (void)engine.process.stop(ignored);
     }
 }
 
@@ -489,7 +498,12 @@ bool EngineManager::start(const std::string& id, std::string& error) {
     std::lock_guard<std::mutex> lock(mutex_);
     for (auto& engine : engines_) {
         if (engine.config.id == id) {
-            const bool ok = engine.process.start(engine.config, error);
+            if (!engine.adapter) {
+                error = "No adapter is registered for engine '" + id + "'.";
+                engine.last_error = error;
+                return false;
+            }
+            const bool ok = engine.adapter->start(engine.process, engine.config, error);
             engine.last_error = ok ? std::string{} : error;
             return ok;
         }
@@ -502,7 +516,12 @@ bool EngineManager::stop(const std::string& id, std::string& error) {
     std::lock_guard<std::mutex> lock(mutex_);
     for (auto& engine : engines_) {
         if (engine.config.id == id) {
-            const bool ok = engine.process.stop(error);
+            if (!engine.adapter) {
+                error = "No adapter is registered for engine '" + id + "'.";
+                engine.last_error = error;
+                return false;
+            }
+            const bool ok = engine.adapter->stop(engine.process, error);
             engine.last_error = ok ? std::string{} : error;
             return ok;
         }
@@ -516,8 +535,12 @@ std::vector<EngineStatus> EngineManager::statuses() {
     std::vector<EngineStatus> result;
     result.reserve(engines_.size());
     for (auto& engine : engines_) {
-        result.push_back(EngineStatus{engine.config, engine.process.state(), engine.process.pid(),
-                                      engine.process.exit_code(), engine.last_error});
+        const auto state = engine.adapter ? engine.adapter->state(engine.process) : engine.process.state();
+        const auto pid = engine.adapter ? engine.adapter->pid(engine.process) : engine.process.pid();
+        const auto exit_code = engine.adapter ? engine.adapter->exit_code(engine.process) : engine.process.exit_code();
+        result.push_back(EngineStatus{engine.config, state, pid, exit_code, engine.last_error,
+                                      engine.adapter ? std::string(engine.adapter->id()) : std::string{},
+                                      engine.adapter ? std::string(engine.adapter->display_name()) : std::string{}});
     }
     return result;
 }
@@ -535,7 +558,8 @@ bool EngineManager::replace_configs(std::vector<EngineConfig> configs,
                                     std::string& error) {
     std::lock_guard<std::mutex> lock(mutex_);
     for (auto& engine : engines_) {
-        if (engine.process.state() == ProcessState::running) {
+        const auto state = engine.adapter ? engine.adapter->state(engine.process) : engine.process.state();
+        if (state == ProcessState::running) {
             error = "Stop all running engines before changing engine configuration.";
             return false;
         }
@@ -544,7 +568,9 @@ bool EngineManager::replace_configs(std::vector<EngineConfig> configs,
     std::vector<std::string> ids;
     ids.reserve(configs.size());
     unsigned int default_count = 0;
-    for (const auto& config : configs) {
+    std::vector<ManagedEngine> replacement;
+    replacement.reserve(configs.size());
+    for (auto& config : configs) {
         if (!is_valid_engine_id(config.id)) {
             error = "Invalid engine id in new configuration: " + config.id;
             return false;
@@ -555,6 +581,17 @@ bool EngineManager::replace_configs(std::vector<EngineConfig> configs,
         }
         ids.push_back(config.id);
         if (config.default_for_chat) ++default_count;
+        if (config.adapter_id.empty()) config.adapter_id = default_engine_adapter_id(config.id);
+        std::string adapter_error;
+        auto adapter = create_engine_adapter(config, adapter_error);
+        if (!adapter) {
+            error = "Invalid adapter for engine '" + config.id + "': " + adapter_error;
+            return false;
+        }
+        ManagedEngine managed;
+        managed.config = std::move(config);
+        managed.adapter = std::move(adapter);
+        replacement.push_back(std::move(managed));
     }
     if (default_count > 1) {
         error = "Only one engine may be the default chat engine.";
@@ -563,13 +600,6 @@ bool EngineManager::replace_configs(std::vector<EngineConfig> configs,
 
     if (persist && !persist(error)) return false;
 
-    std::vector<ManagedEngine> replacement;
-    replacement.reserve(configs.size());
-    for (auto& config : configs) {
-        ManagedEngine engine;
-        engine.config = std::move(config);
-        replacement.push_back(std::move(engine));
-    }
     engines_ = std::move(replacement);
     error.clear();
     return true;
@@ -583,8 +613,12 @@ std::optional<EngineStatus> EngineManager::default_chat_engine() {
         if (selected == nullptr && !engine.config.upstream_base_url.empty()) selected = &engine;
     }
     if (selected == nullptr) return std::nullopt;
-    return EngineStatus{selected->config, selected->process.state(), selected->process.pid(),
-                        selected->process.exit_code(), selected->last_error};
+    const auto state = selected->adapter ? selected->adapter->state(selected->process) : selected->process.state();
+    const auto pid = selected->adapter ? selected->adapter->pid(selected->process) : selected->process.pid();
+    const auto exit_code = selected->adapter ? selected->adapter->exit_code(selected->process) : selected->process.exit_code();
+    return EngineStatus{selected->config, state, pid, exit_code, selected->last_error,
+                        selected->adapter ? std::string(selected->adapter->id()) : std::string{},
+                        selected->adapter ? std::string(selected->adapter->display_name()) : std::string{}};
 }
 
 std::string to_string(ProcessState state) {

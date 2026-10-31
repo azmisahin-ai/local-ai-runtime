@@ -1,3 +1,11 @@
+## Unreleased — shared engine adapter foundation
+
+- Add an explicit `adapter_id` to engine configuration under the versioned Shared Engine Adapter contract, with migration for legacy configs.
+- Route engine start/stop through a reviewed adapter registry; keep `llama.cpp` as the first adapter and provide an OpenAI-compatible local-process base adapter for test/custom process engines.
+- Delegate readiness endpoints and upstream chat-completion paths to the selected adapter while retaining the existing same-origin OpenAI-compatible Local AI Runtime API.
+- Expose adapter identity in engine status; reject unknown adapter IDs before process launch or config replacement.
+- Preserve the existing `ManagedProcess` OS process implementation and current llama.cpp setup behavior.
+
 ## Unreleased — multi-model Catalog v2 pinning
 
 - Generalize the compiled `pinned-gguf` allowlist from one Qwen-specific repository to reviewed single-file GGUF files hosted at canonical Hugging Face owner/repository URLs with immutable 40-character revisions.

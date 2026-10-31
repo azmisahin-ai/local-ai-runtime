@@ -1385,6 +1385,7 @@ bool DownloadManager::apply_runtime_profile(const std::string& engine_component_
     EngineConfig engine;
     if (selected != candidates.end()) engine = *selected;
     engine.id = "llama-cpp";
+    engine.adapter_id = "llama.cpp";
     engine.display_name = "llama.cpp server";
     engine.executable_path = *executable;
     engine.model_path = model_path;
@@ -2264,6 +2265,7 @@ void DownloadManager::configure_llama_engine(const std::filesystem::path& execut
     EngineConfig engine;
     if (existing != candidates.end()) engine = *existing;
     engine.id = "llama-cpp";
+    engine.adapter_id = "llama.cpp";
     engine.display_name = "llama.cpp server";
     engine.executable_path = executable;
     engine.model_path.clear(); // The user explicitly selects an installed model in Runtime Profile.

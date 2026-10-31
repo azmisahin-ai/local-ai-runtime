@@ -10,9 +10,9 @@ The runtime, engines, and models remain separate versioned components. The catal
 
 ## Current baseline and visible progress — 2026-10-31
 
-**Published baseline:** `v0.1.20-alpha` (`26d2dc4`). The user confirmed that main and tagged publisher workflows both passed. The release contains Windows x64 setup/ZIP, Linux x64, macOS x64/arm64 and checksums. The published foundation includes the five-area dashboard, local streaming chat, persistent Activity/jobs, live CPU/RAM/engine telemetry, EN/TR onboarding/accessibility, embedded component manifest v1, explicit Runtime Profiles, and persistent FIFO install queue with duplicate protection and safe restart recovery. Hosted CI uses fake engines and does not prove real GPU/model task compatibility.
+**Published baseline:** `v0.1.21-alpha` (`c2b571a`). The user confirmed that main and tagged publisher workflows both passed. The release contains Windows x64 setup/ZIP, Linux x64, macOS x64/arm64 and checksums. The published foundation includes the five-area dashboard, local streaming chat, persistent Activity/jobs, live CPU/RAM/engine telemetry, EN/TR onboarding/accessibility, embedded component manifest v1, explicit Runtime Profiles, and persistent FIFO install queue with duplicate protection and safe restart recovery. Hosted CI uses fake engines and does not prove real GPU/model task compatibility.
 
-**Current work:** Stage 10 — Catalog v2 & simplified Models UI. The candidate separates model weights from engine runtime packages, adds task-first model metadata and filters, compact installed/selected states, and explicit actions that only draft the Runtime Profile. The compiled `pinned-gguf` allowlist is generalized to reviewed single-file Hugging Face GGUFs at immutable revisions, permits multiple non-default model entries, and retains exactly one explicit default model; the shipped catalogue still contains only the reviewed Qwen2.5 starter plus three llama.cpp variants. Multi-file multimodal, ONNX, SafeTensors and non-llama engine installers still need dedicated strategies. `/v1/catalog` remains backward compatible. Linux Release build, CTest (4/4), C++ URL guard tests, generic synthetic second-model fixture, manifest JSON Schema, HTTP/API schema, site smoke and EN/TR (520-key) checks pass locally. Four-platform main and tagged CI gates remain before publication. Candidate release target: `v0.1.21-alpha` or the next publisher-assigned alpha version.
+**Current work:** Stage 11 — Shared Engine Adapter foundation. Stage 10 is published in `v0.1.21-alpha`; it separates model weights from engine runtime packages, adds task-first metadata and compact installed/selected states, and supports multiple reviewed single-file Hugging Face GGUF entries at immutable revisions. The shipped catalogue still contains the reviewed Qwen2.5 starter plus three llama.cpp variants; multi-file multimodal, ONNX, SafeTensors and non-llama engine installers still require dedicated strategies. `/v1/catalog` remains backward compatible.
 
 ### Product delivery checklist
 
@@ -26,8 +26,8 @@ The runtime, engines, and models remain separate versioned components. The catal
 | 7 | Embedded Component Catalog Manifest v1 | [x] Published | `v0.1.18-alpha` |
 | 8 | Runtime Profile, explicit model/backend selection and Chat readiness | [x] Published; main and tagged workflow succeeded after Release-job rerun | `v0.1.19-alpha` |
 | 9 | Persistent install queue, duplicate/dependency handling and reliable retries | [x] Published; main and tagged four-platform CI passed | `v0.1.20-alpha` |
-| 10 | Catalog v2, simplified Models UI and extensible multi-model pinned GGUF allowlist | [~] Candidate; Linux Release, C++ URL guards, synthetic second-model fixture and local contracts pass; four-platform CI pending | `v0.1.21-alpha` or later |
-| 11 | Shared Engine Adapter lifecycle; keep llama.cpp as first adapter | [ ] Not started | `v0.1.21-alpha` |
+| 10 | Catalog v2, simplified Models UI and extensible multi-model pinned GGUF allowlist | [x] Published; main and tagged four-platform CI succeeded | `v0.1.21-alpha` |
+| 11 | Shared Engine Adapter lifecycle; keep llama.cpp as first adapter | [~] Candidate; local adapter registry, config migration, lifecycle delegation and readiness/protocol routing implemented; four-platform CI pending | `v0.1.22-alpha` or later |
 | 12 | Hardware Compatibility & Evidence; real CPU/CUDA profiles and RTX 3060 acceptance | [ ] Not started | `v0.1.22-alpha` |
 | 13 | Local MCP stdio MVP for the user's other project | [ ] Not started | `v0.1.23-alpha` |
 | 14 | Documents, embeddings and local RAG | [ ] Not started | `v0.1.24-alpha` |
@@ -49,6 +49,17 @@ The runtime, engines, and models remain separate versioned components. The catal
 - [x] Pass Windows x64, Linux x64, macOS x64 and macOS arm64 main/tag CI; publish `v0.1.20-alpha` (the release follows a four-platform green main and tagged workflow).
 - [ ] Validate the queue manually on Windows by adding CPU, CUDA 12 and CUDA 13 packages in quick succession; confirm they run sequentially and only the selected Runtime Profile becomes active.
 
+### Stage 11 acceptance checklist
+
+- [x] Add an explicit reviewed `adapter_id` to engine configuration and migrate older configs deterministically.
+- [x] Introduce the shared adapter contract for config validation, start/stop/status, readiness endpoints and upstream chat-completion routing.
+- [x] Implement `llama.cpp` as the first built-in adapter without changing its launch arguments, GGUF path or existing OpenAI-compatible chat behavior.
+- [x] Keep a separate OpenAI-compatible local-process base adapter for generic fake/test configurations; do not present it as an additional catalog engine product.
+- [x] Reject unknown adapter IDs before launch or config replacement.
+- [x] Expose the resolved adapter ID in `/v1/engines` and test legacy config migration, adapter routing and process lifecycle delegation.
+- [x] Document the adapter extension contract and explicitly defer Ollama, ONNX Runtime and media adapters until their protocol, installer and real-task evidence are ready.
+- [ ] Pass Windows x64, Linux x64, macOS x64 and macOS arm64 main/tag CI and publish the next alpha release.
+
 ### Stage 8 acceptance checklist
 
 - [x] Persist active engine component, model component and context size in `engines.json`.
@@ -65,7 +76,7 @@ The runtime, engines, and models remain separate versioned components. The catal
 
 The Stage 8 Runtime Profile milestone is published in `v0.1.19-alpha`. Stage 9 is published in `v0.1.20-alpha` after the four-platform publisher workflow passed. Its Windows acceptance check should still confirm rapid successive CPU/CUDA package requests on a real user machine. The queue core test must remain platform-neutral: CUDA availability is asserted in manifest contract tests, while sequential queue/cancel/re-queue behavior uses components supported on every CI host.
 
-The default product workflow remains task-first: users choose a task/workspace, the runtime helps select a compatible model and engine profile, Activity shows preparation/execution, and the Chat or task workspace only offers controls supported by the selected model's capabilities. No additional engine family is added until the profile, queue, adapter, hardware-evidence and distribution gates are ready.
+The default product workflow remains task-first: users choose a task/workspace, the runtime helps select a compatible model and engine profile, Activity shows preparation/execution, and the Chat or task workspace only offers controls supported by the selected model's capabilities. The Shared Engine Adapter foundation is now the next milestone; no additional engine family is added until adapter, profile, queue, hardware-evidence and distribution gates are ready.
 
 ## Distribution status
 
@@ -78,7 +89,7 @@ The default product workflow remains task-first: users choose a task/workspace, 
 
 ## Historical foundation status
 
-`v0.1.12-alpha` introduced the five-area UI and first `/v1/activity` snapshot. `v0.1.13-alpha` added SSE streaming and local conversation history. `v0.1.14-alpha` added durable component jobs and interrupted-state recovery. `v0.1.15-alpha` unified runtime operation jobs. `v0.1.16-alpha` added resource monitoring. `v0.1.17-alpha` expanded onboarding, localization and accessibility and included CI diagnostics/process cleanup. `v0.1.18-alpha` published the manifest-driven catalogue. The Runtime Profile milestone shipped in `v0.1.19-alpha`, and the persistent install queue shipped in `v0.1.20-alpha`; Catalog v2 is the current unpublished candidate.
+`v0.1.12-alpha` introduced the five-area UI and first `/v1/activity` snapshot. `v0.1.13-alpha` added SSE streaming and local conversation history. `v0.1.14-alpha` added durable component jobs and interrupted-state recovery. `v0.1.15-alpha` unified runtime operation jobs. `v0.1.16-alpha` added resource monitoring. `v0.1.17-alpha` expanded onboarding, localization and accessibility and included CI diagnostics/process cleanup. `v0.1.18-alpha` published the manifest-driven catalogue. The Runtime Profile milestone shipped in `v0.1.19-alpha`, the persistent install queue in `v0.1.20-alpha`, and Catalog v2 in `v0.1.21-alpha`; the Shared Engine Adapter is the current candidate.
 
 - [x] Fix the Windows PowerShell 5.1 publisher smoke-test regression and confirm the canonical four-target pipeline passes. `f841c80` was the confirmed green publisher/installer baseline when this roadmap update began (`v0.1.2-alpha`).
 - [x] Keep one maintainer command and one stable bundle filename (`local-ai-runtime-update.bundle`). A push uses a normal fast-forward, never force-pushes, and stops at a failed CI gate.

@@ -8,7 +8,7 @@ Project site: **https://azmisahin-ai.github.io/local-ai-runtime/** (available af
 
 This is an early C++20 alpha. It orchestrates existing model engines; it does not implement inference itself. The product name and API are still evolving.
 
-> **Product status:** `v0.1.20-alpha` is the current published reference release. It includes the Windows per-user desktop installer, verified in-app update staging, the embedded component manifest, persistent Activity, resource monitoring, EN/TR onboarding/accessibility foundations, explicit Runtime Profile/model selection, and a persistent FIFO install queue with duplicate protection and restart recovery. The user has confirmed installation, launch and a starter-model chat on one Windows environment. Real GPU inference evidence, native screen-reader acceptance, publisher signing, cross-platform update parity and additional engine/workspace families remain open. The next candidate is the task-first Catalog v2 and simplified Models UI. Its pinned-GGUF installer contract supports reviewed non-default single-file GGUF entries at immutable Hugging Face revisions, while the shipped catalogue still contains only the reviewed Qwen starter; the candidate is not released until four-platform main and tagged CI gates pass. See the [roadmap](docs/roadmap.md).
+> **Product status:** `v0.1.21-alpha` is the current published reference release. It includes the Windows per-user desktop installer, verified in-app update staging, embedded component manifest, persistent Activity and FIFO install queue, Runtime Profiles, task-first Models UI and reviewed multi-model pinned-GGUF catalog contract. The current shipped catalog still contains the reviewed Qwen starter plus three llama.cpp variants. Real GPU inference evidence, native screen-reader acceptance, publisher signing, cross-platform update parity and additional engine/workspace families remain open. The next milestone is the Shared Engine Adapter contract, with llama.cpp remaining the first built-in adapter. See the [roadmap](docs/roadmap.md).
 
 ## For users
 
@@ -132,3 +132,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md), [diagnostics and troubleshooting](docs/d
 ### Windows PowerShell 5.1 publishing
 
 The stable `Publish-LocalAIRuntime.ps1` script is compatible with Windows PowerShell 5.1. Git commands are checked by their exit codes rather than treating successful stderr diagnostics (such as `git bundle verify` reporting that the bundle is okay) as failures. If an older publisher stops with `NativeCommandError`, replace both `Publish-LocalAIRuntime.ps1` and `local-ai-runtime-update.bundle` with the matching files from the latest publisher kit, then rerun the same command. The bootstrap checks the bundle and will not force-push or overwrite local work.
+
+## Engine integration architecture
+
+The runtime uses a reviewed Shared Engine Adapter contract. The first built-in adapter is `llama.cpp`; other local OpenAI-compatible test/process configurations use a compatibility base adapter. This does not mean Ollama, ONNX Runtime or media engines are shipped as supported products yet. See the [Engine Adapter architecture](docs/engine-adapter-architecture.md) and [roadmap](docs/roadmap.md).

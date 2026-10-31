@@ -609,6 +609,10 @@ def main():
             started_engines_status, started_engines_raw, _ = request(base + "/v1/engines")
             started_engines = json.loads(started_engines_raw)["data"]
             started_engine = next(item for item in started_engines if item["id"] == "fake-engine")
+            assert started_engine.get("adapter_id") == "openai-compatible-process", started_engine
+            assert started_engine.get("adapter_name") == "OpenAI-compatible local process", started_engine
+            assert started_engine.get("adapter_contract_version") == 1, started_engine
+            assert started_engine.get("ready") is True, started_engine
             engine_process_pid = started_engine.get("pid")
             assert started_engines_status == 200 and engine_process_pid, started_engine
             time.sleep(0.15)

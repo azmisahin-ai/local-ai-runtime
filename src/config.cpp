@@ -110,6 +110,14 @@ bool is_valid_engine_id(const std::string& id) {
     return true;
 }
 
+bool is_valid_engine_adapter_id(const std::string& id) {
+    return id == "llama.cpp" || id == "openai-compatible-process";
+}
+
+std::string default_engine_adapter_id(const std::string& engine_id) {
+    return engine_id == "llama-cpp" ? "llama.cpp" : "openai-compatible-process";
+}
+
 RuntimeConfig load_config(const std::filesystem::path& path) {
     boost::property_tree::ptree root;
     std::ifstream config_input(path, std::ios::binary);
@@ -149,6 +157,8 @@ RuntimeConfig load_config(const std::filesystem::path& path) {
         const auto& node = entry.second;
         EngineConfig engine;
         engine.id = trim(node.get<std::string>("id", ""));
+        engine.adapter_id = trim(node.get<std::string>("adapter_id", default_engine_adapter_id(engine.id)));
+        if (engine.adapter_id.empty()) engine.adapter_id = default_engine_adapter_id(engine.id);
         engine.display_name = trim(node.get<std::string>("display_name", engine.id));
         engine.executable_path = path_from_utf8(node.get<std::string>("executable_path", ""));
         engine.model_path = path_from_utf8(node.get<std::string>("model_path", ""));
@@ -161,6 +171,9 @@ RuntimeConfig load_config(const std::filesystem::path& path) {
 
         if (!is_valid_engine_id(engine.id)) {
             throw std::runtime_error("Invalid engine id '" + engine.id + "'. Use letters, digits, '-' and '_' only.");
+        }
+        if (!is_valid_engine_adapter_id(engine.adapter_id)) {
+            throw std::runtime_error("Engine '" + engine.id + "' specifies an unsupported adapter_id '" + engine.adapter_id + "'.");
         }
         if (!ids.insert(engine.id).second) throw std::runtime_error("Duplicate engine id: " + engine.id);
         if (engine.display_name.empty()) throw std::runtime_error("Engine '" + engine.id + "' requires display_name.");
@@ -222,6 +235,9 @@ void save_config(const std::filesystem::path& path, const RuntimeConfig& config)
     unsigned int default_count = 0;
     for (const auto& engine : config.engines) {
         if (!is_valid_engine_id(engine.id)) throw std::runtime_error("Cannot save invalid engine id: " + engine.id);
+        if (!is_valid_engine_adapter_id(engine.adapter_id.empty() ? default_engine_adapter_id(engine.id) : engine.adapter_id)) {
+            throw std::runtime_error("Cannot save unsupported adapter_id for engine: " + engine.id);
+        }
         if (!ids.insert(engine.id).second) throw std::runtime_error("Cannot save duplicate engine id: " + engine.id);
         if (engine.default_for_chat) ++default_count;
     }
@@ -241,6 +257,7 @@ void save_config(const std::filesystem::path& path, const RuntimeConfig& config)
         const auto& engine = config.engines[i];
         json << (i == 0 ? "\n" : ",\n") << "    {\n"
              << "      \"id\": " << json_quote(engine.id) << ",\n"
+             << "      \"adapter_id\": " << json_quote(engine.adapter_id.empty() ? default_engine_adapter_id(engine.id) : engine.adapter_id) << ",\n"
              << "      \"display_name\": " << json_quote(engine.display_name) << ",\n"
              << "      \"executable_path\": " << json_quote(path_to_utf8(engine.executable_path)) << ",\n"
              << "      \"model_path\": " << json_quote(path_to_utf8(engine.model_path)) << ",\n"
