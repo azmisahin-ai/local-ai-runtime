@@ -75,7 +75,7 @@
     },
     {
       "name": "Automatic preview packages",
-      "description": "Every main push uses one pipeline run: Windows, Linux, macOS x64 and macOS arm64 build/test/package jobs run in parallel; the GitHub Pages deployment runs last and only when all four pass. Preview archives are retained for 14 days; version tags publish Releases after all package checks.",
+      "description": "Every main push uses one pipeline run: version planning precedes parallel Windows, Linux, macOS x64 and macOS arm64 build/test/package jobs; the same-run artifacts are checksummed and published after all gates pass, followed by GitHub Pages. Tag creation does not trigger a second build. Manual runs remain release-free dry runs.",
       "status": "preview"
     },
     {

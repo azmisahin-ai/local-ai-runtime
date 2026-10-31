@@ -4,7 +4,7 @@
 
 - `CMakeLists.txt` embeds the runtime version (`LAR_VERSION`); developer builds default to `<project-version>-dev`.
 - Git tags use Semantic Versioning and begin with `v`, for example `v0.1.0-alpha` or `v0.1.0`.
-- `.github/workflows/pipeline.yml` is the single canonical workflow for pull-request validation, `main` preview packages, website publication and tag-driven Releases. On `main`, Windows x64, Linux x64, macOS x64 and macOS arm64 build/test/package jobs run in parallel; the Pages job starts only after all four package smoke tests pass. Preview artifacts are retained for 14 days. It publishes public Releases only after a `v*` tag is pushed.
+- `.github/workflows/pipeline.yml` is the single canonical workflow for pull-request validation, version planning, platform builds, release publication and website deployment. On a `main` push, the workflow plans the next alpha version first; Windows x64, Linux x64, macOS x64 and macOS arm64 then build/test/package that version once. A final release job creates an immutable tag for the tested commit and publishes the exact artifacts from those jobs with `SHA256SUMS.txt`; the Pages deployment follows. No tag-triggered build is configured, so creating the tag cannot start a duplicate platform build. The run ends with one summary table for version planning, each platform, Release and Pages. Manual `workflow_dispatch` runs remain dry runs and do not publish tags or Releases.
 - Release packages include the runtime, dashboard assets, an example engine manifest, a launcher, and the project license. They do **not** include inference engines, CUDA, or model weights.
 - `SHA256SUMS.txt` is attached to each release so users can detect accidental corruption and verify file integrity against the published checksum.
 - `site/product.json` is the feature/status manifest used by the website. Keep it updated in the same change that adds/removes a user-visible feature. `site/app.js` fetches release assets and notes from the public GitHub Releases API.
@@ -19,37 +19,20 @@ Use the repository-local [`scripts/Publish-LocalAIRuntime.ps1`](../scripts/Publi
 
 The publisher checks the current branch and clean working tree, fetches the official `main` and version tags, and pushes the current commit only when it is a normal fast-forward of GitHub `main`. It never resets or force-pushes. If GitHub is ahead or history has diverged, it stops and asks the maintainer to reconcile the checkout.
 
-After pushing, it waits for the `main` workflow to pass all four platform/package gates and the Pages deployment before creating the next unused `vX.Y.Z-alpha` tag. It then waits for the tag workflow; GitHub publishes the Release and `SHA256SUMS.txt` only if those platform jobs also pass. The version is calculated from the fetched version tags, so maintainers do not hand-edit a version for each alpha iteration. If a gate fails, the script stops before the next step and prints the Actions link. It never force-pushes, deletes a tag, or moves an existing release.
+After pushing, the publisher waits for the **single** workflow run to complete. That run calculates the next unused alpha tag before compiling, builds and tests the four platform targets once, creates the tag only after every platform gate passes, publishes the artifacts produced by those same jobs, and deploys the website. The local PowerShell script does not create tags or start a second CI run; after success it only verifies the tag and public Release for the commit it pushed. A failed platform build blocks both tag creation and Release publication. If the Pages deployment fails after the Release was published, the final summary identifies that separate failure; the already-published Release is not rebuilt.
 
-The root-level [`Publish-LocalAIRuntime.ps1`](../Publish-LocalAIRuntime.ps1) remains only as a compatibility shortcut and delegates to the repository-local publisher. It does not download bundles, clone a second checkout, or create a Downloads working directory. Git bundles are optional one-time source-transfer artifacts only; they are not part of the normal release process.
+For a version-specific dry run before publishing:
 
-For a fresh machine with no checkout, clone the repository once, then use the repository-local script. If a maintainer receives an offline source-transfer bundle, fetch/merge that bundle into the clone first; subsequent updates and releases use the same checkout and publisher command.
+1. Use **Actions → Build, test, package & publish → Run workflow**, select `main`, and enter a version such as `0.1.25-alpha`. The manual run builds/tests/packages the four targets and uploads candidate artifacts, but it does not create a tag or publish a Release.
+2. Inspect the completed run summary and download the four candidate packages if you need to examine them.
+3. For a normal release, commit the reviewed changes to `main` and run `scripts/Publish-LocalAIRuntime.ps1`. The workflow selects the next alpha version from existing tags automatically; do not create or push a version tag manually.
+4. Review the single run's platform, tag/release, checksum and website results before announcing the release.
 
-## Preview builds and release rehearsal
-
-The single `pipeline.yml` run orchestrates the whole lifecycle. Pull requests build and test on Windows, Linux, macOS Intel and macOS Apple Silicon without producing distribution packages. Each push to `main` runs one Windows, one Linux and two macOS architecture targets in parallel; every extracted package must pass `/health`. Only after all four target jobs succeed does the final website job publish `site/` to GitHub Pages. Preview artifacts are retained for 14 days. These are development previews, not public Releases and not recommended as stable updates. The weekly scheduled run invokes only the macOS compatibility matrix.
-
-For a version-specific rehearsal before publishing:
-
-1. Merge tested changes to `main` and update `CHANGELOG.md` and `site/product.json`.
-2. Make sure the canonical pipeline is green. For changes submitted via pull request, require Windows, Linux, macOS x64 and macOS arm64 validation jobs to be green before merging.
-3. Open **Actions → Build, test, package & publish → Run workflow**, select `main`, and use a version such as `0.1.0-alpha`. The manual run is a **dry run**: it builds/tests all four targets, launches each extracted archive and checks `/health`, and uploads the four platform/architecture packages as workflow artifacts. It does not publish a GitHub Release or create a tag.
-4. Download and inspect the four platform/architecture artifacts from the completed workflow. Confirm the embedded version, launcher, dashboard and config example are present and each package starts cleanly.
-5. Only after the dry run succeeds, create and push an annotated tag:
-
-   ```bash
-   git tag -a v0.1.0-alpha -m "Local AI Runtime v0.1.0-alpha"
-   git push origin v0.1.0-alpha
-   ```
-
-6. The tag-triggered run repeats the build and package smoke tests, then publishes the GitHub Release with `SHA256SUMS.txt`. A tag containing a hyphen is published as a prerelease; a tag without a hyphen is a stable release.
-7. Review the resulting GitHub Release and CI run before announcing it.
-
-Do not reuse or move an already published release tag. Cut a new version for every fix.
+The release job is idempotent for a rerun: if the planned tag already points to the same commit, it verifies rather than moves it; an existing release receives the artifacts again with `--clobber`. A tag that points to another commit is a hard failure. Never move or reuse a published release tag.
 
 ## Website deployment
 
-Enable **Settings → Pages → Build and deployment → Source: GitHub Actions** once. The `publish-pages` job in `.github/workflows/pipeline.yml` deploys `site/` at the end of a successful `main` pipeline, after all four package smoke tests pass (or on a successful manual run from `main`). This produces one workflow run with visible platform jobs and a final website deployment job. The release panel reads current GitHub Releases at page load, so downloadable assets do not need to be hardcoded into HTML.
+Enable **Settings → Pages → Build and deployment → Source: GitHub Actions** once. The `publish-pages` job in `.github/workflows/pipeline.yml` deploys `site/` at the end of a successful `main` pipeline, after all four package smoke tests and the same-run Release publication pass (or on a successful manual dry run from `main`). This produces one workflow run with visible platform jobs and a final website deployment job. The release panel reads current GitHub Releases at page load, so downloadable assets do not need to be hardcoded into HTML.
 
 The expected URL is `https://azmisahin-ai.github.io/local-ai-runtime/` after Pages has been enabled and the first deployment succeeds.
 

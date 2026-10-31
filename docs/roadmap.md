@@ -10,9 +10,9 @@ The runtime, engines, and models remain separate versioned components. The catal
 
 ## Current baseline and visible progress — 2026-10-31
 
-**Published baseline:** `v0.1.23-alpha` (`5ab4c0c`). The user confirmed that main and tagged publisher workflows both passed. The release contains the hardware-v1 contract, NVIDIA driver/compute-capability/VRAM evidence, plus the previously published five-area dashboard, local streaming chat, persistent Activity/jobs, live CPU/RAM/engine telemetry, EN/TR onboarding/accessibility, embedded component manifest v1, explicit Runtime Profiles, and persistent FIFO install queue with duplicate protection and safe restart recovery. Hosted CI uses fake engines and does not prove real GPU/model task compatibility.
+**Published baseline:** `v0.1.24-alpha` (`5bf4116`). The user confirmed that its main and tagged publisher workflows both passed. The Stage 12.5 UI/catalog improvements are present in that release; manual screen-reader review and real model/GPU acceptance remain open. The release contains the hardware-v1 contract, NVIDIA driver/compute-capability/VRAM evidence, plus the previously published five-area dashboard, local streaming chat, persistent Activity/jobs, live CPU/RAM/engine telemetry, EN/TR onboarding/accessibility, embedded component manifest v1, explicit Runtime Profiles, and persistent FIFO install queue with duplicate protection and safe restart recovery. Hosted CI uses fake engines and does not prove real GPU/model task compatibility.
 
-**Current work:** Stage 12 hardware evidence has been implemented and published, but the RTX 3060 physical inference/offload acceptance remains open. Before MCP, an interim Stage 12.5 product-readiness pass is being added: simplify the hardware UI, separate detection/telemetry/offload evidence, improve the Chat setup route, and ship a curated multilingual GGUF shortlist for the 6 GB RTX 3060 Laptop GPU / 16 GB RAM profile. The catalogue still uses immutable single-file GGUF pins; multi-file multimodal, ONNX, SafeTensors and non-llama engine installers still require dedicated strategies. `/v1/catalog` remains backward compatible.
+**Current work:** Stage 12 hardware evidence has been implemented and published, but the RTX 3060 physical inference/offload acceptance remains open. Stage 12.5 has shipped its interim hardware UI, evidence hierarchy, Chat setup route and curated multilingual GGUF shortlist for the 6 GB RTX 3060 Laptop GPU / 16 GB RAM profile. Its remaining gates are manual screen/accessibility review and real model installation/inference on the target computer. The catalogue still uses immutable single-file GGUF pins; multi-file multimodal, ONNX, SafeTensors and non-llama engine installers still require dedicated strategies. `/v1/catalog` remains backward compatible.
 
 ### Product delivery checklist
 
@@ -29,8 +29,9 @@ The runtime, engines, and models remain separate versioned components. The catal
 | 10 | Catalog v2, simplified Models UI and extensible multi-model pinned GGUF allowlist | [x] Published; main and tagged four-platform CI succeeded | `v0.1.21-alpha` |
 | 11 | Shared Engine Adapter lifecycle; keep llama.cpp as first adapter | [x] Published; main and tagged four-platform CI passed | `v0.1.22-alpha` |
 | 12 | Hardware Compatibility & Evidence; NVIDIA driver/VRAM probes and real RTX 3060 acceptance | [~] Driver evidence published; physical inference/offload acceptance remains open | `v0.1.23-alpha` |
-| 12.5 | Product-readiness review: clearer UX, hardware evidence hierarchy, Chat onboarding and curated model catalogue | [~] Interim implementation in progress; real-device install/inference acceptance remains open | `v0.1.24-alpha` |
-| 13 | Local MCP stdio MVP for the user's other project | [ ] Not started; gated on Stage 12.5 acceptance | `v0.1.25-alpha` |
+| 12.5 | Product-readiness review: clearer UX, hardware evidence hierarchy, Chat onboarding and curated model catalogue | [~] Shipped in v0.1.24; manual UI and local inference acceptance remain open | `v0.1.24-alpha` |
+| 12.5.1 | Unified build-once release pipeline and one-screen CI report | [~] Local implementation and 7/7 CTest pass; live GitHub CI confirmation pending | `v0.1.25-alpha` |
+| 13 | Local MCP stdio MVP for the user's other project | [ ] Not started; gated on Stage 12.5 manual acceptance and release-pipeline CI | `v0.1.26-alpha` |
 | 14 | Documents, embeddings and local RAG | [ ] Not started | Later alpha |
 | 15 | Vision and Speech pilots | [ ] Not started | Later alpha |
 | 16 | Image generation workspace and adapter | [ ] Not started | Later alpha |
@@ -49,6 +50,18 @@ The runtime, engines, and models remain separate versioned components. The catal
 - [ ] Manually review every screen at desktop and narrow widths, including keyboard navigation, focus order, screen-reader labels, and empty/error/loading states.
 - [ ] Install each shortlist candidate on the target Windows device; record download verification, CPU baseline, CUDA start, actual layer offload, context, generation latency and peak VRAM.
 - [ ] Only after the UI review and at least one complete local Chat path passes, proceed to Stage 13 MCP stdio.
+
+### Stage 12.5.1 acceptance checklist — single-run release pipeline
+
+- [x] Plan the alpha version before compilation and reuse an existing tag at the same commit when a workflow is rerun.
+- [x] Build, test and package Windows, Linux, macOS x64 and macOS arm64 once per main push.
+- [x] Upload uniquely named immutable platform candidate artifacts and publish those exact files after all platform gates pass.
+- [x] Create/verify the annotated tag against the tested commit, generate SHA-256 checksums and publish the Release without a tag-triggered second build.
+- [x] Deploy GitHub Pages after the same-run Release gate and write a final workflow summary for every stage.
+- [x] Reduce the local PowerShell publisher to fast-forward push, one-run status polling and release verification.
+- [x] Add version-planner and unified-workflow regression tests to CTest.
+- [ ] Verify the new workflow on GitHub: one run only, all four targets green, tag on the same SHA, release assets/checksums correct, and website deployed.
+
 
 ### Stage 9 acceptance checklist
 
@@ -89,11 +102,11 @@ The runtime, engines, and models remain separate versioned components. The catal
 
 The Stage 8 Runtime Profile milestone is published in `v0.1.19-alpha`. Stage 9 is published in `v0.1.20-alpha` after the four-platform publisher workflow passed. Its Windows acceptance check should still confirm rapid successive CPU/CUDA package requests on a real user machine. The queue core test must remain platform-neutral: CUDA availability is asserted in manifest contract tests, while sequential queue/cancel/re-queue behavior uses components supported on every CI host.
 
-The default product workflow remains task-first: users choose a task/workspace, the runtime helps select a compatible model and engine profile, Activity shows preparation/execution, and the Chat or task workspace only offers controls supported by the selected model's capabilities. The Shared Engine Adapter foundation is now the next milestone; no additional engine family is added until adapter, profile, queue, hardware-evidence and distribution gates are ready.
+The default product workflow remains task-first: users choose a task/workspace, the runtime helps select a compatible model and engine profile, Activity shows preparation/execution, and the Chat or task workspace only offers controls supported by the selected model's capabilities. The next feature milestone is MCP stdio, gated by Stage 12.5 manual acceptance and the live single-run release pipeline confirmation. No additional engine family is added until adapter, profile, queue, hardware-evidence and distribution gates are ready.
 
 ## Distribution status
 
-- The `v0.1.2-alpha` milestone introduced the Windows per-user setup installer `local-ai-runtime-windows-x64-setup.exe`; the current published baseline is `v0.1.20-alpha`. The user has confirmed installation, launch and a Qwen2.5 starter-model chat on one Windows environment. This is not evidence for both Windows 10 and 11, real GPU inference, or every upgrade/uninstall path. Publisher signing remains outstanding. Always check the [live Releases page](https://github.com/azmisahin-ai/local-ai-runtime/releases) for current assets.
+- The `v0.1.2-alpha` milestone introduced the Windows per-user setup installer `local-ai-runtime-windows-x64-setup.exe`; the current published baseline is `v0.1.24-alpha`. The user has confirmed installation, launch and a Qwen2.5 starter-model chat on one Windows environment. This is not evidence for both Windows 10 and 11, real GPU inference, or every upgrade/uninstall path. Publisher signing remains outstanding. Always check the [live Releases page](https://github.com/azmisahin-ai/local-ai-runtime/releases) for current assets.
 - The Windows shell hosts the dashboard in WebView2, starts the C++ runtime without a console window, and uses a tray menu for reopen, update check and graceful exit. Clean Windows 10/11 manual acceptance remains a release gate.
 - The managed catalogue contains llama.cpp CPU/CUDA packages and three pinned text-chat GGUF candidates (Qwen3 4B, Gemma 4 E2B and Qwen2.5 1.5B). Manifest v1 is embedded at build time. It is a curated shortlist, not a general catalogue of every model or C/C++ engine. Real model/CPU/GPU task evidence is still required per declared platform/profile.
 - The dashboard has five destinations (Overview, Chat, Models, Activity, Settings), local EN/TR resources, first-run onboarding, accessibility basics, persistent jobs and resource telemetry. Manual screen-reader review remains open. See [product information architecture](product-information-architecture.md) and [UI/UX principles](ui-ux.md).
@@ -102,12 +115,13 @@ The default product workflow remains task-first: users choose a task/workspace, 
 
 ## Historical foundation status
 
-`v0.1.12-alpha` introduced the five-area UI and first `/v1/activity` snapshot. `v0.1.13-alpha` added SSE streaming and local conversation history. `v0.1.14-alpha` added durable component jobs and interrupted-state recovery. `v0.1.15-alpha` unified runtime operation jobs. `v0.1.16-alpha` added resource monitoring. `v0.1.17-alpha` expanded onboarding, localization and accessibility and included CI diagnostics/process cleanup. `v0.1.18-alpha` published the manifest-driven catalogue. The Runtime Profile milestone shipped in `v0.1.19-alpha`, the persistent install queue in `v0.1.20-alpha`, Catalog v2 in `v0.1.21-alpha`, Shared Engine Adapter in `v0.1.22-alpha`, and NVIDIA driver evidence in `v0.1.23-alpha`; real RTX 3060 inference/offload is still pending.
+`v0.1.12-alpha` introduced the five-area UI and first `/v1/activity` snapshot. `v0.1.13-alpha` added SSE streaming and local conversation history. `v0.1.14-alpha` added durable component jobs and interrupted-state recovery. `v0.1.15-alpha` unified runtime operation jobs. `v0.1.16-alpha` added resource monitoring. `v0.1.17-alpha` expanded onboarding, localization and accessibility and included CI diagnostics/process cleanup. `v0.1.18-alpha` published the manifest-driven catalogue. The Runtime Profile milestone shipped in `v0.1.19-alpha`, the persistent install queue in `v0.1.20-alpha`, Catalog v2 in `v0.1.21-alpha`, Shared Engine Adapter in `v0.1.22-alpha`, NVIDIA driver evidence in `v0.1.23-alpha`, and the interim product-readiness UI/model shortlist in `v0.1.24-alpha`; real RTX 3060 inference/offload is still pending.
 
 - [x] Fix the Windows PowerShell 5.1 publisher smoke-test regression and confirm the canonical four-target pipeline passes. `f841c80` was the confirmed green publisher/installer baseline when this roadmap update began (`v0.1.2-alpha`).
 - [x] Keep one repository-local maintainer command. It pushes only normal fast-forwards, never force-pushes, and stops at a failed CI gate. Git bundles are optional one-time source-transfer artifacts, not part of routine publishing.
 - [x] Validate the desktop shell and per-user setup installer on Windows CI, including silent install, payload verification and uninstall. `v0.1.2-alpha` is published from the first green installer pipeline.
-- [x] Keep publisher/installer tests green on every main push. A failed main build must never create a release tag; the publication script enforces this with separate main and tagged CI gates.
+- [x] Keep publisher/installer tests green on every main push. A failed platform build must never create a release tag.
+- [~] Replace the former main-build + tag-build sequence with a single build-once pipeline: version is planned before compilation; platform jobs upload immutable candidate artifacts; the release job tags the tested commit and publishes those exact files; Pages deploys after release publication; one final summary reports every stage. The repo-local publisher now only pushes a fast-forward commit and verifies the one run. Local contract/unit tests pass; live GitHub CI verification of this pipeline revision remains pending.
 
 ## Priority 1 — real Windows desktop installation (first product milestone)
 
@@ -165,8 +179,8 @@ The metadata contract and distribution boundaries live in [engine distribution s
 
 ## Priority 4 — safe, understandable updates
 
-- [x] A successful `main` push builds/tests all four targets and updates the project website after package gates pass.
-- [x] The maintainer publishing flow waits for green `main` CI before creating an alpha tag; the tag workflow then gates GitHub Release publication on the same platform jobs.
+- [~] A successful `main` push builds/tests/packages all four targets once, creates the alpha tag only after the platform gates pass, publishes those exact artifacts and then updates the project website in the same workflow. The live GitHub run must confirm this implementation before marking it fully accepted.
+- [x] The release job verifies that an existing tag belongs to the tested commit, writes SHA-256 checksums, and reuses the same-run artifacts instead of starting a tag-triggered second build.
 - [x] The dashboard checks release metadata at startup, offers a manual check, and verifies matching official release archives by size and SHA-256 before staging.
 - [x] Tagged portable Windows releases require explicit user confirmation and have backup, health-check, rollback, and interrupted-update recovery.
 - [x] Move the Windows update flow to the installed-app location and provide a user-confirmed “Download & install desktop update” experience with download progress, full-install rollback and startup recovery. Windows CI fault-injects setup failure and helper interruption; clean Windows 10/11 acceptance remains open.

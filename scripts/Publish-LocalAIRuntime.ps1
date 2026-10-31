@@ -9,8 +9,8 @@ param(
 )
 
 # Canonical repository-local publisher. It safely fast-forwards the current
-# clean main branch to GitHub, waits for main CI, then creates and verifies the
-# next alpha release. No bundle, Downloads clone, or bootstrap script is needed.
+# clean main branch to GitHub, waits for the one end-to-end pipeline, and then
+# verifies the tag and Release created from that run's tested artifacts.
 $ErrorActionPreference = 'Stop'
 $repositorySlug = 'azmisahin-ai/local-ai-runtime'
 $repositoryUrl = 'https://github.com/azmisahin-ai/local-ai-runtime.git'
@@ -56,23 +56,6 @@ function Invoke-Git {
         throw "git $($GitArgs -join ' ') failed with exit code $exitCode.`n$details"
     }
     return $details.Trim()
-}
-
-function Get-NextAlphaTag {
-    $tagOutput = Invoke-Git -GitArgs @('tag', '--list', 'v*')
-    $versions = @()
-    foreach ($tag in @($tagOutput -split '\r?\n')) {
-        if ($tag -match '^v(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$') {
-            $versions += [pscustomobject]@{
-                Major = [int]$Matches[1]
-                Minor = [int]$Matches[2]
-                Patch = [int]$Matches[3]
-            }
-        }
-    }
-    if ($versions.Count -eq 0) { return 'v0.1.0-alpha' }
-    $latest = $versions | Sort-Object -Property Major, Minor, Patch | Select-Object -Last 1
-    return ('v{0}.{1}.{2}-alpha' -f $latest.Major, $latest.Minor, ($latest.Patch + 1))
 }
 
 function Show-WorkflowFailureDiagnostics {
@@ -246,7 +229,7 @@ function Wait-ForPipelineRun {
                 if ($ExpectedRef -eq 'main') {
                     $diagnosticsRoot = Join-Path (Join-Path $HOME 'Downloads') 'local-ai-runtime-ci-diagnostics'
                     $runDiagnostics = Join-Path $diagnosticsRoot ("run-{0}" -f $run.id)
-                    throw "Main CI finished with conclusion '$($run.conclusion)'. No release tag was created. Diagnostics: $runDiagnostics. Review: $($run.html_url)"
+                    throw "Unified pipeline finished with conclusion '$($run.conclusion)'. Publication is not confirmed; inspect the release and Pages job results. Diagnostics: $runDiagnostics. Review: $($run.html_url)"
                 }
                 throw "Release CI for $ExpectedRef finished with conclusion '$($run.conclusion)'. The tag remains on GitHub, but a successful Release was not confirmed. Do not move or reuse the tag. Review diagnostics and run: $($run.html_url)"
             }
@@ -261,14 +244,14 @@ function Wait-ForPipelineRun {
     }
 
     if ($ExpectedRef -eq 'main') {
-        throw "Main CI status did not complete within $CiTimeoutSeconds seconds. Check $actionsUrl. No release tag was created by this script."
+        throw "Unified pipeline status did not complete within $CiTimeoutSeconds seconds. Publication is unconfirmed; inspect $actionsUrl before retrying."
     }
     throw "Release CI status for $ExpectedRef did not complete within $CiTimeoutSeconds seconds. The tag was already pushed; check $actionsUrl and do not move or reuse that tag."
 }
 
 function Get-VersionTagsAtCommit([string]$CommitSha) {
     $output = Invoke-Git -GitArgs @('tag', '--points-at', $CommitSha)
-    return @($output -split '\r?\n' | Where-Object { $_ -match '^v\d+\.\d+\.\d+' })
+    return @($output -split '\r?\n' | Where-Object { $_ -match '^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$' })
 }
 
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) { throw 'Git was not found.' }
@@ -292,7 +275,7 @@ try {
     if (-not [string]::IsNullOrWhiteSpace($ExpectedCommitSha)) {
         $expectedSha = $ExpectedCommitSha.ToLowerInvariant()
         if ($commitSha -ne $expectedSha) {
-            throw "The current checkout is $($commitSha.Substring(0, 7)), not the requested commit $($expectedSha.Substring(0, 7)). No push or release tag was created."
+            throw "The current checkout is $($commitSha.Substring(0, 7)), not the requested commit $($expectedSha.Substring(0, 7)). No push or publication was started."
         }
     }
 
@@ -303,9 +286,9 @@ try {
         if (-not $localIsAhead) {
             & git merge-base --is-ancestor HEAD origin/main
             if ($LASTEXITCODE -eq 0) {
-                throw 'GitHub main is ahead of this checkout. Run git pull --ff-only origin main, review the updated code, then retry. No push or release tag was created.'
+                throw 'GitHub main is ahead of this checkout. Run git pull --ff-only origin main, review the updated code, then retry. No push or publication was started.'
             }
-            throw 'Local main and GitHub main have diverged. Resolve the history explicitly; this publisher never resets or force-pushes. No release tag was created.'
+            throw 'Local main and GitHub main have diverged. Resolve the history explicitly; this publisher never resets or force-pushes.'
         }
         Write-Host "Pushing local main to GitHub (fast-forward only): $($commitSha.Substring(0, 7))" -ForegroundColor Cyan
         Invoke-Git -GitArgs @('push', 'origin', 'main') | Out-Null
@@ -313,53 +296,33 @@ try {
         Write-Host 'This exact commit is already on GitHub main.' -ForegroundColor Yellow
     }
 
-    # Re-read the remote after push. A concurrent main update must block tagging.
-    Invoke-Git -GitArgs @('fetch', '--tags', 'origin', '+refs/heads/main:refs/remotes/origin/main') | Out-Null
-    $remoteSha = (Invoke-Git -GitArgs @('rev-parse', 'origin/main')).ToLowerInvariant()
-    if ($remoteSha -ne $commitSha) {
-        throw 'GitHub main does not match the local commit after push. No version tag will be created.'
-    }
     $commitMessage = Invoke-Git -GitArgs @('log', '-1', '--pretty=%s')
     Write-Host "Publishing commit: $($commitSha.Substring(0, 7)) $commitMessage" -ForegroundColor Green
+    Write-Host '1/1 Waiting for the single end-to-end pipeline (platform builds, tests, release and website)...' -ForegroundColor Cyan
+    $pipelineRun = Wait-ForPipelineRun -ExpectedSha $commitSha -ExpectedRef 'main' -StageName 'unified main'
 
-    Write-Host '1/4 Waiting for all platform jobs and GitHub Pages...' -ForegroundColor Cyan
-    Wait-ForPipelineRun -ExpectedSha $commitSha -ExpectedRef 'main' -StageName 'main branch' | Out-Null
-
-    Write-Host '2/4 Reconfirming main did not move during CI...' -ForegroundColor Cyan
+    # The workflow itself creates the immutable tag and Release from the artifacts
+    # produced in this same run. The local publisher only verifies the outcome.
     Invoke-Git -GitArgs @('fetch', '--tags', 'origin', '+refs/heads/main:refs/remotes/origin/main') | Out-Null
-    $remoteShaAfterCi = (Invoke-Git -GitArgs @('rev-parse', 'origin/main')).ToLowerInvariant()
-    if ($remoteShaAfterCi -ne $commitSha) { throw 'GitHub main advanced during CI. No release tag was created.' }
+    $releaseTags = @(Get-VersionTagsAtCommit $commitSha)
+    if ($releaseTags.Count -eq 0) {
+        throw "The unified pipeline passed but no version tag points to $($commitSha.Substring(0, 7)). Inspect $($pipelineRun.html_url) before retrying."
+    }
+    $releaseTag = $releaseTags | Sort-Object -Descending | Select-Object -First 1
 
-    $tagsAtCommit = @(Get-VersionTagsAtCommit $commitSha)
-    if ($tagsAtCommit.Count -gt 0) {
-        $nextTag = $tagsAtCommit[0]
-        $remoteTagLine = Invoke-Git -GitArgs @('ls-remote', '--tags', 'origin', "refs/tags/$nextTag")
-        if ([string]::IsNullOrWhiteSpace($remoteTagLine)) {
-            Write-Host "3/4 Publishing existing local tag $nextTag without moving it..." -ForegroundColor Yellow
-            Invoke-Git -GitArgs @('push', 'origin', $nextTag) | Out-Null
-        }
-    } else {
-        $nextTag = Get-NextAlphaTag
-        if (-not [string]::IsNullOrWhiteSpace((Invoke-Git -GitArgs @('ls-remote', '--tags', 'origin', "refs/tags/$nextTag")))) {
-            throw "Release tag $nextTag already exists remotely and points elsewhere. It will not be moved or reused."
-        }
-        Write-Host "3/4 Main CI is green. Creating next alpha tag: $nextTag" -ForegroundColor Cyan
-        $taggerName = Invoke-Git -GitArgs @('config', '--get', 'user.name') -AllowNonZeroExit
-        $taggerEmail = Invoke-Git -GitArgs @('config', '--get', 'user.email') -AllowNonZeroExit
-        if ([string]::IsNullOrWhiteSpace($taggerName)) { Invoke-Git -GitArgs @('config', 'user.name', 'Local AI Runtime Publisher') | Out-Null }
-        if ([string]::IsNullOrWhiteSpace($taggerEmail)) { Invoke-Git -GitArgs @('config', 'user.email', 'local-ai-runtime-publisher@users.noreply.github.com') | Out-Null }
-        Invoke-Git -GitArgs @('tag', '-a', $nextTag, $commitSha, '-m', "Local AI Runtime $nextTag") | Out-Null
-        Invoke-Git -GitArgs @('push', 'origin', $nextTag) | Out-Null
+    $releaseUri = "https://api.github.com/repos/$repositorySlug/releases/tags/$releaseTag"
+    try {
+        $release = Invoke-RestMethod -Method Get -Uri $releaseUri -Headers $apiHeaders -TimeoutSec 20
+    } catch {
+        throw "Tag $releaseTag exists, but the public GitHub Release could not be confirmed: $($_.Exception.Message). Review $($pipelineRun.html_url)."
     }
 
-    Write-Host '4/4 Waiting for tagged CI and GitHub Release publication...' -ForegroundColor Cyan
-    $tagRun = Wait-ForPipelineRun -ExpectedSha $commitSha -ExpectedRef $nextTag -StageName "release $nextTag"
     Write-Host ''
     Write-Host 'PUBLISH COMPLETE' -ForegroundColor Green
     Write-Host "Commit:  $($commitSha.Substring(0, 7))"
-    Write-Host "Release: https://github.com/$repositorySlug/releases/tag/$nextTag"
-    Write-Host "Actions: $($tagRun.html_url)"
-    Write-Host 'The site follows the successful main CI; public release downloads update after the tagged CI completes.' -ForegroundColor Green
+    Write-Host "Release: $($release.html_url)"
+    Write-Host "Actions: $($pipelineRun.html_url)"
+    Write-Host 'All platform packages were built and tested once; this exact artifact set was used for the release.' -ForegroundColor Green
 } finally {
     Pop-Location
 }

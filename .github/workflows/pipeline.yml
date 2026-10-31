@@ -1,14 +1,12 @@
-﻿name: Build, test, package & publish
+name: Build, test, package & publish
 
 on:
-  # One canonical workflow: PRs validate; main builds/packages for Windows, Linux,
-  # macOS Intel and Apple Silicon, then deploys Pages only after all targets pass.
-  # Version tags publish the same four platform/architecture packages as Releases.
+  # One end-to-end run: plan version, build/test/package each platform once,
+  # then tag and publish those exact artifacts and deploy Pages. The release job
+  # creates tags with GITHUB_TOKEN, so tag pushes do not start a second build.
   push:
     branches:
       - main
-    tags:
-      - 'v*'
   pull_request:
   schedule:
     # Keep the weekly macOS maintenance check inside the canonical workflow;
@@ -25,21 +23,75 @@ on:
 permissions:
   contents: read
 
-env:
-  # Main-branch pushes publish CI preview artifacts only; version tags publish releases.
-  LAR_RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || (startsWith(github.ref, 'refs/tags/v') && github.ref_name || '0.1.0-dev') }}
-
 concurrency:
   group: local-ai-runtime-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
+  plan:
+    name: Plan version and release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      tag: ${{ steps.plan.outputs.tag }}
+      release: ${{ steps.plan.outputs.release }}
+    steps:
+      - name: Checkout complete history and tags
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Test release version planner and unified workflow contract
+        run: |
+          python tests/next_alpha_version_test.py
+          python tests/unified_pipeline_contract.py
+
+      - name: Plan version for this run
+        id: plan
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          tag=''
+          release=false
+          if [[ "$EVENT_NAME" == 'push' && "$REF_NAME" == 'refs/heads/main' ]]; then
+            tag="$(python scripts/next_alpha_version.py)"
+            version="${tag#v}"
+            release=true
+          elif [[ "$EVENT_NAME" == 'workflow_dispatch' ]]; then
+            version="${INPUT_VERSION#v}"
+            [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "Invalid dry-run version: $version" >&2; exit 1; }
+          else
+            version='0.1.0-dev'
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "release=$release" >> "$GITHUB_OUTPUT"
+          {
+            echo '## Release plan'
+            echo
+            echo "- Commit: \`$GITHUB_SHA\`"
+            echo "- Build version: \`$version\`"
+            if [[ -n "$tag" ]]; then echo "- Release tag: \`$tag\`"; else echo '- Release: dry run / validation only'; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
   windows:
+    needs: [plan]
+    env:
+      LAR_RELEASE_VERSION: ${{ needs.plan.outputs.version }}
     if: ${{ github.event_name != 'schedule' }}
     name: Windows x64 build / test / package
     runs-on: windows-2022
     steps:
-      - name: Checkout tagged source
+      - name: Checkout source
         uses: actions/checkout@v7
 
       - name: Record job start time
@@ -302,7 +354,7 @@ jobs:
           if (-not (Test-Path 'dist/desktop-publish/LocalAIRuntime.Desktop.exe')) { throw 'Self-contained desktop shell executable was not produced.' }
 
       - name: Package portable Windows runtime
-        if: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') }}
+        if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch' }}
         id: package
         shell: pwsh
         run: |
@@ -500,19 +552,19 @@ jobs:
           retention-days: 7
 
       - name: Upload Windows package
-        if: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') }}
+        if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch' }}
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && 'release-windows' || format('preview-windows-{0}', github.sha) }}
+          name: candidate-windows-x64
           path: dist/local-ai-runtime-windows-x64.zip
           if-no-files-found: error
           retention-days: 14
 
       - name: Upload Windows desktop installer
-        if: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') }}
+        if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch' }}
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && 'release-windows-installer' || format('preview-windows-installer-{0}', github.sha) }}
+          name: candidate-windows-installer
           path: dist/local-ai-runtime-windows-x64-setup.exe
           if-no-files-found: error
           retention-days: 14
@@ -560,11 +612,14 @@ jobs:
           $rows | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
   linux:
+    needs: [plan]
     if: ${{ github.event_name != 'schedule' }}
     name: Linux x64 build / test / package
     runs-on: ubuntu-24.04
+    env:
+      LAR_RELEASE_VERSION: ${{ needs.plan.outputs.version }}
     steps:
-      - name: Checkout tagged source
+      - name: Checkout source
         uses: actions/checkout@v7
 
       - name: Record job start time
@@ -661,7 +716,7 @@ jobs:
 
       - name: Package portable Linux runtime
         id: package
-        if: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') }}
+        if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch' }}
         shell: bash
         run: |
           started=$SECONDS
@@ -759,10 +814,10 @@ jobs:
           sha256sum "$PACKAGE"
 
       - name: Upload Linux package
-        if: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') }}
+        if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch' }}
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && 'release-linux' || format('preview-linux-{0}', github.sha) }}
+          name: candidate-linux-x64
           path: dist/local-ai-runtime-linux-x64.tar.gz
           if-no-files-found: error
           retention-days: 14
@@ -804,6 +859,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   macos:
+    needs: [plan]
     name: macOS ${{ matrix.arch }} build / test / package
     strategy:
       fail-fast: false
@@ -814,6 +870,8 @@ jobs:
           - runner: macos-15
             arch: arm64
     runs-on: ${{ matrix.runner }}
+    env:
+      LAR_RELEASE_VERSION: ${{ needs.plan.outputs.version }}
     # macOS runners are slower for the full test + repeat-smoke + portable package path.
     # Individual CTest cases have their own shorter timeout so a hang fails diagnostically.
     timeout-minutes: 35
@@ -941,7 +999,7 @@ jobs:
 
       - name: Package and smoke-test portable macOS runtime
         id: package
-        if: ${{ github.event_name != 'pull_request' && github.event_name != 'schedule' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') }}
+        if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch' }}
         shell: bash
         run: |
           started=$SECONDS
@@ -995,10 +1053,10 @@ jobs:
           shasum -a 256 "$PACKAGE"
 
       - name: Upload macOS package
-        if: ${{ github.event_name != 'pull_request' && github.event_name != 'schedule' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') }}
+        if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch' }}
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && format('release-macos-{0}', matrix.arch) || format('preview-macos-{0}-{1}', matrix.arch, github.sha) }}
+          name: candidate-macos-${{ matrix.arch }}
           path: dist/local-ai-runtime-macos-${{ matrix.arch }}.tar.gz
           if-no-files-found: error
           retention-days: 14
@@ -1046,47 +1104,100 @@ jobs:
             echo 'GitHub runner queue time is shown separately by the Actions run details.'
           } >> "$GITHUB_STEP_SUMMARY"
 
-  publish:
-    name: Publish GitHub Release
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: [windows, linux, macos]
+  publish-release:
+    name: Tag and publish tested artifacts
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    needs: [plan, windows, linux, macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      TAG_NAME: ${{ needs.plan.outputs.tag }}
+      RELEASE_VERSION: ${{ needs.plan.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
     steps:
-      - name: Download packages
+      - name: Checkout the exact tested commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Download packages produced by this run
         uses: actions/download-artifact@v8
         with:
-          pattern: release-*
+          pattern: candidate-*
           path: release-assets
           merge-multiple: true
 
-      - name: Generate checksums and publish release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG_NAME: ${{ github.ref_name }}
+      - name: Verify release payload and write checksums
         shell: bash
         run: |
           set -euo pipefail
+          [[ -n "$TAG_NAME" ]] || { echo 'Release tag was not planned.' >&2; exit 1; }
+          [[ "${TAG_NAME#v}" == "$RELEASE_VERSION" ]] || { echo 'Tag/version mismatch.' >&2; exit 1; }
           test -s release-assets/local-ai-runtime-windows-x64.zip
           test -s release-assets/local-ai-runtime-windows-x64-setup.exe
           test -s release-assets/local-ai-runtime-linux-x64.tar.gz
           test -s release-assets/local-ai-runtime-macos-x64.tar.gz
           test -s release-assets/local-ai-runtime-macos-arm64.tar.gz
           cd release-assets
-          sha256sum local-ai-runtime-windows-x64-setup.exe local-ai-runtime-windows-x64.zip local-ai-runtime-linux-x64.tar.gz local-ai-runtime-macos-x64.tar.gz local-ai-runtime-macos-arm64.tar.gz > SHA256SUMS.txt
-          cd ..
-          if [[ "$TAG_NAME" == *-* ]]; then
-            gh release create "$TAG_NAME" release-assets/* --verify-tag --title "$TAG_NAME" --generate-notes --prerelease --repo "$GITHUB_REPOSITORY"
+          sha256sum \
+            local-ai-runtime-windows-x64-setup.exe \
+            local-ai-runtime-windows-x64.zip \
+            local-ai-runtime-linux-x64.tar.gz \
+            local-ai-runtime-macos-x64.tar.gz \
+            local-ai-runtime-macos-arm64.tar.gz > SHA256SUMS.txt
+          {
+            echo "Commit: $GITHUB_SHA"
+            echo "Version: $RELEASE_VERSION"
+            echo "Workflow run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          } > RELEASE-METADATA.txt
+
+      - name: Create or verify the immutable release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual_commit="$(git rev-parse HEAD)"
+          [[ "$actual_commit" == "$GITHUB_SHA" ]] || { echo 'Release checkout is not the tested commit.' >&2; exit 1; }
+          git fetch --force --tags origin
+          if git show-ref --verify --quiet "refs/tags/$TAG_NAME"; then
+            tag_commit="$(git rev-list -n 1 "$TAG_NAME")"
+            [[ "$tag_commit" == "$GITHUB_SHA" ]] || { echo "Tag $TAG_NAME already points to another commit." >&2; exit 1; }
           else
-            gh release create "$TAG_NAME" release-assets/* --verify-tag --title "$TAG_NAME" --generate-notes --repo "$GITHUB_REPOSITORY"
+            git config user.name 'Local AI Runtime Release Bot'
+            git config user.email 'local-ai-runtime-release-bot@users.noreply.github.com'
+            git tag -a "$TAG_NAME" "$GITHUB_SHA" -m "Local AI Runtime $TAG_NAME"
+            git push origin "refs/tags/$TAG_NAME"
           fi
+
+      - name: Publish the exact artifacts tested above
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG_NAME" release-assets/* --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            release_flags=()
+            if [[ "$TAG_NAME" == *-* ]]; then release_flags+=(--prerelease); fi
+            gh release create "$TAG_NAME" release-assets/* \
+              --verify-tag --target "$GITHUB_SHA" --title "$TAG_NAME" \
+              --generate-notes "${release_flags[@]}" --repo "$GITHUB_REPOSITORY"
+          fi
+          release_url="$(gh release view "$TAG_NAME" --repo "$GITHUB_REPOSITORY" --json url --jq .url)"
+          {
+            echo '## Release publication'
+            echo
+            echo "- Tag: \`$TAG_NAME\`"
+            echo "- Commit: \`$GITHUB_SHA\`"
+            echo "- Release: $release_url"
+            echo '- Build policy: each platform artifact was built and tested once in this workflow run; release publication reused those exact files.'
+          } >> "$GITHUB_STEP_SUMMARY"
 
 
   publish-pages:
-    name: Publish website (after packages pass)
-    if: ${{ success() && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) }}
-    needs: [windows, linux, macos]
+    name: Publish website (after release gate)
+    if: ${{ always() && needs.windows.result == 'success' && needs.linux.result == 'success' && needs.macos.result == 'success' && ((github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.publish-release.result == 'success') || github.event_name == 'workflow_dispatch') }}
+    needs: [plan, windows, linux, macos, publish-release]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1113,3 +1224,51 @@ jobs:
       - name: Deploy website
         id: deployment
         uses: actions/deploy-pages@v5
+
+
+  final-report:
+    name: Final pipeline report
+    if: ${{ always() }}
+    needs: [plan, windows, linux, macos, publish-release, publish-pages]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Summarize all release stages
+        shell: bash
+        env:
+          PLAN_RESULT: ${{ needs.plan.result }}
+          WINDOWS_RESULT: ${{ needs.windows.result }}
+          LINUX_RESULT: ${{ needs.linux.result }}
+          MACOS_RESULT: ${{ needs.macos.result }}
+          RELEASE_RESULT: ${{ needs.publish-release.result }}
+          PAGES_RESULT: ${{ needs.publish-pages.result }}
+          BUILD_VERSION: ${{ needs.plan.outputs.version }}
+          RELEASE_TAG: ${{ needs.plan.outputs.tag }}
+        run: |
+          set -euo pipefail
+          status_label() {
+            case "$1" in
+              success) printf '✅ Passed' ;;
+              failure) printf '❌ Failed' ;;
+              cancelled) printf '⚪ Cancelled' ;;
+              skipped) printf '— Skipped / not applicable' ;;
+              *) printf '⏳ %s' "$1" ;;
+            esac
+          }
+          {
+            echo '# Local AI Runtime — Pipeline report'
+            echo
+            echo "- Commit: \`$GITHUB_SHA\`"
+            echo "- Build version: \`$BUILD_VERSION\`"
+            if [[ -n "$RELEASE_TAG" ]]; then echo "- Release tag: \`$RELEASE_TAG\`"; else echo '- Release tag: none (validation/dry run)'; fi
+            echo
+            echo '| Stage | Result |'
+            echo '|---|---|'
+            echo "| Version planning | $(status_label "$PLAN_RESULT") |"
+            echo "| Windows x64 build/test/package | $(status_label "$WINDOWS_RESULT") |"
+            echo "| Linux x64 build/test/package | $(status_label "$LINUX_RESULT") |"
+            echo "| macOS x64 + arm64 build/test/package | $(status_label "$MACOS_RESULT") |"
+            echo "| Tag + GitHub Release | $(status_label "$RELEASE_RESULT") |"
+            echo "| GitHub Pages | $(status_label "$PAGES_RESULT") |"
+            echo
+            echo "[Open this workflow run]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -54,6 +54,15 @@
 
 # Changelog
 
+## Unreleased — single-run, build-once release pipeline
+
+- Plan the next alpha version before platform compilation so every Windows, Linux and macOS artifact embeds the version that will be released.
+- Build, test and package each release target once on a main push; upload immutable candidate artifacts from the four platform jobs.
+- Create the annotated version tag and publish the exact same-run artifacts only after every platform/package gate passes; generate SHA-256 checksums and release metadata without rebuilding.
+- Deploy GitHub Pages after the same-run Release gate and add a final workflow summary covering version planning, each platform, Release and website deployment.
+- Remove the tag-push workflow trigger to prevent a second build. Make the repository-local PowerShell publisher a thin push-and-verification client for the single workflow run.
+- Add version-planner unit tests and a unified-pipeline contract test; keep tag creation idempotent for workflow reruns and refuse to move a tag to a different commit.
+
 ## Unreleased — interim product-readiness UX and curated local model shortlist
 
 - Replace the always-expanded hardware report with a plain-language hardware glance and a collapsed technical-evidence section; keep the GPU observation control beside the technical details rather than in the primary overview flow.

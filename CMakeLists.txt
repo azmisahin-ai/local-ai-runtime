@@ -147,6 +147,14 @@ if(LAR_BUILD_TESTS)
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/catalog_manifest_contract.py"
         )
         add_test(
+            NAME lar_release_version_planner
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/next_alpha_version_test.py"
+        )
+        add_test(
+            NAME lar_unified_pipeline_contract
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/unified_pipeline_contract.py"
+        )
+        add_test(
             NAME lar_catalog_embed_contract
             COMMAND "${Python3_EXECUTABLE}"
                     "${CMAKE_CURRENT_SOURCE_DIR}/tests/catalog_embed_contract.py"
