@@ -3,6 +3,7 @@ const apiDot = document.querySelector('#api-dot');
 const engineList = document.querySelector('#engine-list');
 const engineError = document.querySelector('#engine-error');
 const hardwareSummary = document.querySelector('#hardware-summary');
+const hardwareGlance = document.querySelector('#hardware-glance');
 const hardwareError = document.querySelector('#hardware-error');
 const hardwareRefreshButton = document.querySelector('#hardware-refresh');
 const gpuObservationButton = document.querySelector('#gpu-observation-run');
@@ -18,10 +19,12 @@ const runtimeVersion = document.querySelector('#runtime-version');
 const checkUpdatesButton = document.querySelector('#check-updates');
 const updateCheckStatus = document.querySelector('#update-check-status');
 const chatReadiness = document.querySelector('#chat-readiness');
+const chatSetupActions = document.querySelector('#chat-setup-actions');
 const chatSendButton = document.querySelector('#send');
 const llamaSetupForm = document.querySelector('#llama-setup-form');
 const setupStatus = document.querySelector('#setup-status');
 const catalogList = document.querySelector('#catalog-list');
+const catalogRecommendationList = document.querySelector('#catalog-recommendation-list');
 const catalogSearch = document.querySelector('#catalog-search');
 const catalogSummary = document.querySelector('#catalog-summary');
 const catalogFilterButtons = [...document.querySelectorAll('[data-catalog-filter]')];
@@ -94,6 +97,7 @@ let activeChatId = null;
 let activeChatController = null;
 let activeAssistantMessageElement = null;
 let hardwareInventoryLoaded = false;
+let lastHardwareSnapshot = null;
 let engineSnapshot = [];
 let runtimeProfile = null;
 let runtimeProfileDraft = { engine_component_id: '', model_component_id: '', context_size: 2048 };
@@ -824,6 +828,8 @@ function catalogItemCard(item) {
   const queuedJob = downloadJobsSnapshot.find((job) => job.item_id === item.id &&
     ['queued', 'running', 'downloading', 'verifying', 'extracting', 'configuring'].includes(job.state));
   const card = make('article', `catalog-card catalog-card-${isEngine ? 'engine' : 'model'}`);
+  card.id = `catalog-item-${item.id}`;
+  card.tabIndex = -1;
   const info = make('div', 'catalog-card-info');
   const heading = make('div', 'catalog-card-heading');
   heading.append(make('h3', '', item.name || item.id));
@@ -835,7 +841,7 @@ function catalogItemCard(item) {
         : (isEngine ? translation('models.engineRuntime', 'Engine runtime') : translation('models.modelWeights', 'Model weights')));
   heading.append(status);
   info.append(heading);
-  info.append(make('p', 'catalog-description', item.description || translation('models.reviewedComponent', 'Reviewed catalog component.')));
+  info.append(make('p', 'catalog-description', catalogLocalizedText(item, 'description', item.description || translation('models.reviewedComponent', 'Reviewed catalog component.'))));
 
   const meta = make('div', 'engine-meta catalog-meta');
   meta.append(make('span', 'tag', isEngine ? translation('models.engineRuntime', 'Engine runtime') : translation('models.modelWeights', 'Model weights')));
@@ -843,6 +849,9 @@ function catalogItemCard(item) {
   const modelProfile = item.model_profile && typeof item.model_profile === 'object' ? item.model_profile : null;
   if (modelProfile) {
     if (modelProfile.task_group) meta.append(make('span', 'tag catalog-task-tag', catalogTaskGroupLabel(String(modelProfile.task_group))));
+    const recommendation = modelRecommendationLabel(modelProfile);
+    if (recommendation) meta.append(make('span', 'tag', recommendation));
+    if (Number(modelProfile.preferred_context_tokens) > 0) meta.append(make('span', 'tag', formatMessage('models.recommendedContext', { size: Number(modelProfile.preferred_context_tokens).toLocaleString(currentLocale === 'tr' ? 'tr-TR' : 'en-US') })));
     if (modelProfile.parameter_count) meta.append(make('span', 'tag', String(modelProfile.parameter_count)));
     if (modelProfile.quantization) meta.append(make('span', 'tag', String(modelProfile.quantization)));
     if (modelProfile.format) meta.append(make('span', 'tag', String(modelProfile.format)));
@@ -901,7 +910,8 @@ function catalogItemCard(item) {
         details.append(make('p', 'hint', formatMessage('models.prerequisites', { requirements: compatibility.driver_requirements.join('; ') })));
       }
       if (Array.isArray(compatibility.known_limits) && compatibility.known_limits.length) {
-        details.append(make('p', 'catalog-limit', formatMessage('models.knownLimits', { limits: compatibility.known_limits.join(' ') })));
+        const localizedLimits = catalogLocalizedText(item, 'limits', '');
+        details.append(make('p', 'catalog-limit', localizedLimits || formatMessage('models.knownLimits', { limits: compatibility.known_limits.join(' ') })));
       }
     }
     if (resources) {
@@ -1002,6 +1012,7 @@ function catalogItemCard(item) {
 }
 
 function renderCatalog() {
+  renderCatalogRecommendations();
   const query = catalogSearch.value.trim().toLocaleLowerCase();
   const taskGroups = [...new Set(catalogItems
     .filter((item) => item.type === 'model')
@@ -1480,7 +1491,24 @@ function renderResources(snapshot) {
     }
     gpuSection.append(gpuList);
   } else {
-    gpuSection.append(make('p', 'hint', gpuTelemetry.message || translation('activity.resourcesGpuUnavailable', 'Live GPU telemetry is unavailable on this device.')));
+    gpuSection.append(make('p', 'hint', translation('activity.resourcesGpuUnavailable', 'Live GPU telemetry is unavailable on this device.')));
+    if (gpuTelemetry.message) {
+      const detail = make('details', 'technical-detail');
+      detail.append(make('summary', '', translation('activity.technicalDetail', 'Technical detail')));
+      detail.append(make('p', 'hint', gpuTelemetry.message));
+      gpuSection.append(detail);
+    }
+  }
+  const defaultChatEngine = engineSnapshot.find((engine) => engine?.default_for_chat) || null;
+  if (!defaultChatEngine || !defaultChatEngine.executable_configured || !defaultChatEngine.model_configured) {
+    gpuSection.append(make('p', 'hint', translation('activity.gpuBackendNotConfigured', 'No configured Chat backend is available to test GPU execution.')));
+  } else if (defaultChatEngine.backend_target === 'cpu') {
+    gpuSection.append(make('p', 'hint', translation('activity.gpuBackendCpu', 'Your current Chat engine requests CPU execution. Missing live GPU telemetry does not prevent a later CUDA test.')));
+  } else if (defaultChatEngine.backend_target === 'gpu-requested') {
+    const evidenceKey = defaultChatEngine.gpu_execution_evidence === 'offload-reported' ? 'activity.gpuBackendOffloadReported' : 'activity.gpuBackendNotVerified';
+    gpuSection.append(make('p', 'hint', translation(evidenceKey, evidenceKey === 'activity.gpuBackendOffloadReported' ? 'The engine log reports GPU offloaded layers; live readings remain a separate system-wide signal.' : 'CUDA/GPU layers are requested, but actual offload has not yet been confirmed by the engine log.')));
+  } else {
+    gpuSection.append(make('p', 'hint', translation('activity.gpuBackendNotVerified', 'A GPU backend is not configured or its execution status is unknown.')));
   }
   gpuSection.append(make('p', 'hint', translation('activity.resourcesGpuScope', 'GPU readings are system-wide and do not prove that a particular engine uses the GPU.')));
   resourcesSummary.append(gpuSection);
@@ -1535,6 +1563,110 @@ function formatBytes(value) {
   return `${amount >= 10 || unit === 0 ? amount.toFixed(0) : amount.toFixed(1)} ${units[unit]}`;
 }
 
+function catalogLocalizedText(item, field, fallback = '') {
+  if (!item?.id) return fallback;
+  return translation(`catalog.${item.id}.${field}`, fallback);
+}
+
+function modelRecommendationLabel(profile = {}) {
+  const key = profile.recommended_for === 'balanced' ? 'models.fitBalanced'
+    : profile.recommended_for === 'alternative' ? 'models.fitAlternative'
+      : profile.recommended_for === 'low-memory' ? 'models.fitLowMemory' : '';
+  return key ? translation(key, profile.recommended_for) : '';
+}
+
+function renderCatalogRecommendations() {
+  if (!catalogRecommendationList) return;
+  catalogRecommendationList.replaceChildren();
+  const models = catalogItems.filter((item) => item.type === 'model' && item.model_profile?.task_group === 'chat')
+    .sort((a, b) => {
+      const rank = { balanced: 0, alternative: 1, 'low-memory': 2 };
+      return (rank[a.model_profile?.recommended_for] ?? 9) - (rank[b.model_profile?.recommended_for] ?? 9);
+    });
+  if (!models.length) {
+    catalogRecommendationList.append(make('p', 'empty', translation('models.noRecommendations', 'No reviewed chat models are available for this device yet.')));
+    return;
+  }
+  for (const item of models) {
+    const profile = item.model_profile || {};
+    const card = make('article', `catalog-recommendation-card recommendation-${profile.recommended_for || 'general'}`);
+    const heading = make('div', 'catalog-recommendation-heading');
+    heading.append(make('h3', '', item.name || item.id));
+    const fit = modelRecommendationLabel(profile);
+    if (fit) heading.append(make('span', 'tag', fit));
+    card.append(heading);
+    const description = catalogLocalizedText(item, 'description', item.description || '');
+    if (description) card.append(make('p', 'catalog-recommendation-description', description));
+    const meta = make('div', 'catalog-recommendation-meta');
+    meta.append(make('span', 'tag', formatBytes(item.size_bytes)));
+    meta.append(make('span', 'tag', formatMessage('models.recommendedContext', { size: Number(profile.preferred_context_tokens || 2048).toLocaleString(currentLocale === 'tr' ? 'tr-TR' : 'en-US') })));
+    if (item.installed) meta.append(make('span', 'tag ready', translation('models.installed', 'Installed')));
+    card.append(meta);
+    const action = make('button', 'button secondary catalog-recommendation-action', translation('models.viewInCatalog', 'View in catalogue'));
+    action.type = 'button';
+    action.addEventListener('click', () => {
+      activeCatalogFilter = 'model';
+      activeCatalogTask = 'chat';
+      catalogSearch.value = '';
+      renderCatalog();
+      const target = document.getElementById(`catalog-item-${item.id}`);
+      target?.scrollIntoView({ behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'center' });
+      target?.focus?.({ preventScroll: true });
+    });
+    card.append(action);
+    catalogRecommendationList.append(card);
+  }
+}
+
+function renderHardwareGlance(info) {
+  if (!hardwareGlance) return;
+  hardwareGlance.replaceChildren();
+  const facts = make('div', 'hardware-glance-grid');
+  const add = (label, value, detail = '') => {
+    const card = make('article', 'hardware-glance-card');
+    card.append(make('span', 'hardware-glance-label', label));
+    card.append(make('strong', '', value));
+    if (detail) card.append(make('small', '', detail));
+    facts.append(card);
+  };
+  add(translation('hardware.platform', 'Platform'), `${String(info.platform || 'Unknown').toUpperCase()} ${String(info.architecture || '').toUpperCase()}`.trim());
+  add(translation('hardware.logicalProcessors', 'Logical processors'), String(info.logical_cpu_count ?? '—'));
+  add(translation('hardware.systemRam', 'System RAM'), formatBytes(info.total_memory_bytes), formatMessage('device.availableShort', { size: formatBytes(info.available_memory_bytes) }));
+  const nvidiaDevices = Array.isArray(info.nvidia_probe?.devices) ? info.nvidia_probe.devices : [];
+  const osGpus = Array.isArray(info.gpus) ? info.gpus : [];
+  const nvidiaOsGpu = osGpus.find((gpu) => String(gpu.vendor || '').toLowerCase() === 'nvidia') || null;
+  const nvidia = nvidiaDevices[0] || null;
+  const gpuName = nvidia?.name || nvidiaOsGpu?.name || translation(osGpus.length ? 'device.gpuDetected' : 'device.gpuUnknown', osGpus.length ? 'GPU detected' : 'Not detected');
+  const gpuDetail = nvidia
+    ? formatMessage('device.gpuDetail', { vram: formatBytes(nvidia.memory_total_bytes), driver: nvidia.driver_version || translation('common.notAvailable', 'Not available') })
+    : nvidiaOsGpu ? formatMessage('device.gpuAdapterOnly', { vram: formatBytes(nvidiaOsGpu.dedicated_memory_bytes) })
+      : translation('device.gpuNoNvidia', 'NVIDIA device evidence unavailable');
+  add(translation('device.graphics', 'Graphics'), gpuName, gpuDetail);
+  hardwareGlance.append(facts);
+
+  const statuses = make('div', 'hardware-evidence-statuses');
+  const driverStatus = make('span', `tag ${nvidia ? 'ready' : ''}`, nvidia
+    ? formatMessage('device.driverEvidenceAvailable', { version: nvidia.driver_version || translation('common.notAvailable', 'Not available'), capability: nvidia.compute_capability || translation('common.notAvailable', 'Not available') })
+    : translation('device.driverEvidenceUnavailable', 'NVIDIA driver evidence unavailable'));
+  statuses.append(driverStatus);
+  const chatEngine = engineSnapshot.find((engine) => engine?.default_for_chat) || null;
+  let executionLabel = translation('device.gpuExecutionNotVerified', 'GPU inference not yet verified');
+  let executionClass = 'loading';
+  if (!chatEngine || !chatEngine.executable_configured || !chatEngine.model_configured) {
+    executionLabel = translation('device.chatEngineNotConfigured', 'Chat engine not configured');
+    executionClass = '';
+  } else if (chatEngine.gpu_execution_evidence === 'offload-reported') {
+    executionLabel = translation('device.gpuExecutionReported', 'Engine log reports GPU offload');
+    executionClass = 'ready';
+  } else if (chatEngine.backend_target === 'cpu') {
+    executionLabel = translation('device.currentProfileCpu', 'Current Chat engine is configured for CPU');
+    executionClass = '';
+  }
+  statuses.append(make('span', `tag ${executionClass}`, executionLabel));
+  hardwareGlance.append(statuses);
+  hardwareGlance.append(make('p', 'hint hardware-glance-note', translation('device.glanceNote', 'OS adapter inventory and NVIDIA driver identity, live GPU readings, and proof of model offload are separate checks.')));
+}
+
 function renderHardwareRecommendations(recommendations) {
   const section = make('section', 'hardware-recommendations');
   section.append(make('h3', '', translation('hardware.recommendationsTitle', 'Recommended starting points')));
@@ -1553,12 +1685,29 @@ function renderHardwareRecommendations(recommendations) {
   for (const item of Array.isArray(recommendations) ? recommendations : []) {
     const card = make('article', `recommendation-card status-${String(item.status || 'unknown')}`);
     const heading = make('div', 'recommendation-heading');
-    heading.append(make('h4', '', item.title || translation('hardware.startingPoint', 'Starting point')));
+    const isGpu = item.id === 'nvidia-cuda-chat';
+    const titleKey = isGpu ? 'hardware.nvidiaRecommendationTitle' : 'hardware.cpuRecommendationTitle';
+    heading.append(make('h4', '', translation(titleKey, item.title || translation('hardware.startingPoint', 'Starting point'))));
     heading.append(make('span', 'recommendation-status', labels[item.status] || translation('hardware.manualReview', 'Needs review')));
     card.append(heading);
     if (item.model) card.append(make('p', 'recommendation-model', item.model));
     if (item.engine) card.append(make('p', 'recommendation-engine', item.engine));
-    if (item.reason) card.append(make('p', 'recommendation-reason', item.reason));
+    const reasonKeys = isGpu ? {
+      candidate: 'hardware.gpuReasonCandidate', review: 'hardware.gpuReasonReview',
+      'not-detected': 'hardware.gpuReasonNotDetected', unknown: 'hardware.gpuReasonUnknown',
+    } : {
+      recommended: 'hardware.cpuReasonRecommended', caution: 'hardware.cpuReasonCaution',
+      'resource-constrained': 'hardware.cpuReasonConstrained', 'needs-space': 'hardware.cpuReasonDisk',
+      unknown: 'hardware.cpuReasonUnknown',
+    };
+    const reasonKey = reasonKeys[item.status];
+    if (reasonKey) card.append(make('p', 'recommendation-reason', translation(reasonKey, item.reason || '')));
+    if (item.reason) {
+      const detail = make('details', 'technical-detail recommendation-technical-detail');
+      detail.append(make('summary', '', translation('hardware.technicalReason', 'Technical assessment')));
+      detail.append(make('p', 'hint', item.reason));
+      card.append(detail);
+    }
     const action = document.createElement('a');
     action.className = 'button secondary';
     action.href = '#models';
@@ -1571,6 +1720,8 @@ function renderHardwareRecommendations(recommendations) {
 }
 
 function renderHardware(info) {
+  lastHardwareSnapshot = info;
+  renderHardwareGlance(info);
   hardwareSummary.replaceChildren();
   const platformLabel = `${String(info.platform || 'Unknown').toUpperCase()} ${String(info.architecture || '').toUpperCase()}`.trim();
   if (overviewDeviceState) overviewDeviceState.textContent = platformLabel || translation('hardware.unknown', 'Unknown');
@@ -1631,7 +1782,12 @@ function renderHardware(info) {
 
   const guidance = make('div', 'hardware-guidance');
   guidance.append(make('strong', '', formatMessage('hardware.startingProfile', { profile: String(info.memory_profile || translation('hardware.unknown', 'unknown')).replaceAll('-', ' ') })));
-  guidance.append(make('p', '', info.recommendation || translation('hardware.cpuBaseline', 'Start with the CPU baseline and verify each model on this computer.')));
+  const profile = String(info.memory_profile || 'unknown');
+  const profileGuidance = {
+    'low-memory': 'hardware.profileLowMemory', baseline: 'hardware.profileBaseline',
+    'memory-headroom': 'hardware.profileMemoryHeadroom', unknown: 'hardware.profileUnknown',
+  };
+  guidance.append(make('p', '', translation(profileGuidance[profile] || 'hardware.profileUnknown', 'Start with a small quantized model and verify it locally.')));
   guidance.append(make('p', '', translation('hardware.gpuUnverified', 'GPU inference is not automatically confirmed by detecting an adapter or installing a CUDA package.')));
   hardwareSummary.append(guidance);
   hardwareSummary.append(renderHardwareRecommendations(info.recommendations));
@@ -1648,6 +1804,8 @@ async function refreshHardware() {
     updateFirstRunGuide();
   } catch (error) {
     hardwareInventoryLoaded = false;
+    lastHardwareSnapshot = null;
+    if (hardwareGlance) hardwareGlance.replaceChildren(make('div', 'empty', translation('hardware.readFailed', 'Device information could not be read.')));
     updateFirstRunGuide();
     hardwareError.textContent = formatError(error);
     hardwareSummary.replaceChildren(make('div', 'empty', translation('hardware.readFailed', 'Device information could not be read. The local model runtime remains available.')));
@@ -1672,7 +1830,14 @@ function engineCard(engine) {
   const readinessLabel = engine.ready ? translation('engine.ready', 'ready') : (engine.status === 'running' ? translation('engine.loadingModel', 'loading model') : translateEngineState(engine.status));
   meta.append(make('span', `tag ${readinessClass}`, readinessLabel));
   if (engine.pid) meta.append(make('span', 'tag', `PID ${engine.pid}`));
-  for (const capability of (engine.capabilities || [])) meta.append(make('span', 'tag', capability));
+  for (const capability of (engine.capabilities || [])) {
+    const capabilityKeys = {
+      chat: 'engine.capability.chat',
+      'streaming-chat': 'engine.capability.streaming',
+      'embeddings-if-supported-by-engine': 'engine.capability.embeddings',
+    };
+    meta.append(make('span', 'tag', translation(capabilityKeys[capability] || 'engine.capability.other', capability)));
+  }
   if (engine.backend_package && engine.backend_package !== 'manual-or-unknown-package') {
     const packageLabel = engine.backend_package === 'cuda12-package' ? translation('engine.package.cuda12', 'CUDA 12 package')
       : engine.backend_package === 'cuda13-package' ? translation('engine.package.cuda13', 'CUDA 13 package') : translation('engine.package.cpu', 'CPU package');
@@ -1724,6 +1889,7 @@ async function refreshEngines() {
   try {
     const result = await api('/v1/engines');
     engineSnapshot = Array.isArray(result.data) ? result.data : [];
+    if (lastHardwareSnapshot) renderHardwareGlance(lastHardwareSnapshot);
     updateFirstRunGuide();
     engineList.replaceChildren();
     if (!result.data?.length) {
@@ -1732,6 +1898,7 @@ async function refreshEngines() {
       updateChatSendAvailability();
       renderRuntimeProfile();
       chatReadiness.textContent = translation('chat.notReady', 'Install and start a chat model to begin.');
+      if (chatSetupActions) chatSetupActions.hidden = false;
       if (overviewRuntimeState) overviewRuntimeState.textContent = translation('engine.setupRequired', 'Setup needed');
       if (overviewRuntimeDetail) overviewRuntimeDetail.textContent = translation('engine.noChatEngine', 'No chat engine is configured');
       if (overviewModelState) overviewModelState.textContent = translation('engine.noModel', 'No model yet');
@@ -1751,6 +1918,7 @@ async function refreshEngines() {
       : translation('engine.notConfigured', 'Not configured');
     if (overviewModelDetail) overviewModelDetail.textContent = defaultChat?.display_name || translation('overview.modelDetail');
     activeChatEngineReady = Boolean(defaultChat?.ready && defaultChat?.model_configured);
+    if (chatSetupActions) chatSetupActions.hidden = activeChatEngineReady;
     updateChatSendAvailability();
     renderRuntimeProfile();
     const gpuReady = Boolean(defaultChat?.ready && defaultChat.backend_target === 'gpu-requested');
@@ -1765,6 +1933,7 @@ async function refreshEngines() {
     else chatReadiness.textContent = translation('engine.chatStart', 'Start the configured engine to enable chat.');
   } catch (error) {
     activeChatEngineReady = false;
+    if (chatSetupActions) chatSetupActions.hidden = false;
     updateChatSendAvailability();
     engineError.textContent = formatError(error);
     engineList.replaceChildren(make('div', 'empty', translation('engine.loadFailed', 'Could not load engine status.')));

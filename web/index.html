@@ -158,11 +158,16 @@
               <button id="hardware-refresh" class="button secondary" type="button" data-i18n="device.refresh">Refresh device info</button>
             </div>
             <p class="hint" data-i18n="device.privacy">Hardware details are detected on this computer only. Detection is a starting point, not a compatibility guarantee.</p>
-            <div id="hardware-summary" class="hardware-summary" aria-live="polite"><div class="empty" data-i18n="device.loading">Checking local device information…</div></div>
-            <div class="gpu-observation-control">
-              <button id="gpu-observation-run" class="button secondary" type="button" disabled data-i18n="device.measureGpu">Measure GPU during a local test</button>
-              <p id="gpu-observation-status" class="hint" role="status" aria-live="polite" data-i18n="device.gpuHint">Start a CUDA-enabled chat engine before measuring GPU activity during a real local request.</p>
-            </div>
+            <div id="hardware-glance" class="hardware-glance" aria-live="polite"><div class="empty" data-i18n="device.loading">Checking local device information…</div></div>
+            <details id="hardware-details" class="hardware-details">
+              <summary><span data-i18n="device.detailsTitle">Technical details and evidence</span><span class="hint" data-i18n="device.detailsSummary">Adapter inventory, driver and memory probes</span></summary>
+              <div id="hardware-summary" class="hardware-summary" aria-live="polite"><div class="empty" data-i18n="device.loading">Checking local device information…</div></div>
+              <div class="gpu-observation-control">
+                <div><strong data-i18n="device.gpuTestTitle">Real GPU test</strong><p class="hint" data-i18n="device.gpuTestDescription">This sends a short local chat request and samples system-wide NVIDIA activity. It does not change your engine settings.</p></div>
+                <button id="gpu-observation-run" class="button secondary" type="button" disabled data-i18n="device.measureGpu">Measure GPU during a local test</button>
+                <p id="gpu-observation-status" class="hint" role="status" aria-live="polite" data-i18n="device.gpuHint">Start a CUDA-enabled chat engine before measuring GPU activity during a real local request.</p>
+              </div>
+            </details>
             <p id="hardware-error" class="error" role="status" aria-live="polite"></p>
           </section>
         </section>
@@ -170,7 +175,7 @@
         <section id="view-chat" class="app-view" data-view="chat" aria-labelledby="page-title" hidden>
           <section id="chat-panel" class="panel chat-panel chat-workspace">
             <div class="chat-heading">
-              <div><p class="eyebrow" data-i18n="chat.eyebrow">LOCAL CONVERSATION</p><h2 data-i18n="chat.title">Chat with your model</h2><p id="chat-readiness" class="hint" data-i18n="chat.notReady">Install and start a chat model to begin.</p></div>
+              <div><p class="eyebrow" data-i18n="chat.eyebrow">LOCAL CONVERSATION</p><h2 data-i18n="chat.title">Chat with your model</h2><p id="chat-readiness" class="hint" data-i18n="chat.notReady">Install and start a chat model to begin.</p><div id="chat-setup-actions" class="chat-setup-actions"><button class="button secondary" type="button" data-view-target="models" data-i18n="chat.chooseModel">Choose a model</button><button class="button secondary" type="button" data-view-target="activity" data-i18n="chat.openActivity">Open Activity</button></div></div>
               <div class="chat-heading-actions">
                 <div class="chat-private-badge"><span class="local-indicator"></span><span data-i18n="common.privateSession">Private local session</span></div>
                 <button id="chat-new" class="button secondary" type="button" data-i18n="chat.new">New chat</button>
@@ -207,6 +212,11 @@
         </section>
 
         <section id="view-models" class="app-view" data-view="models" aria-labelledby="page-title" hidden>
+          <section id="catalog-recommendations" class="panel catalog-recommendations-panel" aria-labelledby="catalog-recommendations-title">
+            <div class="section-heading"><div><p class="eyebrow" data-i18n="models.recommendationEyebrow">START HERE</p><h2 id="catalog-recommendations-title" data-i18n="models.recommendationTitle">Models selected for this device</h2></div><span class="tag" data-i18n="models.recommendationHeuristic">Guidance, not a guarantee</span></div>
+            <p class="hint" data-i18n="models.recommendationDescription">A small, reviewed shortlist for your 6 GB graphics memory and 16 GB system RAM. Start with short context and validate the real task.</p>
+            <div id="catalog-recommendation-list" class="catalog-recommendation-list"><div class="empty" data-i18n="models.loading">Loading the component library…</div></div>
+          </section>
           <section id="runtime-profile-panel" class="panel runtime-profile-panel" aria-labelledby="runtime-profile-title">
             <div class="section-heading">
               <div><p class="eyebrow" data-i18n="profile.eyebrow">ACTIVE CHAT CONFIGURATION</p><h2 id="runtime-profile-title" data-i18n="profile.title">Active runtime profile</h2></div>

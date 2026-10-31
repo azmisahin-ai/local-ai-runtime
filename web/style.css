@@ -324,3 +324,41 @@ label { display: block; margin-bottom: .4rem; color: #d5e0ec; font-size: .82rem;
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+
+/* Interim UX pass: put the most useful device facts first and keep raw probes
+   behind one predictable disclosure. */
+.hardware-glance { display: grid; gap: .7rem; }
+.hardware-glance-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .65rem; }
+.hardware-glance-card { min-width: 0; display: grid; gap: .18rem; padding: .8rem .9rem; border: 1px solid var(--line); border-radius: 12px; background: #111923; }
+.hardware-glance-label { color: var(--muted); font-size: .7rem; font-weight: 750; letter-spacing: .035em; text-transform: uppercase; }
+.hardware-glance-card strong { font-size: .9rem; line-height: 1.35; overflow-wrap: anywhere; }
+.hardware-glance-card small { color: var(--muted); font-size: .72rem; overflow-wrap: anywhere; }
+.hardware-evidence-statuses { display: flex; flex-wrap: wrap; gap: .45rem; }
+.hardware-glance-note { margin: 0; font-size: .76rem; }
+.hardware-details { margin-top: .2rem; padding: .75rem .85rem; border: 1px solid var(--line); border-radius: 12px; background: #101822; }
+.hardware-details > summary { display: flex; align-items: center; flex-wrap: wrap; gap: .25rem .75rem; cursor: pointer; color: var(--text); font-size: .82rem; font-weight: 750; }
+.hardware-details > summary .hint { margin: 0 0 0 auto; font-size: .7rem; font-weight: 500; }
+.hardware-details[open] > summary { margin-bottom: .9rem; padding-bottom: .7rem; border-bottom: 1px solid var(--line); }
+.hardware-details .gpu-observation-control { margin-top: .9rem; }
+.catalog-recommendations-panel { border-color: #3d5870; background: linear-gradient(145deg, #172432, #141c27 72%); }
+.catalog-recommendation-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .7rem; }
+.catalog-recommendation-card { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: .55rem; padding: .95rem; border: 1px solid var(--line); border-radius: 13px; background: #101923; }
+.catalog-recommendation-heading { width: 100%; display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: .45rem; }
+.catalog-recommendation-heading h3 { min-width: 0; margin: 0; font-size: .9rem; line-height: 1.35; overflow-wrap: anywhere; }
+.catalog-recommendation-description { margin: 0; color: var(--muted); font-size: .77rem; line-height: 1.5; }
+.catalog-recommendation-meta { display: flex; flex-wrap: wrap; gap: .35rem; }
+.catalog-recommendation-action { margin-top: auto; min-height: 36px; padding: .45rem .7rem; font-size: .76rem; }
+.catalog-card:focus { outline: 2px solid var(--accent-strong); outline-offset: 3px; }
+.technical-detail { padding-left: .75rem; border-left: 2px solid var(--line-strong); font-size: .74rem; }
+@media (max-width: 1050px) {
+  .hardware-glance-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .catalog-recommendation-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 640px) {
+  .catalog-recommendation-list { grid-template-columns: 1fr; }
+  .hardware-glance-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .hardware-details > summary { align-items: flex-start; flex-direction: column; }
+  .hardware-details > summary .hint { margin: 0; }
+}
+.chat-setup-actions { display: flex; flex-wrap: wrap; gap: .45rem; margin-top: .65rem; }
+.chat-setup-actions[hidden] { display: none; }

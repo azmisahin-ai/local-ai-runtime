@@ -123,8 +123,11 @@ def main() -> None:
             if not isinstance(model_profile, dict):
                 fail(f"{component_id}: model entries require a structured model_profile")
             required_profile_keys = {"task_group", "architecture", "parameter_count", "format", "quantization"}
-            if set(model_profile) != required_profile_keys:
-                fail(f"{component_id}: model_profile must contain exactly {sorted(required_profile_keys)}")
+            if not required_profile_keys.issubset(model_profile):
+                fail(f"{component_id}: model_profile must include {sorted(required_profile_keys)}")
+            allowed_profile_keys = required_profile_keys | {"recommended_for", "context_tokens", "preferred_context_tokens"}
+            if set(model_profile) - allowed_profile_keys:
+                fail(f"{component_id}: model_profile contains unknown properties {sorted(set(model_profile) - allowed_profile_keys)}")
             if model_profile.get("task_group") not in {"chat", "vision", "embeddings", "speech", "image-generation", "video", "audio"}:
                 fail(f"{component_id}: unsupported model task_group")
             if model_profile.get("format") not in {"GGUF", "ONNX", "SafeTensors", "Other"}:
@@ -132,6 +135,13 @@ def main() -> None:
             for key in ("architecture", "parameter_count", "quantization"):
                 if not isinstance(model_profile.get(key), str) or not model_profile[key].strip():
                     fail(f"{component_id}: model_profile.{key} must be a non-empty string")
+            if "recommended_for" in model_profile and model_profile["recommended_for"] not in {"balanced", "alternative", "low-memory"}:
+                fail(f"{component_id}: unsupported model_profile.recommended_for")
+            for key in ("context_tokens", "preferred_context_tokens"):
+                if key in model_profile and (not isinstance(model_profile[key], int) or model_profile[key] < 1 or model_profile[key] > 1048576):
+                    fail(f"{component_id}: model_profile.{key} must be a bounded positive integer")
+            if model_profile.get("preferred_context_tokens", 0) and model_profile.get("context_tokens", model_profile["preferred_context_tokens"]) < model_profile["preferred_context_tokens"]:
+                fail(f"{component_id}: preferred context cannot exceed declared model context")
         elif model_profile is not None:
             fail(f"{component_id}: engine entries cannot declare model_profile")
         # installed state is runtime-derived and appended by GET /v1/catalog.
@@ -180,6 +190,10 @@ def main() -> None:
 
     if defaults != 1:
         fail(f"expected exactly one default model, got {defaults}")
+    expected_curated_models = {"qwen3-4b-q4km", "gemma4-e2b-q4", "qwen2.5-1.5b-q4km"}
+    actual_model_ids = {entry.get("id") for entry in components if entry.get("kind") == "model"}
+    if not expected_curated_models.issubset(actual_model_ids):
+        fail(f"curated local chat shortlist is incomplete: {sorted(expected_curated_models - actual_model_ids)}")
     if variants != {"cpu", "cuda12", "cuda13"}:
         fail(f"unexpected engine release variant set: {sorted(variants)}")
 

@@ -60,4 +60,6 @@ Queued entries are persisted and revalidated against the embedded manifest, plat
 - No model or engine is automatically installed or updated from a catalog refresh.
 - “Detected” does not mean “supported”; “package installed” does not mean “real inference tested.”
 
-The v1 manifest currently contains the reviewed `llama.cpp` CPU/CUDA 12/CUDA 13 entries and one pinned Qwen2.5 1.5B GGUF model. The generic `pinned-gguf` contract permits additional non-default single-file Hugging Face GGUF entries after review, but no additional model is shipped merely because the validator can accept one. The catalogue is not yet a catalogue of every relevant C/C++ engine or model.
+The current manifest contains the reviewed `llama.cpp` CPU/CUDA 12/CUDA 13 entries and three pinned text-chat GGUF models: Qwen3 4B, Gemma 4 E2B and Qwen2.5 1.5B. The generic `pinned-gguf` contract permits additional non-default single-file Hugging Face GGUF entries after review, but no additional model is shipped merely because the validator can accept one. The catalogue is not yet a catalogue of every relevant C/C++ engine or model.
+
+Optional `model_profile` fields `recommended_for` (`balanced`, `alternative`, `low-memory`), `context_tokens` and `preferred_context_tokens` may guide the UI shortlist; these are advisory hints, not compatibility guarantees.

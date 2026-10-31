@@ -54,6 +54,16 @@
 
 # Changelog
 
+## Unreleased — interim product-readiness UX and curated local model shortlist
+
+- Replace the always-expanded hardware report with a plain-language hardware glance and a collapsed technical-evidence section; keep the GPU observation control beside the technical details rather than in the primary overview flow.
+- Distinguish OS GPU adapter discovery, NVIDIA driver/compute/VRAM evidence, live system-wide GPU telemetry, the currently configured Chat backend, and engine-log GPU offload evidence in the Overview and Activity views.
+- Explain that missing live `nvidia-smi` metrics do not by themselves imply CUDA incompatibility, while retaining the warning that system-wide readings do not prove which process used the GPU.
+- Add a device-oriented curated text-chat shortlist: Qwen3 4B Q4_K_M (balanced candidate), Gemma 4 E2B QAT Q4_0 (alternative), and Qwen2.5 1.5B Q4_K_M (lightweight CPU-first fallback); retain immutable source revisions, SHA-256 digests, exact file sizes, license links and unverified real-task evidence.
+- Extend optional `model_profile` metadata with recommendation grouping and conservative preferred-context hints; keep the component-v1 API schema backward compatible and preserve the existing explicit default-model invariant.
+- Localize curated catalogue descriptions/limitations and GPU evidence guidance in English and Turkish; add direct Chat actions to choose a model or open Activity when the engine is not ready.
+- Add UI/catalog contract checks for the recommendation shortlist, localized descriptions, technical-evidence disclosure and model context hints. Physical Windows install/inference and manual accessibility review remain acceptance gates.
+
 ## Unreleased — cross-platform install queue test stability
 
 - Make the persistent install queue core test platform-neutral by testing cancellation and re-queueing with the reviewed cross-platform Qwen model instead of requesting a CUDA-only component on macOS.

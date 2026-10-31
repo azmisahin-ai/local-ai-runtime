@@ -108,11 +108,17 @@ int main() {
 
         stage("compiled reviewed component manifest");
         const auto& manifest_components = lar::catalog::components();
-        require(manifest_components.size() == 4, "compiled catalog manifest should contain exactly four reviewed components");
+        require(manifest_components.size() == 6, "compiled catalog manifest should contain three engine variants and three reviewed chat models");
         const auto* cpu_catalog_item = lar::catalog::find_component("llama.cpp-cpu");
         const auto* cuda12_catalog_item = lar::catalog::find_component("llama.cpp-cuda12");
         const auto* cuda13_catalog_item = lar::catalog::find_component("llama.cpp-cuda13");
         const auto* starter_model = lar::catalog::default_model_component();
+        const auto* qwen3_model = lar::catalog::find_component("qwen3-4b-q4km");
+        const auto* gemma4_model = lar::catalog::find_component("gemma4-e2b-q4");
+        require(qwen3_model && qwen3_model->installer == "pinned-gguf" && qwen3_model->filename == "Qwen3-4B-Q4_K_M.gguf",
+                "the balanced Qwen3 model should resolve from the compiled manifest");
+        require(gemma4_model && gemma4_model->installer == "pinned-gguf" && gemma4_model->filename == "gemma-4-E2B_q4_0-it.gguf",
+                "the alternative Gemma 4 model should resolve from the compiled manifest");
         require(cpu_catalog_item && cpu_catalog_item->installer == "llama-release" && cpu_catalog_item->variant == "cpu",
                 "CPU engine should resolve through the compiled manifest");
         require(cuda12_catalog_item && cuda12_catalog_item->installer == "llama-release" && cuda12_catalog_item->variant == "cuda12",

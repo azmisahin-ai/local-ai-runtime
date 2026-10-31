@@ -10,9 +10,9 @@ The runtime, engines, and models remain separate versioned components. The catal
 
 ## Current baseline and visible progress — 2026-10-31
 
-**Published baseline:** `v0.1.21-alpha` (`c2b571a`). The user confirmed that main and tagged publisher workflows both passed. The release contains Windows x64 setup/ZIP, Linux x64, macOS x64/arm64 and checksums. The published foundation includes the five-area dashboard, local streaming chat, persistent Activity/jobs, live CPU/RAM/engine telemetry, EN/TR onboarding/accessibility, embedded component manifest v1, explicit Runtime Profiles, and persistent FIFO install queue with duplicate protection and safe restart recovery. Hosted CI uses fake engines and does not prove real GPU/model task compatibility.
+**Published baseline:** `v0.1.23-alpha` (`5ab4c0c`). The user confirmed that main and tagged publisher workflows both passed. The release contains the hardware-v1 contract, NVIDIA driver/compute-capability/VRAM evidence, plus the previously published five-area dashboard, local streaming chat, persistent Activity/jobs, live CPU/RAM/engine telemetry, EN/TR onboarding/accessibility, embedded component manifest v1, explicit Runtime Profiles, and persistent FIFO install queue with duplicate protection and safe restart recovery. Hosted CI uses fake engines and does not prove real GPU/model task compatibility.
 
-**Current work:** Stage 11 — Shared Engine Adapter foundation. Stage 10 is published in `v0.1.21-alpha`; it separates model weights from engine runtime packages, adds task-first metadata and compact installed/selected states, and supports multiple reviewed single-file Hugging Face GGUF entries at immutable revisions. The shipped catalogue still contains the reviewed Qwen2.5 starter plus three llama.cpp variants; multi-file multimodal, ONNX, SafeTensors and non-llama engine installers still require dedicated strategies. `/v1/catalog` remains backward compatible.
+**Current work:** Stage 12 hardware evidence has been implemented and published, but the RTX 3060 physical inference/offload acceptance remains open. Before MCP, an interim Stage 12.5 product-readiness pass is being added: simplify the hardware UI, separate detection/telemetry/offload evidence, improve the Chat setup route, and ship a curated multilingual GGUF shortlist for the 6 GB RTX 3060 Laptop GPU / 16 GB RAM profile. The catalogue still uses immutable single-file GGUF pins; multi-file multimodal, ONNX, SafeTensors and non-llama engine installers still require dedicated strategies. `/v1/catalog` remains backward compatible.
 
 ### Product delivery checklist
 
@@ -27,15 +27,28 @@ The runtime, engines, and models remain separate versioned components. The catal
 | 8 | Runtime Profile, explicit model/backend selection and Chat readiness | [x] Published; main and tagged workflow succeeded after Release-job rerun | `v0.1.19-alpha` |
 | 9 | Persistent install queue, duplicate/dependency handling and reliable retries | [x] Published; main and tagged four-platform CI passed | `v0.1.20-alpha` |
 | 10 | Catalog v2, simplified Models UI and extensible multi-model pinned GGUF allowlist | [x] Published; main and tagged four-platform CI succeeded | `v0.1.21-alpha` |
-| 11 | Shared Engine Adapter lifecycle; keep llama.cpp as first adapter | [~] Candidate; local adapter registry, config migration, lifecycle delegation and readiness/protocol routing implemented; four-platform CI pending | `v0.1.22-alpha` or later |
-| 12 | Hardware Compatibility & Evidence; real CPU/CUDA profiles and RTX 3060 acceptance | [ ] Not started | `v0.1.22-alpha` |
-| 13 | Local MCP stdio MVP for the user's other project | [ ] Not started | `v0.1.23-alpha` |
-| 14 | Documents, embeddings and local RAG | [ ] Not started | `v0.1.24-alpha` |
-| 15 | Vision and Speech pilots | [ ] Not started | `v0.1.25-alpha` |
+| 11 | Shared Engine Adapter lifecycle; keep llama.cpp as first adapter | [x] Published; main and tagged four-platform CI passed | `v0.1.22-alpha` |
+| 12 | Hardware Compatibility & Evidence; NVIDIA driver/VRAM probes and real RTX 3060 acceptance | [~] Driver evidence published; physical inference/offload acceptance remains open | `v0.1.23-alpha` |
+| 12.5 | Product-readiness review: clearer UX, hardware evidence hierarchy, Chat onboarding and curated model catalogue | [~] Interim implementation in progress; real-device install/inference acceptance remains open | `v0.1.24-alpha` |
+| 13 | Local MCP stdio MVP for the user's other project | [ ] Not started; gated on Stage 12.5 acceptance | `v0.1.25-alpha` |
+| 14 | Documents, embeddings and local RAG | [ ] Not started | Later alpha |
+| 15 | Vision and Speech pilots | [ ] Not started | Later alpha |
 | 16 | Image generation workspace and adapter | [ ] Not started | Later alpha |
 | 17 | Video understanding (frames + audio + vision) | [ ] Not started | Later alpha |
 | 18 | Music and advanced audio generation | [ ] Not started | Later alpha |
 | 19 | Signing, provenance, cross-platform install/update/recovery parity and v1.0 acceptance | [ ] Not started | v1.0 gate |
+
+### Stage 12.5 acceptance checklist — Product readiness before MCP
+
+- [x] Replace the large always-open hardware dump with a plain-language device summary and an expandable technical evidence section.
+- [x] Explain the distinction between OS adapter inventory, NVIDIA driver/VRAM evidence, live system-wide telemetry, configured backend and engine-log offload evidence.
+- [x] Add a curated text-chat shortlist for the reported RTX 3060 Laptop GPU (6 GB VRAM) / 16 GB RAM profile: Qwen3 4B Q4_K_M as the balanced candidate, Gemma 4 E2B QAT Q4_0 as an alternative, and Qwen2.5 1.5B Q4_K_M as the compact CPU-first fallback.
+- [x] Pin model files to immutable Hugging Face revisions with reviewed exact byte sizes and SHA-256 digests; keep all three models marked as not validated on the user's physical machine until real tasks are run.
+- [x] Display a conservative starting context for each model; do not claim full GPU fit or multimodal app support from model-card capabilities alone.
+- [x] Localize the curated model descriptions and evidence explanations in English and Turkish; add explicit Chat-page actions to choose a model or open Activity.
+- [ ] Manually review every screen at desktop and narrow widths, including keyboard navigation, focus order, screen-reader labels, and empty/error/loading states.
+- [ ] Install each shortlist candidate on the target Windows device; record download verification, CPU baseline, CUDA start, actual layer offload, context, generation latency and peak VRAM.
+- [ ] Only after the UI review and at least one complete local Chat path passes, proceed to Stage 13 MCP stdio.
 
 ### Stage 9 acceptance checklist
 
@@ -58,7 +71,7 @@ The runtime, engines, and models remain separate versioned components. The catal
 - [x] Reject unknown adapter IDs before launch or config replacement.
 - [x] Expose the resolved adapter ID in `/v1/engines` and test legacy config migration, adapter routing and process lifecycle delegation.
 - [x] Document the adapter extension contract and explicitly defer Ollama, ONNX Runtime and media adapters until their protocol, installer and real-task evidence are ready.
-- [ ] Pass Windows x64, Linux x64, macOS x64 and macOS arm64 main/tag CI and publish the next alpha release.
+- [x] Pass Windows x64, Linux x64, macOS x64 and macOS arm64 main/tag CI; publish `v0.1.22-alpha`.
 
 ### Stage 8 acceptance checklist
 
@@ -82,14 +95,14 @@ The default product workflow remains task-first: users choose a task/workspace, 
 
 - The `v0.1.2-alpha` milestone introduced the Windows per-user setup installer `local-ai-runtime-windows-x64-setup.exe`; the current published baseline is `v0.1.20-alpha`. The user has confirmed installation, launch and a Qwen2.5 starter-model chat on one Windows environment. This is not evidence for both Windows 10 and 11, real GPU inference, or every upgrade/uninstall path. Publisher signing remains outstanding. Always check the [live Releases page](https://github.com/azmisahin-ai/local-ai-runtime/releases) for current assets.
 - The Windows shell hosts the dashboard in WebView2, starts the C++ runtime without a console window, and uses a tray menu for reopen, update check and graceful exit. Clean Windows 10/11 manual acceptance remains a release gate.
-- The managed catalogue contains llama.cpp CPU/CUDA packages and a pinned Qwen2.5 1.5B GGUF starter model. Manifest v1 is now published and embedded at build time. It is a reviewed starter catalogue, not a general catalogue of every model or C/C++ engine. Real model/CPU/GPU task evidence is still required per declared platform/profile.
+- The managed catalogue contains llama.cpp CPU/CUDA packages and three pinned text-chat GGUF candidates (Qwen3 4B, Gemma 4 E2B and Qwen2.5 1.5B). Manifest v1 is embedded at build time. It is a curated shortlist, not a general catalogue of every model or C/C++ engine. Real model/CPU/GPU task evidence is still required per declared platform/profile.
 - The dashboard has five destinations (Overview, Chat, Models, Activity, Settings), local EN/TR resources, first-run onboarding, accessibility basics, persistent jobs and resource telemetry. Manual screen-reader review remains open. See [product information architecture](product-information-architecture.md) and [UI/UX principles](ui-ux.md).
 - Hosted CI uses fake engines and deliberately does not download the real engine or the ~1.12 GB starter model. Real CPU/GPU inference requires separately recorded task validation.
 - Windows installed-app updates have verification, backup, health-check, rollback and interruption recovery. Linux/macOS currently verify and stage packages but still require manual archive replacement. Windows Authenticode signing and release provenance remain outstanding.
 
 ## Historical foundation status
 
-`v0.1.12-alpha` introduced the five-area UI and first `/v1/activity` snapshot. `v0.1.13-alpha` added SSE streaming and local conversation history. `v0.1.14-alpha` added durable component jobs and interrupted-state recovery. `v0.1.15-alpha` unified runtime operation jobs. `v0.1.16-alpha` added resource monitoring. `v0.1.17-alpha` expanded onboarding, localization and accessibility and included CI diagnostics/process cleanup. `v0.1.18-alpha` published the manifest-driven catalogue. The Runtime Profile milestone shipped in `v0.1.19-alpha`, the persistent install queue in `v0.1.20-alpha`, and Catalog v2 in `v0.1.21-alpha`; the Shared Engine Adapter is the current candidate.
+`v0.1.12-alpha` introduced the five-area UI and first `/v1/activity` snapshot. `v0.1.13-alpha` added SSE streaming and local conversation history. `v0.1.14-alpha` added durable component jobs and interrupted-state recovery. `v0.1.15-alpha` unified runtime operation jobs. `v0.1.16-alpha` added resource monitoring. `v0.1.17-alpha` expanded onboarding, localization and accessibility and included CI diagnostics/process cleanup. `v0.1.18-alpha` published the manifest-driven catalogue. The Runtime Profile milestone shipped in `v0.1.19-alpha`, the persistent install queue in `v0.1.20-alpha`, Catalog v2 in `v0.1.21-alpha`, Shared Engine Adapter in `v0.1.22-alpha`, and NVIDIA driver evidence in `v0.1.23-alpha`; real RTX 3060 inference/offload is still pending.
 
 - [x] Fix the Windows PowerShell 5.1 publisher smoke-test regression and confirm the canonical four-target pipeline passes. `f841c80` was the confirmed green publisher/installer baseline when this roadmap update began (`v0.1.2-alpha`).
 - [x] Keep one maintainer command and one stable bundle filename (`local-ai-runtime-update.bundle`). A push uses a normal fast-forward, never force-pushes, and stops at a failed CI gate.

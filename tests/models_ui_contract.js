@@ -19,9 +19,20 @@ const mustContain = (source, fragment, description) => {
 };
 
 mustContain(html, 'id="catalog-task-filter"', 'dynamic model-task filter');
+mustContain(html, 'id="catalog-recommendation-list"', 'device-specific model shortlist');
+mustContain(html, 'id="hardware-glance"', 'plain-language hardware summary');
+mustContain(html, 'id="hardware-details"', 'expandable technical evidence');
+mustContain(html, 'id="chat-setup-actions"', 'direct Chat setup actions');
 mustContain(html, 'data-catalog-filter="model"', 'model-only filter');
 mustContain(html, 'data-catalog-filter="engine"', 'engine-only filter');
 mustContain(js, 'function catalogTaskGroup(item)', 'metadata-driven task grouping');
+mustContain(js, 'function renderCatalogRecommendations()', 'curated model recommendations');
+mustContain(js, 'function renderHardwareGlance(info)', 'plain-language hardware summary');
+mustContain(js, 'const reasonKeys = isGpu', 'localized hardware recommendation explanations');
+mustContain(js, 'activity.technicalDetail', 'collapsed GPU telemetry diagnostic details');
+mustContain(js, 'engine.capability.streaming', 'human-readable engine capability labels');
+mustContain(js, 'hardware.profileBaseline', 'localized hardware profile guidance');
+mustContain(js, "catalogLocalizedText(item, 'description'", 'localized catalogue descriptions');
 mustContain(js, "appendSection('models.groupModels'", 'separate model section');
 mustContain(js, "appendSection('models.groupEngines'", 'separate engine section');
 mustContain(js, 'catalogLicenseAcknowledgements', 'license acknowledgement preservation');
@@ -39,6 +50,12 @@ for (const entry of modelEntries) {
   assert.ok(metadata.model_profile.task_group, `${entry.id} is missing task_group`);
   assert.ok(metadata.model_profile.quantization, `${entry.id} is missing quantization`);
   assert.ok(metadata.model_profile.format, `${entry.id} is missing model format`);
+  assert.ok(metadata.model_profile.recommended_for, `${entry.id} is missing recommendation grouping`);
+  assert.ok(metadata.model_profile.preferred_context_tokens, `${entry.id} is missing a preferred starting context`);
+  assert.ok(Object.hasOwn(en, `catalog.${entry.id}.description`), `${entry.id} English description is missing`);
+  assert.ok(Object.hasOwn(tr, `catalog.${entry.id}.description`), `${entry.id} Turkish description is missing`);
+  assert.ok(Object.hasOwn(en, `catalog.${entry.id}.limits`), `${entry.id} English limitation note is missing`);
+  assert.ok(Object.hasOwn(tr, `catalog.${entry.id}.limits`), `${entry.id} Turkish limitation note is missing`);
 }
 for (const entry of manifest.components.filter((item) => item.kind === 'engine')) {
   const metadata = JSON.parse(entry.metadata_json);
@@ -53,7 +70,12 @@ const requiredKeys = [
   'models.engineRuntime', 'models.modelWeights', 'models.details', 'models.modelProfile',
   'models.selectedForChat', 'models.alreadySelected', 'models.selectForChat',
   'models.selectEngine', 'models.profileDrafted', 'models.installEngine',
+  'models.recommendationTitle', 'models.recommendationDescription', 'models.fitBalanced',
+  'models.fitAlternative', 'models.fitLowMemory', 'models.recommendedContext', 'models.viewInCatalog',
+  'chat.chooseModel', 'chat.openActivity',
   'models.installModel', 'models.viewActivity',
+  'activity.technicalDetail', 'hardware.profileBaseline', 'hardware.cpuReasonRecommended',
+  'hardware.gpuReasonCandidate', 'engine.capability.chat', 'engine.capability.streaming',
 ];
 for (const key of requiredKeys) {
   assert.ok(Object.hasOwn(en, key), `English locale missing ${key}`);

@@ -29,11 +29,11 @@ The desktop app's close button minimizes it to the notification area. Choose **E
 
 1. Open Local AI Runtime and go to **Models**.
 2. Install the reviewed llama.cpp CPU engine. Review the upstream MIT license and confirm it in the UI.
-3. Install the starter Qwen2.5 1.5B Instruct Q4_K_M model. Review its Apache-2.0 license and confirm it in the UI.
-4. In **Models**, select the installed llama.cpp CPU package and the installed Qwen model, choose a context size, and apply the Runtime Profile.
+3. Choose one of the reviewed chat models: Qwen3 4B Q4_K_M is the balanced candidate, Gemma 4 E2B QAT Q4_0 is an alternative, and Qwen2.5 1.5B Q4_K_M is the compact CPU-first fallback. Review the license and confirm it in the UI before installing.
+4. In **Models**, select the installed llama.cpp backend and installed model, start with the suggested context size, and apply the Runtime Profile.
 5. Start the selected engine profile. Wait until the engine status says **Ready**, then send a message in **Chat with your model**.
 
-The starter model download is about 1.12 GB. The lightweight runtime setup does not contain the engine or model. If upstream has no verified asset matching your platform, the catalog fails closed rather than bypassing checksum validation. The current catalogue is a reviewed, build-time embedded manifest (`catalog/manifest-v1.json`); it is a starter catalogue, not yet a general-purpose marketplace. New models must be pinned and reviewed before they become installable.
+Approximate model download sizes are 2.50 GB for Qwen3 4B, 3.35 GB for Gemma 4 E2B, and 1.12 GB for Qwen2.5 1.5B. The lightweight runtime setup does not contain the engine or model. If upstream has no verified asset matching your platform, the catalog fails closed rather than bypassing checksum validation. The catalogue is a reviewed, build-time embedded shortlist (`catalog/manifest-v1.json`), not a general-purpose marketplace. New models must be pinned and reviewed before they become installable.
 
 Advanced users can still use **Configure llama.cpp** to register engine/model files they installed themselves. NVIDIA CUDA packages are separate choices on supported Windows/Linux x64 hosts; the catalog verifies the server archive and matching CUDA runtime/DLL archive as a pair. Package installation is not proof that a specific GPU, driver, VRAM and model combination works. Start with CPU, then validate CUDA on the exact machine and model. Use **Export diagnostics** if installation or engine startup fails; the report includes the job phase, selected package names/hashes and failure reason without automatically uploading anything.
 
@@ -115,7 +115,7 @@ GitHub Actions is the source for repeatable cross-platform build/test results. L
 - `POST /v1/runtime/shutdown` is a loopback-only graceful shutdown used by the Windows launcher when replacing an older runtime instance; managed engine processes are stopped as the runtime exits.
 - `/version` and `/health` endpoints; dashboard offers official per-platform runtime update staging with size and SHA-256 verification, plus user-confirmed apply/restart and automatic rollback for tagged Windows portable releases. Linux/macOS and development builds remain stage-only.
 - `/v1/system/identity` returns an opaque persistent user-data-root ID (never an absolute path). The Windows desktop shell, launcher, runtime catalogue/download state and updater pass the same explicit data-root contract; a healthy but stale runtime on the selected port is not silently treated as the current instance.
-- Built-in managed component catalog for the official llama.cpp release (CPU/CUDA variants) and a pinned Qwen2.5 1.5B GGUF starter model. Downloads are cancellable, size-bounded, HTTPS-only, SHA-256 checked, and safely extracted; model license confirmation is required.
+- Built-in managed component catalog for official llama.cpp CPU/CUDA packages and three pinned chat GGUF candidates (Qwen3 4B, Gemma 4 E2B, Qwen2.5 1.5B). Downloads are cancellable, size-bounded, HTTPS-only, SHA-256 checked, and safely extracted; model license confirmation is required.
 - `/v1/catalog`, `/v1/downloads`, per-job progress/cancel routes, `/v1/activity` snapshot API and dashboard installation progress. The activity API is a current snapshot, not yet a durable event history.
 - Five-area UI navigation, first-pass English/Turkish static resource files and a locally persisted language preference. Dynamic catalogue/hardware/error strings still need full localization.
 - Local-only rotating runtime event log, user-initiated diagnostic export (download jobs and engine status), and optional user-consented engine log excerpts.

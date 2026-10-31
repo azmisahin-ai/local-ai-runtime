@@ -113,7 +113,8 @@ std::vector<ComponentDefinition> parse_embedded_manifest() {
         }
         if (component.kind == "model") {
             const auto profile = metadata.get_child_optional("model_profile");
-            if (!profile || !has_only_keys(*profile, {"task_group", "architecture", "parameter_count", "format", "quantization"})) {
+            if (!profile || !has_only_keys(*profile, {"task_group", "architecture", "parameter_count", "format", "quantization",
+                                                       "recommended_for", "context_tokens", "preferred_context_tokens"})) {
                 throw std::runtime_error("A model catalog entry requires a reviewed model_profile: " + component.id);
             }
             const auto task_group = profile->get<std::string>("task_group", "");
@@ -122,11 +123,20 @@ std::vector<ComponentDefinition> parse_embedded_manifest() {
                 const auto value = profile->get<std::string>(key, "");
                 return !value.empty() && value.size() <= 128U;
             };
+            const auto recommendation = profile->get<std::string>("recommended_for", "");
+            const auto context_tokens = profile->get_optional<unsigned int>("context_tokens");
+            const auto preferred_context_tokens = profile->get_optional<unsigned int>("preferred_context_tokens");
+            const auto valid_context = [](const auto& value) {
+                return !value || (*value >= 1U && *value <= 1048576U);
+            };
             if ((task_group != "chat" && task_group != "vision" && task_group != "embeddings" &&
                  task_group != "speech" && task_group != "image-generation" && task_group != "video" && task_group != "audio") ||
                 (format != "GGUF" && format != "ONNX" && format != "SafeTensors" && format != "Other") ||
                 !is_non_empty_string("architecture") || !is_non_empty_string("parameter_count") ||
-                !is_non_empty_string("quantization")) {
+                !is_non_empty_string("quantization") ||
+                (!recommendation.empty() && recommendation != "balanced" && recommendation != "alternative" && recommendation != "low-memory") ||
+                !valid_context(context_tokens) || !valid_context(preferred_context_tokens) ||
+                (context_tokens && preferred_context_tokens && *preferred_context_tokens > *context_tokens)) {
                 throw std::runtime_error("A model catalog entry contains an unsupported or incomplete model_profile: " + component.id);
             }
         } else if (metadata.get_child_optional("model_profile")) {

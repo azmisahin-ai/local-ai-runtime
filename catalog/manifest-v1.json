@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "manifest_version": "1.0.0",
+  "manifest_version": "1.1.0",
   "components": [
     {
       "id": "llama.cpp-cpu",
@@ -74,6 +74,70 @@
       "metadata_json": "{\"schema_version\":1,\"id\":\"llama.cpp-cuda13\",\"type\":\"engine\",\"name\":\"llama.cpp server — NVIDIA CUDA 13\",\"description\":\"Downloads the matching official llama.cpp CUDA server and CUDA runtime/DLL archives from the same release. Both archives must have official SHA-256 digests; both are verified before activation. Successful installation does not by itself prove GPU inference: driver, VRAM, model and real-task validation are still required.\",\"family\":\"llama.cpp\",\"workspaces\":[\"language-chat\"],\"tasks\":[\"chat\",\"text-generation\"],\"modalities\":[\"text\"],\"input_formats\":[\"OpenAI-compatible chat JSON\"],\"output_formats\":[\"OpenAI-compatible chat JSON\"],\"version\":\"latest-compatible\",\"backend\":\"cuda13\",\"compatibility\":{\"targets\":[{\"platform\":\"windows\",\"architecture\":\"x64\"},{\"platform\":\"linux\",\"architecture\":\"x64\"}],\"backends\":[\"cuda13\"],\"cpu_features\":[],\"driver_requirements\":[\"NVIDIA driver compatible with the selected CUDA runtime\"],\"known_limits\":[\"GPU execution is not guaranteed by package installation.\",\"NVIDIA driver, VRAM, model and context must be validated on the target machine.\",\"The current GPU observation measures system-wide activity and may include other applications.\"]},\"resources\":{\"download_bytes\":null,\"download_size_policy\":\"resolved-from-official-release\",\"minimum_system_ram_bytes\":null,\"recommended_system_ram_bytes\":null,\"minimum_vram_bytes\":null,\"recommended_vram_bytes\":null,\"estimate_confidence\":\"not-estimated-for-engine-only\",\"notes\":\"Memory needs depend on the selected model, quantization, context and offloaded layers.\"},\"provenance\":{\"source_url\":\"https://github.com/ggml-org/llama.cpp/releases\",\"revision_policy\":\"latest-compatible-official-release\",\"revision\":null,\"license_id\":\"MIT\",\"license_url\":\"https://github.com/ggml-org/llama.cpp/blob/master/LICENSE\",\"digest_policy\":\"official-sha256-required-at-install\",\"dependencies\":[{\"id\":\"llama.cpp-cudart-cuda13\",\"kind\":\"runtime-archive\",\"resolution\":\"same official release and matching CUDA 13 runtime\"}]},\"evidence\":{\"metadata_review\":\"reviewed\",\"package_verification\":\"sha256-at-install\",\"real_task_test\":\"not-verified-by-hosted-ci\",\"profile_validation\":\"not-validated\"},\"lifecycle\":{\"install_scope\":\"per-user-data-directory\",\"user_data_separate\":true,\"update_policy\":\"versioned-managed-component\",\"automatic_update\":false},\"license\":\"MIT\",\"license_url\":\"https://github.com/ggml-org/llama.cpp/blob/master/LICENSE\",\"source_url\":\"https://github.com/ggml-org/llama.cpp/releases\",\"size_bytes\":0}"
     },
     {
+      "id": "qwen3-4b-q4km",
+      "kind": "model",
+      "installable": true,
+      "default_model": false,
+      "install": {
+        "strategy": "pinned-gguf",
+        "filename": "Qwen3-4B-Q4_K_M.gguf",
+        "url": "https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/a9a60d009fa7ff9606305047c2bf77ac25dbec49/Qwen3-4B-Q4_K_M.gguf",
+        "sha256": "7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5",
+        "size_bytes": 2497280256,
+        "targets": [
+          {
+            "platform": "windows",
+            "architecture": "x64"
+          },
+          {
+            "platform": "linux",
+            "architecture": "x64"
+          },
+          {
+            "platform": "macos",
+            "architecture": "x64"
+          },
+          {
+            "platform": "macos",
+            "architecture": "arm64"
+          }
+        ]
+      },
+      "metadata_json": "{\"schema_version\":1,\"id\":\"qwen3-4b-q4km\",\"type\":\"model\",\"name\":\"Qwen3 4B Instruct — Q4_K_M\",\"description\":\"Balanced general-purpose local chat model. Official Qwen GGUF quantization with strong multilingual, reasoning and coding focus; start with a 4K context on 6 GB GPUs.\",\"family\":\"Qwen3\",\"workspaces\":[\"language-chat\"],\"tasks\":[\"chat\",\"text-generation\"],\"modalities\":[\"text\"],\"input_formats\":[\"GGUF\"],\"output_formats\":[\"text\"],\"version\":\"a9a60d009fa7ff9606305047c2bf77ac25dbec49\",\"backend\":\"gguf\",\"compatibility\":{\"targets\":[{\"platform\":\"windows\",\"architecture\":\"x64\"},{\"platform\":\"linux\",\"architecture\":\"x64\"},{\"platform\":\"macos\",\"architecture\":\"x64\"},{\"platform\":\"macos\",\"architecture\":\"arm64\"}],\"backends\":[\"llama.cpp-cpu\",\"llama.cpp-cuda12\",\"llama.cpp-cuda13\"],\"cpu_features\":[],\"driver_requirements\":[],\"known_limits\":[\"The 2.50 GB file size is not the full inference-memory requirement; KV cache and runtime memory are additional.\",\"For a 6 GB laptop GPU, begin at 2,048–4,096 context and measure before increasing it.\",\"CUDA installation and GPU detection do not prove GPU execution; this profile still needs a real chat test.\"]},\"resources\":{\"download_bytes\":2497280256,\"download_size_policy\":\"pinned-exact-size\",\"minimum_system_ram_bytes\":6442450944,\"recommended_system_ram_bytes\":8589934592,\"minimum_vram_bytes\":null,\"recommended_vram_bytes\":null,\"estimate_confidence\":\"heuristic\",\"notes\":\"RAM values are conservative heuristics, not measured requirements. The 6 GB GPU is a promising candidate for short-context offload, but no minimum or recommended VRAM is asserted until a real task is measured.\"},\"provenance\":{\"source_url\":\"https://huggingface.co/Qwen/Qwen3-4B-GGUF\",\"revision_policy\":\"pinned-revision\",\"revision\":\"a9a60d009fa7ff9606305047c2bf77ac25dbec49\",\"license_id\":\"Apache-2.0\",\"license_url\":\"https://huggingface.co/Qwen/Qwen3-4B-GGUF/blob/a9a60d009fa7ff9606305047c2bf77ac25dbec49/LICENSE\",\"digest_policy\":\"pinned-sha256-and-exact-size\",\"dependencies\":[]},\"evidence\":{\"metadata_review\":\"reviewed\",\"package_verification\":\"sha256-and-header-at-install\",\"real_task_test\":\"not-verified-by-hosted-ci\",\"profile_validation\":\"not-validated\"},\"lifecycle\":{\"install_scope\":\"per-user-data-directory\",\"user_data_separate\":true,\"update_policy\":\"pinned-model-revision\",\"automatic_update\":false},\"license\":\"Apache-2.0\",\"license_url\":\"https://huggingface.co/Qwen/Qwen3-4B-GGUF/blob/a9a60d009fa7ff9606305047c2bf77ac25dbec49/LICENSE\",\"source_url\":\"https://huggingface.co/Qwen/Qwen3-4B-GGUF\",\"size_bytes\":2497280256,\"sha256\":\"7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5\",\"model_profile\":{\"task_group\":\"chat\",\"architecture\":\"Qwen3\",\"parameter_count\":\"4B\",\"format\":\"GGUF\",\"quantization\":\"Q4_K_M\",\"recommended_for\":\"balanced\",\"context_tokens\":32768,\"preferred_context_tokens\":4096}}"
+    },
+    {
+      "id": "gemma4-e2b-q4",
+      "kind": "model",
+      "installable": true,
+      "default_model": false,
+      "install": {
+        "strategy": "pinned-gguf",
+        "filename": "gemma-4-E2B_q4_0-it.gguf",
+        "url": "https://huggingface.co/google/gemma-4-E2B-it-qat-q4_0-gguf/resolve/347eef722ec7f151f37d1ef0b5c7c77d8de4efcb/gemma-4-E2B_q4_0-it.gguf",
+        "sha256": "fa401b55b07ee70a54c6dae3903c783a6e65064312529ea57175cb5f8dec6634",
+        "size_bytes": 3349516256,
+        "targets": [
+          {
+            "platform": "windows",
+            "architecture": "x64"
+          },
+          {
+            "platform": "linux",
+            "architecture": "x64"
+          },
+          {
+            "platform": "macos",
+            "architecture": "x64"
+          },
+          {
+            "platform": "macos",
+            "architecture": "arm64"
+          }
+        ]
+      },
+      "metadata_json": "{\"schema_version\":1,\"id\":\"gemma4-e2b-q4\",\"type\":\"model\",\"name\":\"Gemma 4 E2B Instruct — QAT Q4_0\",\"description\":\"Google DeepMind Gemma 4 small instruct model using the official quantization-aware-trained GGUF checkpoint. This catalog entry supports text chat only; image/audio workflows need additional assets and product support.\",\"family\":\"Gemma 4\",\"workspaces\":[\"language-chat\"],\"tasks\":[\"chat\",\"text-generation\"],\"modalities\":[\"text\"],\"input_formats\":[\"GGUF\"],\"output_formats\":[\"text\"],\"version\":\"347eef722ec7f151f37d1ef0b5c7c77d8de4efcb\",\"backend\":\"gguf\",\"compatibility\":{\"targets\":[{\"platform\":\"windows\",\"architecture\":\"x64\"},{\"platform\":\"linux\",\"architecture\":\"x64\"},{\"platform\":\"macos\",\"architecture\":\"x64\"},{\"platform\":\"macos\",\"architecture\":\"arm64\"}],\"backends\":[\"llama.cpp-cpu\",\"llama.cpp-cuda12\",\"llama.cpp-cuda13\"],\"cpu_features\":[],\"driver_requirements\":[],\"known_limits\":[\"The model weights are about 3.12 GiB; runtime memory and context cache are additional.\",\"Use a short context first on a 6 GB laptop GPU; full GPU offload is not yet validated for this device.\",\"Only text chat is enabled in Local AI Runtime today. Vision/audio support is not implied by the base model card.\"]},\"resources\":{\"download_bytes\":3349516256,\"download_size_policy\":\"pinned-exact-size\",\"minimum_system_ram_bytes\":8589934592,\"recommended_system_ram_bytes\":12884901888,\"minimum_vram_bytes\":null,\"recommended_vram_bytes\":null,\"estimate_confidence\":\"heuristic\",\"notes\":\"Google publishes a Q4_0 inference-memory estimate, but the exact working set depends on runtime, context and loaded assets. The catalog does not claim a validated VRAM requirement for this laptop.\"},\"provenance\":{\"source_url\":\"https://huggingface.co/google/gemma-4-E2B-it-qat-q4_0-gguf\",\"revision_policy\":\"pinned-revision\",\"revision\":\"347eef722ec7f151f37d1ef0b5c7c77d8de4efcb\",\"license_id\":\"Apache-2.0\",\"license_url\":\"https://huggingface.co/google/gemma-4-E2B-it-qat-q4_0-gguf\",\"digest_policy\":\"pinned-sha256-and-exact-size\",\"dependencies\":[]},\"evidence\":{\"metadata_review\":\"reviewed\",\"package_verification\":\"sha256-and-header-at-install\",\"real_task_test\":\"not-verified-by-hosted-ci\",\"profile_validation\":\"not-validated\"},\"lifecycle\":{\"install_scope\":\"per-user-data-directory\",\"user_data_separate\":true,\"update_policy\":\"pinned-model-revision\",\"automatic_update\":false},\"license\":\"Apache-2.0\",\"license_url\":\"https://huggingface.co/google/gemma-4-E2B-it-qat-q4_0-gguf\",\"source_url\":\"https://huggingface.co/google/gemma-4-E2B-it-qat-q4_0-gguf\",\"size_bytes\":3349516256,\"sha256\":\"fa401b55b07ee70a54c6dae3903c783a6e65064312529ea57175cb5f8dec6634\",\"model_profile\":{\"task_group\":\"chat\",\"architecture\":\"Gemma4\",\"parameter_count\":\"E2B · 5.1B total\",\"format\":\"GGUF\",\"quantization\":\"QAT Q4_0\",\"recommended_for\":\"alternative\",\"context_tokens\":128000,\"preferred_context_tokens\":2048}}"
+    },
+    {
       "id": "qwen2.5-1.5b-q4km",
       "kind": "model",
       "installable": true,
@@ -103,7 +167,7 @@
           }
         ]
       },
-      "metadata_json": "{\"schema_version\":1,\"id\":\"qwen2.5-1.5b-q4km\",\"type\":\"model\",\"name\":\"Qwen2.5 1.5B Instruct — Q4_K_M\",\"description\":\"Small starter chat model in GGUF format. The download is about 1.12 GB; context and runtime memory add to this.\",\"family\":\"Qwen2.5\",\"workspaces\":[\"language-chat\"],\"tasks\":[\"chat\",\"text-generation\"],\"modalities\":[\"text\"],\"input_formats\":[\"GGUF\"],\"output_formats\":[\"text\"],\"version\":\"dd26da440ef0330c47919d1ecae0966d24022222\",\"backend\":\"gguf\",\"compatibility\":{\"targets\":[{\"platform\":\"windows\",\"architecture\":\"x64\"},{\"platform\":\"linux\",\"architecture\":\"x64\"},{\"platform\":\"macos\",\"architecture\":\"x64\"},{\"platform\":\"macos\",\"architecture\":\"arm64\"}],\"backends\":[\"llama.cpp-cpu\",\"llama.cpp-cuda12\",\"llama.cpp-cuda13\"],\"cpu_features\":[],\"driver_requirements\":[],\"known_limits\":[\"Model fit depends on context and runtime overhead.\",\"CUDA compatibility and GPU placement must be tested on the target machine.\"]},\"resources\":{\"download_bytes\":1117320736,\"download_size_policy\":\"pinned-exact-size\",\"minimum_system_ram_bytes\":4294967296,\"recommended_system_ram_bytes\":8589934592,\"minimum_vram_bytes\":null,\"recommended_vram_bytes\":null,\"estimate_confidence\":\"heuristic\",\"notes\":\"RAM guidance is heuristic; context size, runtime overhead and GPU offload change memory needs.\"},\"provenance\":{\"source_url\":\"https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF\",\"revision_policy\":\"pinned-revision\",\"revision\":\"dd26da440ef0330c47919d1ecae0966d24022222\",\"license_id\":\"Apache-2.0\",\"license_url\":\"https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/blob/dd26da440ef0330c47919d1ecae0966d24022222/LICENSE\",\"digest_policy\":\"pinned-sha256-and-exact-size\",\"dependencies\":[]},\"evidence\":{\"metadata_review\":\"reviewed\",\"package_verification\":\"sha256-and-header-at-install\",\"real_task_test\":\"not-verified-by-hosted-ci\",\"profile_validation\":\"not-validated\"},\"lifecycle\":{\"install_scope\":\"per-user-data-directory\",\"user_data_separate\":true,\"update_policy\":\"pinned-model-revision\",\"automatic_update\":false},\"license\":\"Apache-2.0\",\"license_url\":\"https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/blob/dd26da440ef0330c47919d1ecae0966d24022222/LICENSE\",\"source_url\":\"https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF\",\"size_bytes\":1117320736,\"sha256\":\"6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e\",\"model_profile\":{\"task_group\":\"chat\",\"architecture\":\"Qwen2\",\"parameter_count\":\"1.5B\",\"format\":\"GGUF\",\"quantization\":\"Q4_K_M\"}}"
+      "metadata_json": "{\"schema_version\":1,\"id\":\"qwen2.5-1.5b-q4km\",\"type\":\"model\",\"name\":\"Qwen2.5 1.5B Instruct — Q4_K_M\",\"description\":\"Lightweight fallback chat model for low-memory systems and CPU-first setup. GGUF weights are about 1.04 GiB; the active context and runtime add memory overhead.\",\"family\":\"Qwen2.5\",\"workspaces\":[\"language-chat\"],\"tasks\":[\"chat\",\"text-generation\"],\"modalities\":[\"text\"],\"input_formats\":[\"GGUF\"],\"output_formats\":[\"text\"],\"version\":\"dd26da440ef0330c47919d1ecae0966d24022222\",\"backend\":\"gguf\",\"compatibility\":{\"targets\":[{\"platform\":\"windows\",\"architecture\":\"x64\"},{\"platform\":\"linux\",\"architecture\":\"x64\"},{\"platform\":\"macos\",\"architecture\":\"x64\"},{\"platform\":\"macos\",\"architecture\":\"arm64\"}],\"backends\":[\"llama.cpp-cpu\",\"llama.cpp-cuda12\",\"llama.cpp-cuda13\"],\"cpu_features\":[],\"driver_requirements\":[],\"known_limits\":[\"Model fit depends on context and runtime overhead.\",\"CUDA compatibility and GPU placement must be tested on the target machine.\"]},\"resources\":{\"download_bytes\":1117320736,\"download_size_policy\":\"pinned-exact-size\",\"minimum_system_ram_bytes\":4294967296,\"recommended_system_ram_bytes\":8589934592,\"minimum_vram_bytes\":null,\"recommended_vram_bytes\":null,\"estimate_confidence\":\"heuristic\",\"notes\":\"RAM guidance is heuristic; context size, runtime overhead and GPU offload change memory needs.\"},\"provenance\":{\"source_url\":\"https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF\",\"revision_policy\":\"pinned-revision\",\"revision\":\"dd26da440ef0330c47919d1ecae0966d24022222\",\"license_id\":\"Apache-2.0\",\"license_url\":\"https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/blob/dd26da440ef0330c47919d1ecae0966d24022222/LICENSE\",\"digest_policy\":\"pinned-sha256-and-exact-size\",\"dependencies\":[]},\"evidence\":{\"metadata_review\":\"reviewed\",\"package_verification\":\"sha256-and-header-at-install\",\"real_task_test\":\"not-verified-by-hosted-ci\",\"profile_validation\":\"not-validated\"},\"lifecycle\":{\"install_scope\":\"per-user-data-directory\",\"user_data_separate\":true,\"update_policy\":\"pinned-model-revision\",\"automatic_update\":false},\"license\":\"Apache-2.0\",\"license_url\":\"https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/blob/dd26da440ef0330c47919d1ecae0966d24022222/LICENSE\",\"source_url\":\"https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF\",\"size_bytes\":1117320736,\"sha256\":\"6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e\",\"model_profile\":{\"task_group\":\"chat\",\"architecture\":\"Qwen2\",\"parameter_count\":\"1.5B\",\"format\":\"GGUF\",\"quantization\":\"Q4_K_M\",\"recommended_for\":\"low-memory\",\"context_tokens\":32768,\"preferred_context_tokens\":2048}}"
     }
   ]
 }
