@@ -58,6 +58,58 @@ def validate_pinned_gguf_contract(component_id: str, entry: dict, metadata: dict
         fail(f"{component_id}: component manifest may not contain executable install commands")
 
 
+def validate_audio_cpp_contract(component_id: str, entry: dict, metadata: dict) -> None:
+    install = entry.get("install", {})
+    variant = install.get("variant")
+    if entry.get("kind") != "engine" or entry.get("default_model"):
+        fail(f"{component_id}: audio-cpp-release-set must be a non-default engine")
+    if variant not in {"cpu", "cuda13.3"}:
+        fail(f"{component_id}: unsupported audio.cpp Windows backend")
+    targets = install.get("targets", [])
+    if targets != [{"platform": "windows", "architecture": "x64"}]:
+        fail(f"{component_id}: audio.cpp pilot is Windows x64 only")
+    pins = {
+        ("cpu", "server"): (
+            "audio-v0.9.3-bin-windows-x64-cpu.zip",
+            "3ac66f46395b4e92e4f3bb68b200f0032310bd9922f12d97f10ccdadb02dee4b",
+        ),
+        ("cuda13.3", "server"): (
+            "audio-v0.9.3-bin-windows-x64-cuda13.3.zip",
+            "0bd3988be10c31ec078c40df2bd0d4266e660804f6d5083aeb05d1309d091e43",
+        ),
+        ("cuda13.3", "runtime"): (
+            "audio-v0.9.3-cudart-windows-x64-cuda13.3.zip",
+            "839eb20f684a8aab64895b1e466b32ce9b29dfc19dc1ce15b2ef35218512ac0a",
+        ),
+    }
+    assets = install.get("assets", [])
+    expected_roles = ["server"] if variant == "cpu" else ["server", "runtime"]
+    if sorted(asset.get("role", "") for asset in assets) != sorted(expected_roles):
+        fail(f"{component_id}: CPU/CUDA asset pair is incomplete or mixed")
+    for asset in assets:
+        role = asset.get("role", "")
+        expected = pins.get((variant, role))
+        filename = asset.get("filename", "")
+        if not expected or filename != expected[0] or asset.get("sha256") != expected[1]:
+            fail(f"{component_id}: asset role, exact filename or SHA-256 is not allowlisted")
+        expected_url = f"https://github.com/0xShug0/audio.cpp/releases/download/v0.9.3/{filename}"
+        if asset.get("url") != expected_url:
+            fail(f"{component_id}: asset URL must be the immutable official v0.9.3 release URL")
+        size = asset.get("size_bytes")
+        if not isinstance(size, int) or size <= 0 or size > 2 * 1024 * 1024 * 1024:
+            fail(f"{component_id}: asset requires a bounded exact byte size")
+    if metadata.get("family") != "audio.cpp" or metadata.get("version") != "v0.9.3" or metadata.get("backend") != variant:
+        fail(f"{component_id}: engine metadata must pin audio.cpp v0.9.3 and selected backend")
+    provenance = metadata.get("provenance", {})
+    if (metadata.get("license") != "Apache-2.0" or
+        provenance.get("source_url") != "https://github.com/0xShug0/audio.cpp" or
+        provenance.get("revision") != "v0.9.3" or
+        provenance.get("digest_policy") != "pinned-sha256-and-exact-size"):
+        fail(f"{component_id}: audio.cpp license and immutable package provenance are required")
+    if any(key in install for key in ("filename", "url", "sha256", "size_bytes", "command", "script")):
+        fail(f"{component_id}: package set cannot contain single-file or executable installer fields")
+
+
 def main() -> None:
     manifest_path = ROOT / "catalog" / "manifest-v1.json"
     schema_path = ROOT / "catalog" / "schemas" / "component-v1.schema.json"
@@ -79,7 +131,7 @@ def main() -> None:
     ids: set[str] = set()
     variants: set[str] = set()
     defaults = 0
-    allowed_strategies = {"llama-release", "pinned-gguf"}
+    allowed_strategies = {"llama-release", "pinned-gguf", "audio-cpp-release-set"}
     for entry in components:
         component_id = entry.get("id", "")
         if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,127}", component_id):
@@ -92,7 +144,7 @@ def main() -> None:
         if set(entry) != allowed_component_keys:
             fail(f"{component_id}: unexpected component manifest properties {sorted(set(entry) - allowed_component_keys)}")
         install = entry.get("install", {})
-        allowed_install_keys = {"strategy", "variant", "filename", "url", "sha256", "size_bytes", "targets"}
+        allowed_install_keys = {"strategy", "variant", "filename", "url", "sha256", "size_bytes", "assets", "targets"}
         if not set(install).issubset(allowed_install_keys):
             fail(f"{component_id}: install policy contains unknown properties")
         strategy = install.get("strategy")
@@ -183,6 +235,8 @@ def main() -> None:
                 fail(f"{component_id}: release resolver must not accept arbitrary URL or scripts")
         elif strategy == "pinned-gguf":
             validate_pinned_gguf_contract(component_id, entry, metadata)
+        elif strategy == "audio-cpp-release-set":
+            validate_audio_cpp_contract(component_id, entry, metadata)
         if entry.get("default_model", False):
             if entry.get("kind") != "model" or strategy != "pinned-gguf":
                 fail(f"{component_id}: only a pinned GGUF model can be the default model")
@@ -258,7 +312,46 @@ def main() -> None:
         "mutable revision",
         lambda candidate, metadata: candidate["install"].update(url=candidate["install"]["url"].replace(synthetic_revision, "main", 1)),
     )
-    print(f"Catalog manifest contract passed: {len(components)} reviewed components, {len(ids)} unique IDs, {len(variants)} engine variants; generic non-default GGUF fixture and invalid-pin rejections passed.")
+    # Synthetic package-set fixtures exercise CPU single-asset and CUDA pair policy
+    # without advertising unverified byte sizes in the shipped catalog.
+    base_audio_metadata = {
+        "id": "audio-cpp-cpu", "type": "engine", "family": "audio.cpp",
+        "version": "v0.9.3", "backend": "cpu", "license": "Apache-2.0",
+        "provenance": {"source_url": "https://github.com/0xShug0/audio.cpp", "revision": "v0.9.3",
+                       "digest_policy": "pinned-sha256-and-exact-size"},
+    }
+    cpu_file = "audio-v0.9.3-bin-windows-x64-cpu.zip"
+    cpu_entry = {"kind": "engine", "default_model": False,
+                 "install": {"strategy": "audio-cpp-release-set", "variant": "cpu",
+                             "targets": [{"platform": "windows", "architecture": "x64"}],
+                             "assets": [{"role": "server", "filename": cpu_file,
+                                         "url": f"https://github.com/0xShug0/audio.cpp/releases/download/v0.9.3/{cpu_file}",
+                                         "sha256": "3ac66f46395b4e92e4f3bb68b200f0032310bd9922f12d97f10ccdadb02dee4b",
+                                         "size_bytes": 1000}]}}
+    validate_audio_cpp_contract("audio-cpp-cpu", cpu_entry, base_audio_metadata)
+    cuda_metadata = {**base_audio_metadata, "id": "audio-cpp-cuda", "backend": "cuda13.3"}
+    cuda_entry = copy.deepcopy(cpu_entry)
+    cuda_entry["install"]["variant"] = "cuda13.3"
+    cuda_server = "audio-v0.9.3-bin-windows-x64-cuda13.3.zip"
+    cuda_runtime = "audio-v0.9.3-cudart-windows-x64-cuda13.3.zip"
+    cuda_entry["install"]["assets"] = [
+        {"role": "server", "filename": cuda_server,
+         "url": f"https://github.com/0xShug0/audio.cpp/releases/download/v0.9.3/{cuda_server}",
+         "sha256": "0bd3988be10c31ec078c40df2bd0d4266e660804f6d5083aeb05d1309d091e43", "size_bytes": 2000},
+        {"role": "runtime", "filename": cuda_runtime,
+         "url": f"https://github.com/0xShug0/audio.cpp/releases/download/v0.9.3/{cuda_runtime}",
+         "sha256": "839eb20f684a8aab64895b1e466b32ce9b29dfc19dc1ce15b2ef35218512ac0a", "size_bytes": 3000},
+    ]
+    validate_audio_cpp_contract("audio-cpp-cuda", cuda_entry, cuda_metadata)
+    invalid_cuda = copy.deepcopy(cuda_entry)
+    invalid_cuda["install"]["assets"].pop()
+    try:
+        validate_audio_cpp_contract("audio-cpp-cuda", invalid_cuda, cuda_metadata)
+    except SystemExit:
+        pass
+    else:
+        fail("incomplete CUDA package set was accepted")
+    print(f"Catalog manifest contract passed: {len(components)} reviewed components, {len(ids)} unique IDs, {len(variants)} llama.cpp engine variants; GGUF pinning and audio.cpp CPU/CUDA package-set fixtures passed.")
 
 
 if __name__ == "__main__":

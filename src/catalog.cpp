@@ -73,7 +73,7 @@ std::vector<ComponentDefinition> parse_embedded_manifest() {
             throw std::runtime_error("The component manifest entry contains an unknown property.");
         }
         const auto install_node = node.get_child_optional("install");
-        if (!install_node || !has_only_keys(*install_node, {"strategy", "variant", "filename", "url", "sha256", "size_bytes", "targets"})) {
+        if (!install_node || !has_only_keys(*install_node, {"strategy", "variant", "filename", "url", "sha256", "size_bytes", "assets", "targets"})) {
             throw std::runtime_error("The component manifest install policy is missing or contains an unknown property.");
         }
         ComponentDefinition component;
@@ -88,6 +88,21 @@ std::vector<ComponentDefinition> parse_embedded_manifest() {
         component.sha256 = node.get<std::string>("install.sha256", "");
         component.size_bytes = node.get<std::uint64_t>("install.size_bytes", 0U);
         component.metadata_json = node.get<std::string>("metadata_json", "");
+        if (const auto assets = node.get_child_optional("install.assets")) {
+            for (const auto& asset_entry : *assets) {
+                const auto& asset_node = asset_entry.second;
+                if (!has_only_keys(asset_node, {"role", "filename", "url", "sha256", "size_bytes"})) {
+                    throw std::runtime_error("An install asset contains an unknown property: " + component.id);
+                }
+                ComponentAsset asset;
+                asset.role = asset_node.get<std::string>("role", "");
+                asset.filename = asset_node.get<std::string>("filename", "");
+                asset.url = asset_node.get<std::string>("url", "");
+                asset.sha256 = asset_node.get<std::string>("sha256", "");
+                asset.size_bytes = asset_node.get<std::uint64_t>("size_bytes", 0U);
+                component.assets.push_back(std::move(asset));
+            }
+        }
 
         if (!valid_id(component.id) || !ids.insert(component.id).second) {
             throw std::runtime_error("The component manifest contains an invalid or duplicate component ID.");
@@ -203,7 +218,7 @@ std::vector<ComponentDefinition> parse_embedded_manifest() {
         if (component.installer == "llama-release") {
             if (component.kind != "engine" || component.default_model ||
                 (component.variant != "cpu" && component.variant != "cuda12" && component.variant != "cuda13") ||
-                !component.filename.empty() || !component.url.empty() || !component.sha256.empty() || component.size_bytes != 0U) {
+                !component.filename.empty() || !component.url.empty() || !component.sha256.empty() || component.size_bytes != 0U || !component.assets.empty()) {
                 throw std::runtime_error("The llama-release install policy is invalid for component: " + component.id);
             }
             if (metadata.get<std::string>("family", "") != "llama.cpp" ||
@@ -226,7 +241,7 @@ std::vector<ComponentDefinition> parse_embedded_manifest() {
             const auto source_url = metadata.get<std::string>("source_url", "");
             if (component.kind != "model" || !is_safe_filename(component.filename) ||
                 !is_supported_pinned_gguf_url(component.url, component.filename, revision, source_url) ||
-                !is_hex(component.sha256, 64U) || component.size_bytes == 0U || component.size_bytes > 16ULL * 1024ULL * 1024ULL * 1024ULL) {
+                !is_hex(component.sha256, 64U) || component.size_bytes == 0U || component.size_bytes > 16ULL * 1024ULL * 1024ULL * 1024ULL || !component.assets.empty()) {
                 throw std::runtime_error("The pinned GGUF install policy failed its reviewed Hugging Face URL, filename, revision, digest or size checks: " + component.id);
             }
             if (metadata.get<std::string>("sha256", "") != component.sha256 ||
@@ -245,6 +260,39 @@ std::vector<ComponentDefinition> parse_embedded_manifest() {
             };
             if (!std::all_of(component.targets.begin(), component.targets.end(), target_allowed)) {
                 throw std::runtime_error("The pinned GGUF policy declares an unsupported platform target: " + component.id);
+            }
+        } else if (component.installer == "audio-cpp-release-set") {
+            if (component.kind != "engine" || component.default_model ||
+                (component.variant != "cpu" && component.variant != "cuda13.3") ||
+                !component.filename.empty() || !component.url.empty() || !component.sha256.empty() ||
+                component.size_bytes != 0U || component.assets.empty() || component.assets.size() > 2U ||
+                metadata.get<std::string>("family", "") != "audio.cpp" ||
+                metadata.get<std::string>("version", "") != "v0.9.3" ||
+                metadata.get<std::string>("backend", "") != component.variant ||
+                metadata.get<std::string>("license", "") != "Apache-2.0" ||
+                metadata.get<std::string>("provenance.source_url", "") != "https://github.com/0xShug0/audio.cpp" ||
+                metadata.get<std::string>("provenance.revision", "") != "v0.9.3" ||
+                metadata.get<std::string>("provenance.digest_policy", "") != "pinned-sha256-and-exact-size") {
+                throw std::runtime_error("The audio.cpp release-set install policy is incomplete or invalid: " + component.id);
+            }
+            const auto target_allowed = [](const InstallTarget& target) {
+                return target.platform == "windows" && target.architecture == "x64";
+            };
+            if (component.targets.size() != 1U || !std::all_of(component.targets.begin(), component.targets.end(), target_allowed)) {
+                throw std::runtime_error("audio.cpp release-set is currently allowlisted only for Windows x64: " + component.id);
+            }
+            std::set<std::string> roles;
+            for (const auto& asset : component.assets) {
+                if (!is_supported_audio_cpp_release_asset(asset.role, asset.filename, asset.url,
+                                                          asset.sha256, asset.size_bytes, component.variant) ||
+                    !roles.insert(asset.role).second) {
+                    throw std::runtime_error("An audio.cpp release asset failed the exact filename/URL/digest/size allowlist: " + component.id);
+                }
+            }
+            if ((component.variant == "cpu" && (component.assets.size() != 1U || !roles.count("server"))) ||
+                (component.variant == "cuda13.3" &&
+                 (component.assets.size() != 2U || !roles.count("server") || !roles.count("runtime")))) {
+                throw std::runtime_error("audio.cpp package set is incomplete or mixes CPU/CUDA assets: " + component.id);
             }
         } else {
             throw std::runtime_error("The component manifest contains an unknown install strategy: " + component.installer);
@@ -316,6 +364,28 @@ bool is_supported_pinned_gguf_url(std::string_view url, std::string_view filenam
     }
     const auto expected_source = std::string(prefix) + std::string(owner) + "/" + std::string(repository);
     return source_url == expected_source;
+}
+
+bool is_supported_audio_cpp_release_asset(std::string_view role, std::string_view filename,
+                                          std::string_view url, std::string_view sha256,
+                                          std::uint64_t size_bytes, std::string_view variant) {
+    struct Pin { std::string_view role; std::string_view filename; std::string_view sha256; };
+    static constexpr Pin cpu{"server", "audio-v0.9.3-bin-windows-x64-cpu.zip",
+        "3ac66f46395b4e92e4f3bb68b200f0032310bd9922f12d97f10ccdadb02dee4b"};
+    static constexpr Pin cuda_server{"server", "audio-v0.9.3-bin-windows-x64-cuda13.3.zip",
+        "0bd3988be10c31ec078c40df2bd0d4266e660804f6d5083aeb05d1309d091e43"};
+    static constexpr Pin cuda_runtime{"runtime", "audio-v0.9.3-cudart-windows-x64-cuda13.3.zip",
+        "839eb20f684a8aab64895b1e466b32ce9b29dfc19dc1ce15b2ef35218512ac0a"};
+    const Pin* expected = nullptr;
+    if (variant == "cpu") expected = &cpu;
+    else if (variant == "cuda13.3" && role == "server") expected = &cuda_server;
+    else if (variant == "cuda13.3" && role == "runtime") expected = &cuda_runtime;
+    if (!expected || expected->role != role || expected->filename != filename ||
+        expected->sha256 != sha256 || size_bytes == 0U || size_bytes > 2ULL * 1024ULL * 1024ULL * 1024ULL) {
+        return false;
+    }
+    const auto expected_url = std::string("https://github.com/0xShug0/audio.cpp/releases/download/v0.9.3/") + std::string(filename);
+    return url == expected_url;
 }
 
 const std::vector<ComponentDefinition>& components() {

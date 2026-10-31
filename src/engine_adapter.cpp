@@ -37,6 +37,37 @@ public:
     std::string_view chat_completions_path() const noexcept override { return "/v1/chat/completions"; }
 };
 
+class AudioCppProcessAdapter final : public EngineAdapter {
+public:
+    std::string_view id() const noexcept override { return "audio.cpp"; }
+    std::string_view display_name() const noexcept override { return "audio.cpp"; }
+
+    bool validate_config(const EngineConfig& config, std::string& error) const override {
+        if (config.id != "audio-cpp") {
+            error = "The audio.cpp adapter requires engine id 'audio-cpp'.";
+            return false;
+        }
+        if (!config.executable_path.empty()) {
+            const auto filename = lowercase_filename(config.executable_path);
+#ifdef _WIN32
+            if (filename != "audiocpp_server.exe" && filename != "audiocpp_server") {
+#else
+            if (filename != "audiocpp_server") {
+#endif
+                error = "The audio.cpp adapter only starts the reviewed audiocpp_server executable.";
+                return false;
+            }
+        }
+        error.clear();
+        return true;
+    }
+
+    std::string_view readiness_path() const noexcept override { return "/health"; }
+    std::string_view readiness_fallback_path() const noexcept override { return "/v1/models"; }
+    // A task engine has no Chat completions route by design.
+    std::string_view chat_completions_path() const noexcept override { return {}; }
+};
+
 class LlamaCppAdapter final : public OpenAiCompatibleProcessAdapter {
 public:
     std::string_view id() const noexcept override { return "llama.cpp"; }
@@ -126,8 +157,10 @@ std::shared_ptr<EngineAdapter> create_engine_adapter(const EngineConfig& config,
         adapter = std::make_shared<LlamaCppAdapter>();
     } else if (adapter_id == "openai-compatible-process") {
         adapter = std::make_shared<OpenAiCompatibleProcessAdapter>();
+    } else if (adapter_id == "audio.cpp") {
+        adapter = std::make_shared<AudioCppProcessAdapter>();
     } else {
-        error = "Unknown engine adapter '" + adapter_id + "'. Supported adapters: llama.cpp, openai-compatible-process.";
+        error = "Unknown engine adapter '" + adapter_id + "'. Supported adapters: llama.cpp, openai-compatible-process, audio.cpp.";
         return {};
     }
     if (!adapter->validate_config(config, error)) return {};

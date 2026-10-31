@@ -81,7 +81,23 @@ void respond(tcp::socket& socket, const http::request<http::string_body>& reques
     response.set(http::field::content_type, "application/json; charset=utf-8");
     response.keep_alive(false);
 
-    if (request.method() == http::verb::get && request.target() == "/health") {
+    if (request.method() == http::verb::post && request.target() == "/v1/audio/transcriptions") {
+        if (request[http::field::content_type].find("multipart/form-data; boundary=") == beast::string_view::npos ||
+            request.body().find("name=\"model\"\r\n\r\nqwen3-asr") == std::string::npos ||
+            request.body().find("name=\"language\"\r\n\r\ntr") == std::string::npos ||
+            request.body().find("name=\"file\"; filename=\"audio.wav\"") == std::string::npos) {
+            response.result(http::status::bad_request);
+            response.body() = R"({"error":{"message":"invalid multipart ASR fixture"}})";
+        } else {
+            response.body() = R"({"text":"Merhaba dünya","language":"tr"})";
+        }
+    } else if (request.method() == http::verb::post && request.target() == "/v1/audio/speech") {
+        response.set(http::field::content_type, "audio/wav");
+        response.body() = std::string("RIFF", 4) + std::string(4, '\0') + "WAVE" + "FAKE_WAV_CONTENT";
+        const auto riff_size = static_cast<std::uint32_t>(response.body().size() - 8U);
+        for (unsigned int byte = 0; byte < 4U; ++byte)
+            response.body()[4U + byte] = static_cast<char>((riff_size >> (byte * 8U)) & 0xffU);
+    } else if (request.method() == http::verb::get && request.target() == "/health") {
         response.body() = R"({"status":"ok"})";
     } else if (request.method() == http::verb::get && request.target() == "/v1/models") {
         response.body() = R"({"object":"list","data":[{"id":"fake-model","object":"model"}]})";

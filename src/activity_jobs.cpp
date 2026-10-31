@@ -66,7 +66,7 @@ std::uint64_t ActivityJobManager::unix_time_millis() {
 }
 
 bool ActivityJobManager::valid_kind(const std::string& kind) {
-    return kind == "engine-start" || kind == "engine-stop" || kind == "inference";
+    return kind == "engine-start" || kind == "engine-stop" || kind == "inference" || kind == "audio-task";
 }
 
 bool ActivityJobManager::valid_id(const std::string& id) {

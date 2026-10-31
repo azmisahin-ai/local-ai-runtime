@@ -7,6 +7,7 @@
 #include "lar/gpu_monitor.hpp"
 #include "lar/resource_monitor.hpp"
 #include "lar/engine_adapter.hpp"
+#include "lar/task_adapter.hpp"
 
 #ifndef LAR_VERSION
 #define LAR_VERSION "0.1.0-dev"
@@ -935,7 +936,10 @@ struct ProxyResult {
 };
 
 ProxyResult proxy_local_request(const EngineStatus& engine, http::verb method,
-                                const std::string& target, const std::string& body) {
+                                const std::string& target, const std::string& body,
+                                std::string_view request_content_type = "application/json",
+                                std::chrono::seconds timeout = std::chrono::seconds(120),
+                                std::uint64_t response_body_limit = 16U * 1024U * 1024U) {
     ProxyResult result;
     if (engine.state != ProcessState::running) {
         result.status = http::status::service_unavailable;
@@ -951,21 +955,21 @@ ProxyResult proxy_local_request(const EngineStatus& engine, http::verb method,
         asio::io_context ioc;
         tcp::resolver resolver(ioc);
         beast::tcp_stream stream(ioc);
-        stream.expires_after(std::chrono::seconds(120));
+        stream.expires_after(timeout);
         const auto endpoints = resolver.resolve("127.0.0.1", port_text);
         stream.connect(endpoints);
         http::request<http::string_body> request{method, target, 11};
         request.set(http::field::host, "127.0.0.1:" + port_text);
         request.set(http::field::user_agent, "local-ai-runtime/" LAR_VERSION);
         request.keep_alive(false);
-        if (method == http::verb::post) request.set(http::field::content_type, "application/json");
+        if (method == http::verb::post) request.set(http::field::content_type, request_content_type);
         request.body() = body;
         request.prepare_payload();
         http::write(stream, request);
 
         beast::flat_buffer buffer;
         http::response_parser<http::string_body> parser;
-        parser.body_limit(16U * 1024U * 1024U);
+        parser.body_limit(response_body_limit);
         http::read(stream, buffer, parser);
         auto upstream_response = parser.release();
         result.status = upstream_response.result();
@@ -1809,6 +1813,129 @@ http::response<http::string_body> handle_request(const http::request<http::strin
             activity_jobs.succeed(operation_id, "Engine process stopped");
             return json_response(http::status::ok, version, "{\"id\":" + json_quoted(stop_id) + ",\"status\":\"stopped\",\"job_id\":" + json_quoted(operation_id) + "}");
         }
+        const bool asr_task = target == "/v1/tasks/asr/transcribe";
+        const bool tts_task = target == "/v1/tasks/tts/synthesize";
+        if (asr_task || tts_task) {
+            if (request.method() != http::verb::post) {
+                return error_response(http::status::method_not_allowed, version, "Typed audio tasks require POST.");
+            }
+            std::optional<EngineStatus> task_engine;
+            for (const auto& status : engines.statuses()) {
+                const auto adapter_id = status.config.adapter_id.empty()
+                    ? default_engine_adapter_id(status.config.id) : status.config.adapter_id;
+                if (adapter_id == "audio.cpp" &&
+                    std::find(status.config.capabilities.begin(), status.config.capabilities.end(),
+                              asr_task ? "asr.transcribe" : "tts.synthesize") != status.config.capabilities.end()) {
+                    task_engine = status;
+                    break;
+                }
+            }
+            if (!task_engine) {
+                return error_response(http::status::service_unavailable, version,
+                    "No audio.cpp task engine with the requested capability is configured.");
+            }
+            std::string adapter_error;
+            const auto adapter = create_task_engine_adapter(task_engine->config, adapter_error);
+            if (!adapter) return error_response(http::status::service_unavailable, version,
+                "Typed task adapter is unavailable: " + adapter_error);
+            if (!upstream_is_ready(*task_engine)) {
+                return error_response(http::status::service_unavailable, version,
+                    "The audio.cpp process is not ready. Start it from Activity and wait for Ready status.");
+            }
+
+            const auto operation_id = activity_jobs.begin("audio-task", task_engine->config.id,
+                asr_task ? "Running local ASR transcription" : "Running local TTS synthesis");
+            if (operation_id.empty()) {
+                return error_response(http::status::internal_server_error, version,
+                    "Could not persist the audio task operation.");
+            }
+            const auto fail_task = [&](http::status status, const std::string& detail) {
+                activity_jobs.fail(operation_id, "Audio task failed", detail, "audio_task_failed");
+                return error_response(status, version, detail);
+            };
+            TaskUpstreamRequest upstream;
+            std::string validation_error;
+            if (asr_task) {
+                const auto model_header = request["X-LAR-Model"];
+                const auto language_header = request["X-LAR-Language"];
+                AsrTranscriptionRequest task_request;
+                task_request.model_id.assign(model_header.data(), model_header.size());
+                task_request.language.assign(language_header.data(), language_header.size());
+                task_request.wav_bytes = request.body();
+                if (request.body().size() > max_task_audio_input_bytes) {
+                    return fail_task(http::status::payload_too_large, "ASR WAV input exceeds the 24 MiB task limit.");
+                }
+                const auto content_type = request[http::field::content_type];
+                if (content_type.find("audio/wav") == beast::string_view::npos &&
+                    content_type.find("audio/x-wav") == beast::string_view::npos) {
+                    return fail_task(http::status::unsupported_media_type, "ASR input Content-Type must be audio/wav.");
+                }
+                if (!adapter->build_asr_request(task_request, upstream, validation_error)) {
+                    return fail_task(http::status::bad_request, validation_error);
+                }
+            } else {
+                const auto content_type = request[http::field::content_type];
+                if (content_type.find("application/json") == beast::string_view::npos) {
+                    return fail_task(http::status::unsupported_media_type, "TTS input Content-Type must be application/json.");
+                }
+                if (request.body().size() > 64U * 1024U) {
+                    return fail_task(http::status::payload_too_large, "TTS JSON request exceeds the 64 KiB task limit.");
+                }
+                try {
+                    std::istringstream input(request.body());
+                    boost::property_tree::ptree body;
+                    boost::property_tree::read_json(input, body);
+                    const auto has_only = std::all_of(body.begin(), body.end(), [](const auto& member) {
+                        return member.first == "model_id" || member.first == "text" || member.first == "voice";
+                    });
+                    if (!has_only) return fail_task(http::status::bad_request, "TTS request contains an unsupported property.");
+                    TtsSynthesisRequest task_request;
+                    task_request.model_id = body.get<std::string>("model_id", "");
+                    task_request.text = body.get<std::string>("text", "");
+                    task_request.voice = body.get<std::string>("voice", "");
+                    if (!adapter->build_tts_request(task_request, upstream, validation_error)) {
+                        return fail_task(http::status::bad_request, validation_error);
+                    }
+                } catch (const std::exception&) {
+                    return fail_task(http::status::bad_request, "TTS request body must be a valid JSON object.");
+                }
+            }
+
+            const auto proxied = proxy_local_request(*task_engine, http::verb::post, upstream.path,
+                upstream.body, upstream.content_type, std::chrono::minutes(15), max_task_audio_output_bytes);
+            if (asr_task) {
+                AsrTranscriptionResult task_result;
+                if (proxied.status != http::status::ok ||
+                    !adapter->parse_asr_response(proxied.content_type, proxied.body, task_result, validation_error)) {
+                    return fail_task(http::status::bad_gateway, validation_error.empty()
+                        ? "audio.cpp ASR request failed." : validation_error);
+                }
+                activity_jobs.succeed(operation_id, "Local ASR transcription completed");
+                const auto model_header = request["X-LAR-Model"];
+                std::string json = "{\"task\":\"asr.transcribe\",\"engine\":\"audio.cpp\",\"model_id\":" +
+                    json_quoted(std::string(model_header.data(), model_header.size())) +
+                    ",\"language\":" + json_quoted(task_result.language) +
+                    ",\"text\":" + json_quoted(task_result.text) + "}";
+                return json_response(http::status::ok, version, std::move(json));
+            }
+            TtsSynthesisResult task_result;
+            if (proxied.status != http::status::ok ||
+                !adapter->parse_tts_response(proxied.content_type, proxied.body, task_result, validation_error)) {
+                return fail_task(http::status::bad_gateway, validation_error.empty()
+                    ? "audio.cpp TTS request failed." : validation_error);
+            }
+            activity_jobs.succeed(operation_id, "Local TTS synthesis completed");
+            http::response<http::string_body> response{http::status::ok, version};
+            response.set(http::field::server, "local-ai-runtime/" LAR_VERSION);
+            response.set(http::field::content_type, task_result.content_type);
+            response.set("X-Content-Type-Options", "nosniff");
+            response.set("Cache-Control", "no-store");
+            response.set("X-LAR-Task", "tts.synthesize");
+            response.body() = std::move(task_result.wav_bytes);
+            response.keep_alive(false);
+            response.prepare_payload();
+            return response;
+        }
         if (target == "/v1/chat/completions") {
             if (request.body().empty()) return error_response(http::status::bad_request, version, "Request body must contain a chat completion JSON object.");
             const auto engine = engines.default_chat_engine();
@@ -1859,7 +1986,12 @@ void serve_client(tcp::socket socket, RuntimeConfig config, EngineManager& engin
     beast::flat_buffer buffer;
     try {
         http::request_parser<http::string_body> parser;
-        parser.body_limit(4U * 1024U * 1024U);
+        parser.header_limit(16U * 1024U);
+        http::read_header(stream, buffer, parser);
+        const auto incoming_target = parser.get().target();
+        const bool bounded_audio_upload = parser.get().method() == http::verb::post &&
+            incoming_target == "/v1/tasks/asr/transcribe";
+        parser.body_limit(bounded_audio_upload ? max_task_audio_input_bytes : 4U * 1024U * 1024U);
         http::read(stream, buffer, parser);
         auto request = parser.release();
         if (request_wants_chat_stream(request)) {
@@ -1884,7 +2016,7 @@ void serve_client(tcp::socket socket, RuntimeConfig config, EngineManager& engin
         if (shutdown_after_response) request_shutdown(0);
     } catch (const boost::system::system_error& ex) {
         if (ex.code() == http::error::body_limit) {
-            auto response = error_response(http::status::payload_too_large, 11, "Request body exceeds the 4 MiB limit.");
+            auto response = error_response(http::status::payload_too_large, 11, "Request body exceeds its route-specific limit (4 MiB generally, 24 MiB for ASR WAV uploads).");
             beast::error_code ignored;
             http::write(stream, response, ignored);
         }

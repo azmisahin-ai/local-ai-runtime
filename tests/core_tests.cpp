@@ -6,6 +6,7 @@
 #include "lar/activity_jobs.hpp"
 #include "lar/process.hpp"
 #include "lar/engine_adapter.hpp"
+#include "lar/task_adapter.hpp"
 #include "lar/backend_evidence.hpp"
 #include "lar/gpu_monitor.hpp"
 #include "lar/resource_monitor.hpp"
@@ -23,6 +24,9 @@
 #include <stdexcept>
 #include <thread>
 #include <vector>
+#include <string_view>
+#include <boost/asio.hpp>
+#include <boost/beast.hpp>
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -92,6 +96,76 @@ int main() {
             require(!lar::create_engine_adapter(llama_config, adapter_error),
                     "llama.cpp adapter must reject an unrelated executable name");
 
+            lar::EngineConfig audio_config;
+            audio_config.id = "audio-cpp";
+            audio_config.adapter_id = "audio.cpp";
+            const auto audio_process_adapter = lar::create_engine_adapter(audio_config, adapter_error);
+            require(audio_process_adapter && audio_process_adapter->id() == "audio.cpp",
+                    "audio.cpp process config should resolve to its own lifecycle adapter");
+            require(audio_process_adapter->readiness_path() == "/health" &&
+                    audio_process_adapter->readiness_fallback_path() == "/v1/models",
+                    "audio.cpp should probe native health first and models second");
+            require(audio_process_adapter->chat_completions_path().empty(),
+                    "audio.cpp must not expose a fake Chat completions route");
+
+            auto task_adapter = lar::create_task_engine_adapter(audio_config, adapter_error);
+            require(task_adapter && task_adapter->id() == "audio.cpp" &&
+                    task_adapter->capabilities().size() == 2U,
+                    "audio.cpp should expose the typed ASR/TTS task adapter independently from Chat");
+            require(task_adapter->capabilities()[0].id == "asr.transcribe" &&
+                    task_adapter->capabilities()[1].id == "tts.synthesize",
+                    "audio.cpp task capabilities should use stable typed operation IDs");
+
+            lar::AsrTranscriptionRequest asr_request;
+            asr_request.model_id = "qwen3-asr";
+            asr_request.language = "tr";
+            asr_request.wav_bytes = std::string("RIFF", 4) + std::string(4, '\0') + "WAVE" + std::string(32, '\0');
+            const auto wav_length = static_cast<std::uint32_t>(asr_request.wav_bytes.size() - 8U);
+            for (unsigned int byte = 0; byte < 4U; ++byte)
+                asr_request.wav_bytes[4U + byte] = static_cast<char>((wav_length >> (byte * 8U)) & 0xffU);
+            lar::TaskUpstreamRequest upstream_request;
+            require(task_adapter->build_asr_request(asr_request, upstream_request, adapter_error),
+                    "valid typed ASR request should map to audio.cpp multipart");
+            require(upstream_request.path == "/v1/audio/transcriptions" &&
+                    upstream_request.content_type.find("multipart/form-data; boundary=") == 0 &&
+                    upstream_request.body.find("name=\"model\"") != std::string::npos &&
+                    upstream_request.body.find("qwen3-asr") != std::string::npos &&
+                    upstream_request.body.find("name=\"language\"") != std::string::npos &&
+                    upstream_request.body.find("\r\ntr\r\n") != std::string::npos,
+                    "typed ASR request should carry only validated model/language fields and in-memory WAV bytes");
+            auto bad_asr_request = asr_request;
+            bad_asr_request.wav_bytes = "not audio";
+            require(!task_adapter->build_asr_request(bad_asr_request, upstream_request, adapter_error),
+                    "typed ASR must reject non-WAV input before forwarding");
+            bad_asr_request = asr_request;
+            bad_asr_request.language = "tr\r\nX-Evil: yes";
+            require(!task_adapter->build_asr_request(bad_asr_request, upstream_request, adapter_error),
+                    "typed ASR must reject header/form-field injection in language tokens");
+            lar::AsrTranscriptionResult asr_result;
+            require(task_adapter->parse_asr_response("application/json", R"({"text":"Merhaba dünya","language":"tr"})",
+                                                       asr_result, adapter_error) &&
+                    asr_result.text == "Merhaba dünya" && asr_result.language == "tr",
+                    "typed ASR response should become a transcript result, not chat completion JSON");
+            require(!task_adapter->parse_asr_response("application/json", R"({"result":"wrong shape"})",
+                                                        asr_result, adapter_error),
+                    "typed ASR should reject responses without transcript text");
+
+            lar::TtsSynthesisRequest tts_request{"chatterbox", "Merhaba dünya.", "default"};
+            require(task_adapter->build_tts_request(tts_request, upstream_request, adapter_error) &&
+                    upstream_request.path == "/v1/audio/speech" &&
+                    upstream_request.body.find("\"response_format\":\"wav\"") != std::string::npos,
+                    "typed TTS request should target the audio speech route and request WAV output");
+            lar::TtsSynthesisResult tts_result;
+            std::string tts_wav = std::string("RIFF", 4) + std::string(4, '\0') + "WAVE" + std::string(32, '\0');
+            const auto tts_wav_length = static_cast<std::uint32_t>(tts_wav.size() - 8U);
+            for (unsigned int byte = 0; byte < 4U; ++byte)
+                tts_wav[4U + byte] = static_cast<char>((tts_wav_length >> (byte * 8U)) & 0xffU);
+            require(task_adapter->parse_tts_response("audio/wav", tts_wav, tts_result, adapter_error) &&
+                    tts_result.content_type == "audio/wav" && tts_result.wav_bytes == tts_wav,
+                    "typed TTS response should expose a bounded WAV artifact");
+            require(!task_adapter->parse_tts_response("audio/mpeg", tts_wav, tts_result, adapter_error),
+                    "typed TTS must not relabel non-WAV payloads as WAV");
+
             const auto invalid_gguf_path = std::filesystem::temp_directory_path() /
                 ("lar-adapter-invalid-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".gguf");
             {
@@ -104,6 +178,98 @@ int main() {
                     "llama.cpp adapter must reject a GGUF filename without the GGUF magic header");
             std::error_code ignored;
             std::filesystem::remove(invalid_gguf_path, ignored);
+        }
+
+        stage("audio.cpp CPU process lifecycle smoke");
+        {
+            namespace asio = boost::asio;
+            namespace beast = boost::beast;
+            namespace http = beast::http;
+            using tcp = asio::ip::tcp;
+
+            asio::io_context port_ioc;
+            tcp::acceptor port_reserver(port_ioc, tcp::endpoint(asio::ip::make_address("127.0.0.1"), 0));
+            const auto port = port_reserver.local_endpoint().port();
+            port_reserver.close();
+
+            const auto temp_root = std::filesystem::temp_directory_path() /
+                ("lar-audio-cpp-lifecycle-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+            std::filesystem::create_directories(temp_root);
+            auto fake_server = temp_root / "audiocpp_server";
+#ifdef _WIN32
+            fake_server += ".exe";
+#endif
+            std::filesystem::copy_file(LAR_FAKE_HTTP_ENGINE, fake_server,
+                                       std::filesystem::copy_options::overwrite_existing);
+            lar::EngineConfig audio_config;
+            audio_config.id = "audio-cpp";
+            audio_config.adapter_id = "audio.cpp";
+            audio_config.display_name = "audio.cpp CPU lifecycle fake";
+            audio_config.executable_path = fake_server;
+            audio_config.working_directory = temp_root;
+            audio_config.args = {"--port", std::to_string(port)};
+            audio_config.upstream_base_url = "http://127.0.0.1:" + std::to_string(port);
+            audio_config.capabilities = {"asr", "tts"};
+
+            const auto probe = [&](std::string_view path) {
+                try {
+                    asio::io_context ioc;
+                    tcp::resolver resolver(ioc);
+                    beast::tcp_stream stream(ioc);
+                    stream.expires_after(std::chrono::milliseconds(350));
+                    stream.connect(resolver.resolve("127.0.0.1", std::to_string(port)));
+                    http::request<http::empty_body> request{http::verb::get, std::string(path), 11};
+                    request.set(http::field::host, "127.0.0.1");
+                    request.keep_alive(false);
+                    http::write(stream, request);
+                    beast::flat_buffer buffer;
+                    http::response<http::string_body> response;
+                    http::read(stream, buffer, response);
+                    return response.result() == http::status::ok &&
+                           (path == "/health" ? response.body().find("\"status\":\"ok\"") != std::string::npos
+                                               : response.body().find("fake-model") != std::string::npos);
+                } catch (...) {
+                    return false;
+                }
+            };
+
+            lar::EngineManager manager({audio_config});
+            std::string lifecycle_error;
+            require(manager.start("audio-cpp", lifecycle_error),
+                    (std::string("audio.cpp CPU process should start: ") + lifecycle_error).c_str());
+            const auto ready_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+            bool health_ready = false;
+            bool models_ready = false;
+            while (std::chrono::steady_clock::now() < ready_deadline && !(health_ready && models_ready)) {
+                health_ready = probe("/health");
+                models_ready = probe("/v1/models");
+                if (!(health_ready && models_ready)) std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            }
+            require(health_ready && models_ready,
+                    "audio.cpp CPU lifecycle smoke must pass GET /health and GET /v1/models");
+            auto states = manager.statuses();
+            require(states.size() == 1U && states.front().state == lar::ProcessState::running &&
+                    states.front().adapter_id == "audio.cpp",
+                    "audio.cpp should report its managed process state and typed adapter identity");
+            require(manager.stop("audio-cpp", lifecycle_error),
+                    (std::string("audio.cpp CPU process should stop cleanly: ") + lifecycle_error).c_str());
+            states = manager.statuses();
+            require(states.front().state == lar::ProcessState::stopped,
+                    "audio.cpp should report stopped after the first lifecycle pass");
+            require(manager.start("audio-cpp", lifecycle_error),
+                    (std::string("audio.cpp CPU process should restart: ") + lifecycle_error).c_str());
+            const auto restart_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+            health_ready = false;
+            models_ready = false;
+            while (std::chrono::steady_clock::now() < restart_deadline && !(health_ready && models_ready)) {
+                health_ready = probe("/health");
+                models_ready = probe("/v1/models");
+                if (!(health_ready && models_ready)) std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            }
+            require(health_ready && models_ready, "audio.cpp CPU restart must pass both readiness endpoints again");
+            require(manager.stop("audio-cpp", lifecycle_error), "audio.cpp CPU process should stop after restart");
+            std::error_code ignored;
+            std::filesystem::remove_all(temp_root, ignored);
         }
 
         stage("compiled reviewed component manifest");
@@ -184,6 +350,38 @@ int main() {
                 "the provenance source repository must match the immutable download URL");
         require(lar::catalog::is_known_engine_variant("cuda13") && !lar::catalog::is_known_engine_variant("unreviewed"),
                 "engine release resolver must only accept manifest-defined variants");
+
+        stage("audio.cpp exact Windows x64 release asset pins");
+        constexpr std::string_view audio_cpu_name = "audio-v0.9.3-bin-windows-x64-cpu.zip";
+        constexpr std::string_view audio_cpu_hash = "3ac66f46395b4e92e4f3bb68b200f0032310bd9922f12d97f10ccdadb02dee4b";
+        const std::string audio_cpu_url = "https://github.com/0xShug0/audio.cpp/releases/download/v0.9.3/" + std::string(audio_cpu_name);
+        require(lar::catalog::is_supported_audio_cpp_release_asset("server", audio_cpu_name, audio_cpu_url,
+                    audio_cpu_hash, 1024U, "cpu"),
+                "exact audio.cpp v0.9.3 Windows x64 CPU server artifact should pass the allowlist");
+        require(!lar::catalog::is_supported_audio_cpp_release_asset("server", audio_cpu_name, audio_cpu_url,
+                    audio_cpu_hash, 0U, "cpu"),
+                "audio.cpp package size must be a positive exact catalog pin");
+        require(!lar::catalog::is_supported_audio_cpp_release_asset("server", audio_cpu_name, audio_cpu_url + "?download=1",
+                    audio_cpu_hash, 1024U, "cpu"),
+                "audio.cpp release assets must reject query-string URL variants");
+        require(!lar::catalog::is_supported_audio_cpp_release_asset("server", audio_cpu_name, audio_cpu_url,
+                    std::string(64U, '0'), 1024U, "cpu"),
+                "audio.cpp release assets must match their upstream SHA-256 pin");
+        constexpr std::string_view audio_cuda_name = "audio-v0.9.3-bin-windows-x64-cuda13.3.zip";
+        constexpr std::string_view audio_cuda_hash = "0bd3988be10c31ec078c40df2bd0d4266e660804f6d5083aeb05d1309d091e43";
+        const std::string audio_cuda_url = "https://github.com/0xShug0/audio.cpp/releases/download/v0.9.3/" + std::string(audio_cuda_name);
+        require(lar::catalog::is_supported_audio_cpp_release_asset("server", audio_cuda_name, audio_cuda_url,
+                    audio_cuda_hash, 1024U, "cuda13.3"),
+                "exact audio.cpp CUDA 13.3 server artifact should pass the allowlist");
+        constexpr std::string_view audio_cudart_name = "audio-v0.9.3-cudart-windows-x64-cuda13.3.zip";
+        constexpr std::string_view audio_cudart_hash = "839eb20f684a8aab64895b1e466b32ce9b29dfc19dc1ce15b2ef35218512ac0a";
+        const std::string audio_cudart_url = "https://github.com/0xShug0/audio.cpp/releases/download/v0.9.3/" + std::string(audio_cudart_name);
+        require(lar::catalog::is_supported_audio_cpp_release_asset("runtime", audio_cudart_name, audio_cudart_url,
+                    audio_cudart_hash, 2048U, "cuda13.3"),
+                "exact audio.cpp CUDA 13.3 CUDART artifact should pass the allowlist");
+        require(!lar::catalog::is_supported_audio_cpp_release_asset("runtime", audio_cudart_name, audio_cudart_url,
+                    audio_cudart_hash, 2048U, "cpu"),
+                "CUDA runtime DLLs must not be paired with the CPU-only package variant");
 
         stage("runtime update version ordering");
         require(lar::DownloadManager::is_newer_release_tag("v0.1.1-alpha", "0.1.0-alpha"),
@@ -744,6 +942,9 @@ int main() {
                 lar::ActivityJobManager operation_jobs(operation_root);
                 interrupted_id = operation_jobs.begin("inference", "fake-engine", "Running local inference");
                 require(!interrupted_id.empty(), "runtime operation should be persisted before execution");
+                const auto audio_operation_id = operation_jobs.begin("audio-task", "audio-cpp", "Running ASR task");
+                require(!audio_operation_id.empty(), "typed audio task operations should be accepted by durable Activity history");
+                operation_jobs.succeed(audio_operation_id, "ASR task completed");
                 operation_jobs.report_progress(interrupted_id, "Streaming model output", 49152);
                 succeeded_id = operation_jobs.begin("engine-start", "fake-engine", "Starting engine");
                 require(!succeeded_id.empty(), "engine start operation should be persisted");

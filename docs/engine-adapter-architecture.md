@@ -6,7 +6,7 @@ The current C++ adapter contract is version `1`, exposed as `adapter_contract_ve
 
 ## Purpose
 
-The engine adapter is the boundary between Local AI Runtime's task-oriented API and a managed local inference server. The first implementation keeps llama.cpp as the only first-party managed engine. This milestone creates the contract and registry; it does not claim Ollama, ONNX Runtime, or media engines are implemented.
+The engine adapter is the lifecycle/protocol boundary for a managed local inference server. `EngineAdapter` v1 remains the Chat contract used by llama.cpp; Stage 13A adds the separate typed `TaskEngineAdapter` for audio.cpp tasks. This does not claim Ollama, ONNX Runtime or other media engines are implemented.
 
 ## Responsibilities
 
@@ -16,15 +16,16 @@ Each adapter declares a stable `adapter_id` and owns:
 - start/stop/status policy, delegating OS process ownership to `ManagedProcess` by default;
 - process identity and exit-state inspection, which can be overridden for service-backed adapters;
 - primary and optional fallback readiness endpoints;
-- the upstream chat-completion endpoint used by the normalized runtime API.
+- for Chat adapters, the upstream chat-completion endpoint used by the normalized Chat API. Non-Chat task protocols are represented by the separate `TaskEngineAdapter` contract below.
 
-The runtime continues to expose its same-origin `/v1/chat/completions` contract. The selected adapter determines the upstream readiness and completion paths. Streaming, cancellation, Activity persistence, resource telemetry and user-data ownership remain in the shared runtime services.
+The runtime continues to expose its same-origin `/v1/chat/completions` contract for Chat engines. `TaskEngineAdapter` owns typed non-Chat request/response translation; lifecycle, Activity persistence, resource telemetry and user-data ownership remain in shared runtime services.
 
 ## Registered adapters in this milestone
 
 | Adapter ID | Purpose | State |
 |---|---|---|
 | `llama.cpp` | Official `llama-server` process, GGUF model validation, `/health` with `/v1/models` fallback | Implemented first-party adapter |
+| `audio.cpp` | Managed audio.cpp server process, `/health` with `/v1/models` fallback; no Chat completions route | Stage 13A lifecycle adapter; native Windows package validation pending |
 | `openai-compatible-process` | Generic local process using an OpenAI-compatible `/v1/models` and `/v1/chat/completions` API | Compatibility base used by test/custom process configurations; not a separately cataloged engine product |
 
 Unknown adapter IDs are rejected. There is no arbitrary shell adapter and no user-supplied executable or remote URL is automatically trusted. Existing configs without `adapter_id` are migrated deterministically: `llama-cpp` maps to `llama.cpp`; other existing process configs map to `openai-compatible-process`.
@@ -38,20 +39,20 @@ New configurations persist `adapter_id` on each engine entry. The field is addit
 The following are not part of this milestone:
 
 - catalog installers for Ollama, ONNX Runtime, Whisper, image/video or music engines;
-- native request/response translation for non-OpenAI protocols;
+- additional typed task-family protocols beyond the Stage 13A audio.cpp ASR/TTS adapter;
 - model-format-specific loaders beyond the existing llama.cpp GGUF path;
 - hardware compatibility evidence and automatic backend selection.
 
 A future adapter that uses a different wire protocol must add an explicit request/response translation contract and tests. It must not silently masquerade as an OpenAI-compatible process. Each new adapter also requires manifest metadata, dependency/install strategy, platform packaging, lifecycle tests and real-task evidence before being shown as supported.
 
-## Future typed task adapters (planned; not implemented)
+## Typed task adapters (Stage 13A implementation)
 
 The v1 `EngineAdapter` is intentionally Chat-oriented: it exposes a readiness path and an upstream Chat completions path. It is not a general-purpose multimodal/task protocol. Do not register ASR, TTS, image generation, OCR, embeddings, video or 3D tools as `openai-compatible-process` merely because the executable can be started.
 
-Stage 13A (see [engine integration research](engine-integration-research.md)) will design a separate typed task-adapter boundary or an explicitly versioned successor contract. The first candidate is `audio.cpp`, whose server exposes `GET /health`, `GET /v1/models`, `POST /v1/audio/transcriptions`, `POST /v1/audio/speech`, and `POST /v1/tasks/run`. Its routes and binary audio request/response semantics do not match `/v1/chat/completions`.
+Stage 13A introduced a separate `TaskEngineAdapter` contract in `include/lar/task_adapter.hpp`; `audio.cpp` is registered as a managed process adapter while `EngineAdapter` v1 stays Chat-only. The typed operations are `asr.transcribe` (bounded WAV input, multipart upstream mapping, transcript result) and `tts.synthesize` (bounded JSON input, WAV artifact result). They are exposed through `POST /v1/tasks/asr/transcribe` and `POST /v1/tasks/tts/synthesize`. ASR accepts raw `audio/wav` bytes and the model/language identifiers in `X-LAR-Model` and `X-LAR-Language`; it does not accept a filesystem path. TTS accepts `model_id`, `text`, and optional `voice` JSON fields and responds with `audio/wav`. The current adapter advertises task cancellation as unsupported; the blocking upstream proxy does not yet provide per-task cancellation.
 
-The task contract must declare stable engine ID, task capabilities (initially `asr.transcribe` and `tts.synthesize`), config validation, process lifecycle, readiness, typed request/response mapping, bounded local file staging, output-artifact metadata, cancellation, per-task limits and engine-specific evidence. Keep prompt/audio content out of diagnostics by default. Reuse the existing managed-process, FIFO job queue, Activity and telemetry services only where their semantics remain correct.
+Process lifecycle uses `/health` and `/v1/models`. Activity records an `audio-task` operation but never includes audio bytes, transcript text, TTS text or local paths in diagnostics. Request bounds are 24 MiB WAV input/output and 64 KiB TTS JSON. `audio.cpp` is never registered as a default Chat engine and does not expose a Chat completions path.
 
-The catalog and installer must evolve independently and fail closed. Current manifest-v1 strategies (`llama-release` and `pinned-gguf`) do not describe an audio.cpp runtime archive pair or a multi-file model package. Add a reviewed installer strategy and/or a versioned manifest contract only after exact upstream release assets, model files, sizes, SHA-256 values, licenses and extraction behavior have been verified. No arbitrary URL, command or upstream model-manager script is permitted.
+The compiled catalog accepts `audio-cpp-release-set` only for exact v0.9.3 Windows x64 pins: one CPU server archive or a paired CUDA 13.3 server+CUDART archive. Each asset requires a fixed official URL, filename, SHA-256 and exact positive byte size. The installer downloads into per-user staging, checks size and hash, rejects unsafe archive entries, merges only regular files/directories, atomically activates and rolls back if config registration fails. The server config is written in staging before activation and uses a loopback-selected ephemeral port rather than a hard-coded listener port. Exact byte sizes have not yet been added to the shipped catalog because release page labels are rounded; no audio.cpp catalog entry is active until authoritative byte sizes are confirmed. This strategy does not yet install model assets.
 
-This section is an architecture decision and work plan, not a claim that task adapters or audio.cpp support already exist.
+Hosted tests cover a fake-engine CPU lifecycle, normalized task HTTP behavior and CPU/CUDA package-set allowlist fixtures. They are contract tests, not proof that the native audio.cpp package starts on Windows or that CUDA/model inference works. Those target-machine gates remain open.

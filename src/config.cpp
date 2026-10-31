@@ -111,11 +111,13 @@ bool is_valid_engine_id(const std::string& id) {
 }
 
 bool is_valid_engine_adapter_id(const std::string& id) {
-    return id == "llama.cpp" || id == "openai-compatible-process";
+    return id == "llama.cpp" || id == "openai-compatible-process" || id == "audio.cpp";
 }
 
 std::string default_engine_adapter_id(const std::string& engine_id) {
-    return engine_id == "llama-cpp" ? "llama.cpp" : "openai-compatible-process";
+    if (engine_id == "llama-cpp") return "llama.cpp";
+    if (engine_id == "audio-cpp") return "audio.cpp";
+    return "openai-compatible-process";
 }
 
 RuntimeConfig load_config(const std::filesystem::path& path) {

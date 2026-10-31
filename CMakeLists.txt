@@ -67,6 +67,7 @@ add_library(lar_core
     src/config.cpp
     src/catalog.cpp
     src/engine_adapter.cpp
+    src/task_adapter.cpp
     src/process.cpp
     src/downloads.cpp
     src/activity_jobs.cpp
@@ -131,8 +132,9 @@ if(LAR_BUILD_TESTS)
     target_compile_definitions(lar_core_tests PRIVATE
         LAR_TEST_CONFIG="${CMAKE_CURRENT_SOURCE_DIR}/config/engines.example.json"
         LAR_FAKE_ENGINE="$<TARGET_FILE:lar_fake_engine>"
+        LAR_FAKE_HTTP_ENGINE="$<TARGET_FILE:lar_fake_http_engine>"
     )
-    add_dependencies(lar_core_tests lar_fake_engine)
+    add_dependencies(lar_core_tests lar_fake_engine lar_fake_http_engine)
     add_test(NAME lar_core_tests COMMAND lar_core_tests)
     # Keep a stalled platform-specific core test from consuming the full CI job timeout.
     # Verbose CTest output in CI makes the final [core-tests] stage visible on timeout.
@@ -186,6 +188,17 @@ if(LAR_BUILD_TESTS)
         )
         set_tests_properties(lar_http_smoke PROPERTIES
             TIMEOUT 60
+            WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+        )
+        add_test(
+            NAME lar_task_http_smoke
+            COMMAND "${Python3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/task_http_smoke.py"
+                    --runtime "$<TARGET_FILE:local-ai-runtime>"
+                    --fake-engine "$<TARGET_FILE:lar_fake_http_engine>"
+        )
+        set_tests_properties(lar_task_http_smoke PROPERTIES
+            TIMEOUT 45
             WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
         )
     else()

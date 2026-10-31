@@ -83,10 +83,15 @@ private:
     std::size_t outstanding_install_job_count_locked() const;
     void download_model(const std::shared_ptr<Job>& job);
     void download_engine(const std::shared_ptr<Job>& job, const std::string& variant);
+    void download_audio_cpp_release_set(const std::shared_ptr<Job>& job);
     void download_runtime_update(const std::shared_ptr<Job>& job);
     void configure_llama_engine(const std::filesystem::path& executable,
                                 const std::filesystem::path& model,
                                 const std::string& variant);
+    void configure_audio_cpp_engine(const std::filesystem::path& executable,
+                                    const std::filesystem::path& config_file,
+                                    const std::string& backend,
+                                    unsigned short port);
 
     RuntimeConfig config_;
     EngineManager& engines_;

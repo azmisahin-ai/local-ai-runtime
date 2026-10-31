@@ -47,14 +47,17 @@ The upstream project describes itself as a native C++ inference framework based 
 
 ### 1.2 Windows package choice
 
-The upstream Windows package notes specify:
+The official `v0.9.3` release asset list was re-opened on 2026-10-31. The exact Windows x64 assets selected for the Local AI Runtime allowlist are:
 
-- Windows x64 CPU packages: `audiocpp-windows-cpu-fast.zip`, `audiocpp-windows-cpu-balance.zip`, `audiocpp-windows-cpu-portable.zip`.
-- CUDA is split into a shared `audiocpp-windows-cuda-runtime.zip` and one profile package such as `audiocpp-windows-cuda-balance.zip`.
-- `balance` is the recommended general-purpose release profile; `fast` may be tied to the build CPU ISA, while `portable` trades speed for compatibility.
-- CUDA runtime prerequisites: NVIDIA compute capability 7.5 or newer and driver 580 or newer. Model files are separate. The supplied CUDA runtime DLL archive means the user should not need to install the CUDA Toolkit or Visual Studio Build Tools merely to run the prebuilt package.
-- The CUDA package also contains the CPU backend, so the same CUDA-enabled build can be launched with CPU backend selection as a fallback.
+| Role | Exact release asset | SHA-256 pinned in code | Release page size label |
+|---|---|---|---:|
+| CPU server | `audio-v0.9.3-bin-windows-x64-cpu.zip` | `3ac66f46395b4e92e4f3bb68b200f0032310bd9922f12d97f10ccdadb02dee4b` | 29.1 MB |
+| CUDA 13.3 server | `audio-v0.9.3-bin-windows-x64-cuda13.3.zip` | `0bd3988be10c31ec078c40df2bd0d4266e660804f6d5083aeb05d1309d091e43` | 264 MB |
+| CUDA 13.3 runtime | `audio-v0.9.3-cudart-windows-x64-cuda13.3.zip` | `839eb20f684a8aab64895b1e466b32ce9b29dfc19dc1ce15b2ef35218512ac0a` | 549 MB |
 
+These differ from the older generic `audiocpp-windows-*-balance.zip` names in the original research notes. The standard CPU server archive is the selected general-purpose CPU pilot; v0.9.3 also publishes a separate `audio-v0.9.3-bin-windows-x64-cpu-portable.zip` (SHA-256 `f5fa4662b7ec323dbe31d37e224e46159b064836a9005da384551a5248771eeb`, release page label 29 MB) for broader baseline-ISA compatibility. The CUDA package is specifically a CUDA 13.3 server archive plus its separate CUDART archive. The release page shows rounded MB labels, not exact bytes; those display values must **not** be converted into guessed byte sizes. The manifest strategy requires an exact positive byte size and the exact SHA-256 for every asset, so no installable audio.cpp catalog record is active until exact bytes are confirmed from authoritative release metadata.
+
+The published Windows CUDA prerequisites remain compute capability 7.5 or newer and NVIDIA driver 580 or newer. Model files are separate. The prebuilt archive supplies runtime DLLs; the user should not need to install the CUDA Toolkit or Visual Studio Build Tools merely to execute the prebuilt package. The CUDA build also contains the CPU backend, allowing CPU fallback selection after package installation.
 The user's GPU (compute capability 8.6) and driver (616.92) meet these published prerequisites. This is **package eligibility only**, not a claim that a given audio model fits in 6 GB VRAM or that CUDA inference has been validated.
 
 **Pinning rule:** do not resolve a floating `latest` release at installation time. For the catalog, pin `v0.9.3`, exact approved asset names, exact byte sizes and SHA-256 digests obtained from the official release API. Confirm that the selected pair is from the same release. Re-check release state immediately before implementation; this research snapshot must not be treated as a permanent version pin.
@@ -107,18 +110,9 @@ This is a task-oriented audio API, not the current Local AI Runtime OpenAI-compa
 
 The current Local AI Runtime manifest-v1 installer allowlist only supports the constrained `llama-release` and `pinned-gguf` strategies. The public component-v1 schema describes engines/models but this does not make an installer available for a new component. Current `pinned-gguf` supports one file; ASR/TTS model packages may require a pinned set of files or a model-directory bundle.
 
-Before adding audio.cpp to the user catalog, design a fail-closed manifest evolution that can represent:
+Stage 13A implemented the first fail-closed `audio-cpp-release-set` manifest strategy and installer path. It currently represents a pinned v0.9.3 Windows x64 CPU server archive, or the pinned CUDA 13.3 server + CUDART pair; validates exact upstream filenames, URLs, SHA-256 and bounded exact byte sizes; downloads into per-user staging; safely extracts and merges regular files/directories only; then atomically activates and registers the non-Chat task engine with rollback. The catalog intentionally contains no enabled audio.cpp component until exact byte sizes are confirmed. This first strategy does not yet install model weights.
 
-- a pinned upstream release tag and exact engine artifact set (CUDA runtime + CUDA profile package, or CPU balance package), with per-asset byte size and SHA-256;
-- a pinned immutable model repository revision and explicit file list, each with safe relative path, exact size and SHA-256, or one upstream release package containing a verifiable model bundle;
-- license IDs/URLs for the engine and the exact model weights, reviewed separately;
-- dependencies and aggregate progress under one parent job;
-- safe extraction (regular files/directories only; reject traversal, symlinks, hardlinks and special files), staging, checksum verification, atomic activation and rollback;
-- Windows x64 target metadata and CPU/CUDA backend availability;
-- exact model-family/runtime compatibility rather than assuming that arbitrary GGUF checkpoints work across llama.cpp, whisper.cpp and audio.cpp.
-
-Do not execute an upstream Python model-manager script as an installer. The native `audiocpp_model_manager` exists in certain native builds, but Local AI Runtime should own a reviewed, declarative, digest-verified download plan rather than running repository-provided commands from the model or engine package.
-
+Remaining catalog/distribution work includes a pinned immutable model repository revision and explicit file list (safe relative paths, exact sizes and SHA-256) or a verifiable upstream model bundle; separately reviewed engine/model license identifiers and URLs; and dependency/model-install progress under a parent job. Do not execute an upstream Python model-manager script as an installer. The native `audiocpp_model_manager` exists in certain native builds, but Local AI Runtime owns a reviewed, declarative, digest-verified download plan rather than running repository-provided commands from a model or engine package.
 ## 2. Speech alternatives (defer until audio.cpp comparison)
 
 ### whisper.cpp

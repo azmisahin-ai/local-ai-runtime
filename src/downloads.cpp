@@ -6,6 +6,7 @@
 #include <archive_entry.h>
 #include <curl/curl.h>
 #include <openssl/evp.h>
+#include <boost/asio.hpp>
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
 
@@ -22,6 +23,7 @@
 #include <memory>
 #include <optional>
 #include <regex>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string_view>
@@ -79,6 +81,20 @@ constexpr std::uint64_t kMaximumArchiveExpandedBytes = 3ULL * 1024ULL * 1024ULL 
 constexpr std::uint64_t kMaximumReleaseAssetBytes = 2ULL * 1024ULL * 1024ULL * 1024ULL;
 constexpr std::uint64_t kMaximumRuntimeUpdateBytes = 256ULL * 1024ULL * 1024ULL;
 constexpr std::size_t kMaximumOutstandingInstallJobs = 16;
+
+unsigned short select_loopback_port() {
+    boost::asio::io_context io;
+    boost::asio::ip::tcp::acceptor acceptor(io);
+    boost::system::error_code error;
+    acceptor.open(boost::asio::ip::tcp::v4(), error);
+    if (error) throw std::runtime_error("Could not open a loopback port reservation socket: " + error.message());
+    acceptor.bind({boost::asio::ip::address_v4::loopback(), 0}, error);
+    if (error) throw std::runtime_error("Could not reserve an available loopback port for audio.cpp: " + error.message());
+    const auto port = acceptor.local_endpoint(error).port();
+    if (error || port == 0) throw std::runtime_error("Could not determine the reserved audio.cpp loopback port.");
+    acceptor.close(error);
+    return port;
+}
 
 const catalog::ComponentDefinition& pinned_model_component(std::string_view id) {
     const auto* component = catalog::find_component(id);
@@ -556,7 +572,8 @@ bool path_is_within(const std::filesystem::path& root, const std::filesystem::pa
 
 void extract_archive_safely(const std::filesystem::path& archive_path,
                             const std::filesystem::path& destination,
-                            const std::shared_ptr<DownloadManager::Job>& job) {
+                            const std::shared_ptr<DownloadManager::Job>& job,
+                            std::uint64_t* aggregate_expanded_bytes = nullptr) {
     std::error_code fs_error;
     std::filesystem::create_directories(destination, fs_error);
     if (fs_error) throw std::runtime_error("Could not create the engine staging directory: " + fs_error.message());
@@ -599,8 +616,10 @@ void extract_archive_safely(const std::filesystem::path& archive_path,
             throw std::runtime_error("The engine archive contains a link or special file; only regular files and directories are allowed.");
         }
         const auto declared_size = archive_entry_size(entry);
-        if (declared_size < 0 || static_cast<std::uint64_t>(declared_size) > kMaximumArchiveExpandedBytes - total_written) {
-            throw std::runtime_error("The engine archive expands beyond the 3 GiB safety limit.");
+        if (declared_size < 0 || static_cast<std::uint64_t>(declared_size) > kMaximumArchiveExpandedBytes - total_written ||
+            (aggregate_expanded_bytes && static_cast<std::uint64_t>(declared_size) >
+                kMaximumArchiveExpandedBytes - *aggregate_expanded_bytes)) {
+            throw std::runtime_error("The engine archive set expands beyond the combined 3 GiB safety limit.");
         }
         std::filesystem::create_directories(output_path.parent_path(), fs_error);
         if (fs_error) throw std::runtime_error("Could not create an extracted file directory: " + fs_error.message());
@@ -611,10 +630,15 @@ void extract_archive_safely(const std::filesystem::path& archive_path,
             const auto count = archive_read_data(reader.get(), buffer.data(), buffer.size());
             if (count == 0) break;
             if (count < 0) throw std::runtime_error(std::string("Could not read engine archive contents: ") + archive_error_string(reader.get()));
+            const auto bytes_written = static_cast<std::uint64_t>(count);
+            if (bytes_written > kMaximumArchiveExpandedBytes - total_written ||
+                (aggregate_expanded_bytes && bytes_written > kMaximumArchiveExpandedBytes - *aggregate_expanded_bytes)) {
+                throw std::runtime_error("The engine archive set expands beyond the combined 3 GiB safety limit.");
+            }
             output.write(buffer.data(), static_cast<std::streamsize>(count));
             if (!output) throw std::runtime_error("Could not write extracted engine file (check free disk space).");
-            total_written += static_cast<std::uint64_t>(count);
-            if (total_written > kMaximumArchiveExpandedBytes) throw std::runtime_error("The engine archive expands beyond the 3 GiB safety limit.");
+            total_written += bytes_written;
+            if (aggregate_expanded_bytes) *aggregate_expanded_bytes += bytes_written;
         }
         output.flush();
         if (!output) throw std::runtime_error("Failed writing an extracted engine file.");
@@ -626,6 +650,67 @@ void extract_archive_safely(const std::filesystem::path& archive_path,
         std::filesystem::permissions(output_path, perms, std::filesystem::perm_options::replace, fs_error);
         fs_error.clear();
 #endif
+    }
+}
+
+std::optional<std::filesystem::path> find_audio_cpp_server(const std::filesystem::path& root) {
+    if (!std::filesystem::exists(root)) return std::nullopt;
+    std::error_code error;
+    for (std::filesystem::recursive_directory_iterator it(root, std::filesystem::directory_options::skip_permission_denied, error), end;
+         it != end; it.increment(error)) {
+        if (error) { error.clear(); continue; }
+        const auto status = it->symlink_status(error);
+        if (error) { error.clear(); continue; }
+        if (!std::filesystem::is_regular_file(status)) continue;
+        const auto filename = lower_ascii(it->path().filename().string());
+#ifdef _WIN32
+        if (filename == "audiocpp_server.exe" || filename == "audiocpp_server") return it->path();
+#else
+        if (filename == "audiocpp_server") return it->path();
+#endif
+    }
+    return std::nullopt;
+}
+
+void merge_verified_archive_tree(const std::filesystem::path& source,
+                                 const std::filesystem::path& destination) {
+    std::error_code error;
+    std::filesystem::create_directories(destination, error);
+    if (error) throw std::runtime_error("Could not create the merged package staging directory: " + error.message());
+    for (std::filesystem::recursive_directory_iterator it(source, std::filesystem::directory_options::none, error), end;
+         it != end; it.increment(error)) {
+        if (error) throw std::runtime_error("Could not enumerate a verified archive payload: " + error.message());
+        const auto status = it->symlink_status(error);
+        if (error) throw std::runtime_error("Could not inspect a verified archive entry: " + error.message());
+        if (std::filesystem::is_symlink(status) || (!std::filesystem::is_directory(status) && !std::filesystem::is_regular_file(status))) {
+            throw std::runtime_error("A verified archive payload contains a link or special file; refusing package merge.");
+        }
+        const auto relative = it->path().lexically_relative(source);
+        if (relative.empty() || relative.is_absolute() || relative.has_root_name()) {
+            throw std::runtime_error("A verified archive payload produced an invalid relative path.");
+        }
+        for (const auto& part : relative) if (part == ".." || part == ".") {
+            throw std::runtime_error("A verified archive payload path escaped its staging root.");
+        }
+        const auto target = destination / relative;
+        if (!path_is_within(destination, target)) throw std::runtime_error("A verified archive payload path escaped its destination.");
+        if (std::filesystem::is_directory(status)) {
+            std::filesystem::create_directories(target, error);
+            if (error) throw std::runtime_error("Could not merge a verified package directory: " + error.message());
+        } else {
+            std::filesystem::create_directories(target.parent_path(), error);
+            if (error) throw std::runtime_error("Could not prepare a verified package file destination: " + error.message());
+            if (std::filesystem::exists(target, error) && !error) {
+                const auto target_status = std::filesystem::symlink_status(target, error);
+                if (error || !std::filesystem::is_regular_file(target_status) || DownloadManager::sha256_file(target) != DownloadManager::sha256_file(it->path())) {
+                    throw std::runtime_error("The audio.cpp package archives contain conflicting files: " + relative.string());
+                }
+            } else {
+                error.clear();
+                std::filesystem::copy_file(it->path(), target, std::filesystem::copy_options::none, error);
+                if (error) throw std::runtime_error("Could not merge a verified package file: " + error.message());
+            }
+        }
     }
 }
 
@@ -1002,7 +1087,7 @@ void DownloadManager::load_jobs() {
                     const auto* component = catalog::find_component(job->item_id);
                     safe_to_resume = job->license_accepted && component && component->installable &&
                         component->kind == job->kind &&
-                        (component->installer == "llama-release" || component->installer == "pinned-gguf") &&
+                        (component->installer == "llama-release" || component->installer == "pinned-gguf" || component->installer == "audio-cpp-release-set") &&
                         catalog::supports_target(*component, host_os(), host_architecture());
                 }
                 if (!safe_to_resume || job->cancel_requested.load()) {
@@ -1273,6 +1358,11 @@ std::string DownloadManager::catalog_json() const {
                     }
                 }
             }
+        } else if (component.installer == "audio-cpp-release-set") {
+            const auto engine_root = root / "engines" / "audio.cpp";
+            const auto version_dir = engine_root / ("0.9.3-" + component.variant);
+            installed_path = version_dir;
+            installed = find_audio_cpp_server(version_dir).has_value();
         }
 
         if (!first) out << ',';
@@ -1507,7 +1597,7 @@ bool DownloadManager::start(const std::string& item_id, bool accept_license,
     if (!accept_license) { error = "Confirm that you reviewed the upstream license before downloading."; return false; }
     const auto* component = catalog::find_component(item_id);
     if (!component || !component->installable ||
-        (component->installer != "llama-release" && component->installer != "pinned-gguf")) {
+        (component->installer != "llama-release" && component->installer != "pinned-gguf" && component->installer != "audio-cpp-release-set")) {
         error = "This item is not in the compiled reviewed catalog manifest.";
         return false;
     }
@@ -1871,6 +1961,7 @@ void DownloadManager::run_job(const std::shared_ptr<Job>& job) {
             }
             if (component->installer == "pinned-gguf") download_model(job);
             else if (component->installer == "llama-release") download_engine(job, component->variant);
+            else if (component->installer == "audio-cpp-release-set") download_audio_cpp_release_set(job);
             else throw std::runtime_error("The catalog manifest contains an unsupported installer strategy.");
         }
         mutate_job(job, [](DownloadManager::Job& current) {
@@ -2247,6 +2338,194 @@ void DownloadManager::download_engine(const std::shared_ptr<Job>& job, const std
         throw;
     }
     mutate_job(job, [&](DownloadManager::Job& current) { current.installed_path = path_to_utf8(final_dir); });
+}
+
+void DownloadManager::download_audio_cpp_release_set(const std::shared_ptr<Job>& job) {
+    const auto* component = catalog::find_component(job->item_id);
+    if (!component || component->kind != "engine" || component->installer != "audio-cpp-release-set" ||
+        (component->variant != "cpu" && component->variant != "cuda13.3") || component->assets.empty()) {
+        throw std::runtime_error("The queued audio.cpp package no longer matches its reviewed release-set policy.");
+    }
+    std::set<std::string> roles;
+    std::uint64_t total_size = 0;
+    for (const auto& asset : component->assets) {
+        if (!catalog::is_supported_audio_cpp_release_asset(asset.role, asset.filename, asset.url,
+                                                           asset.sha256, asset.size_bytes, component->variant) ||
+            !roles.insert(asset.role).second || asset.size_bytes > std::numeric_limits<std::uint64_t>::max() - total_size) {
+            throw std::runtime_error("The audio.cpp package manifest failed its exact upstream asset allowlist.");
+        }
+        total_size += asset.size_bytes;
+    }
+    if ((component->variant == "cpu" && (component->assets.size() != 1U || roles.count("server") != 1U)) ||
+        (component->variant == "cuda13.3" &&
+         (component->assets.size() != 2U || roles.count("server") != 1U || roles.count("runtime") != 1U))) {
+        throw std::runtime_error("The selected audio.cpp CPU/CUDA package set is incomplete.");
+    }
+    mutate_job(job, [&](DownloadManager::Job& current) {
+        current.state = "downloading";
+        current.version = "v0.9.3";
+        current.total_bytes = total_size;
+        current.downloaded_bytes = 0;
+        current.phase = component->variant == "cpu"
+            ? "Downloading pinned audio.cpp v0.9.3 Windows x64 CPU package"
+            : "Downloading pinned audio.cpp v0.9.3 CUDA 13.3 server and runtime package pair";
+    });
+
+    const auto data_root = user_data_directory();
+    const auto stage_root = data_root / "staging" / job->id;
+    std::error_code fs_error;
+    std::filesystem::create_directories(data_root / "staging", fs_error);
+    if (fs_error) throw std::runtime_error("Could not create the audio.cpp staging directory: " + fs_error.message());
+    const auto available = std::filesystem::space(data_root / "staging", fs_error);
+    const auto required_free_space = total_size * 3ULL + 512ULL * 1024ULL * 1024ULL;
+    if (fs_error || available.available < required_free_space) {
+        throw std::runtime_error("Not enough free disk space to stage and activate audio.cpp safely. No engine files were activated.");
+    }
+    std::filesystem::remove_all(stage_root, fs_error);
+    fs_error.clear();
+    std::filesystem::create_directories(stage_root, fs_error);
+    if (fs_error) throw std::runtime_error("Could not create the audio.cpp staging directory: " + fs_error.message());
+
+    try {
+        const auto merged = stage_root / "merged";
+        std::uint64_t progress_offset = 0;
+        std::uint64_t aggregate_expanded_bytes = 0;
+        for (std::size_t index = 0; index < component->assets.size(); ++index) {
+            const auto& asset = component->assets[index];
+            const auto archive_path = stage_root / asset.filename;
+            mutate_job(job, [&](DownloadManager::Job& current) {
+                current.state = "downloading";
+                current.phase = "Downloading pinned audio.cpp asset " + asset.role + " (" +
+                    std::to_string(index + 1U) + "/" + std::to_string(component->assets.size()) + ")";
+            });
+            download_to_file(asset.url, archive_path, asset.size_bytes, job, progress_offset, total_size);
+            progress_offset += asset.size_bytes;
+            mutate_job(job, [&](DownloadManager::Job& current) {
+                current.state = "verifying";
+                current.phase = "Verifying SHA-256 for audio.cpp " + asset.role + " package";
+            });
+            if (sha256_file(archive_path) != asset.sha256) {
+                throw std::runtime_error("The audio.cpp " + asset.role + " archive SHA-256 did not match its pinned release digest. The archive set was discarded.");
+            }
+            const auto extracted = stage_root / ("extracted-" + asset.role);
+            mutate_job(job, [&](DownloadManager::Job& current) {
+                current.state = "extracting";
+                current.phase = "Safely extracting audio.cpp " + asset.role + " package";
+            });
+            extract_archive_safely(archive_path, extracted, job, &aggregate_expanded_bytes);
+            merge_verified_archive_tree(extracted, merged);
+            std::filesystem::remove_all(extracted, fs_error);
+            if (fs_error) throw std::runtime_error("Could not clean a merged audio.cpp package staging tree: " + fs_error.message());
+        }
+
+        const auto server = find_audio_cpp_server(merged);
+        if (!server) throw std::runtime_error("The verified audio.cpp package set does not contain audiocpp_server.exe.");
+        const auto server_relative = server->lexically_relative(merged);
+        if (server_relative.empty() || server_relative.is_absolute() || server_relative.has_root_name()) {
+            throw std::runtime_error("The verified audio.cpp server path is not relative to its staging root.");
+        }
+        for (const auto& part : server_relative) if (part == ".." || part == ".") {
+            throw std::runtime_error("The verified audio.cpp server path escaped its staging root.");
+        }
+        const auto final_dir = data_root / "engines" / "audio.cpp" / ("0.9.3-" + component->variant);
+        std::filesystem::create_directories(final_dir.parent_path(), fs_error);
+        if (fs_error) throw std::runtime_error("Could not create the audio.cpp installation directory: " + fs_error.message());
+        if (std::filesystem::exists(final_dir)) {
+            throw std::runtime_error("This audio.cpp version/backend is already installed; an existing package was left unchanged.");
+        }
+
+        // Prepare all generated configuration inside staging so activation is a
+        // single directory rename. The ephemeral port is still rechecked by the
+        // process readiness probe after the engine starts.
+        const auto audio_port = select_loopback_port();
+        const auto staged_config = merged / "local-ai-runtime-server.json";
+        {
+            std::ofstream output(staged_config, std::ios::binary | std::ios::trunc);
+            if (!output) throw std::runtime_error("Could not create the audio.cpp API-only server configuration.");
+            output << "{\n  \"host\": \"127.0.0.1\",\n  \"port\": " << audio_port
+                   << ",\n  \"backend\": \"" << (component->variant == "cpu" ? "cpu" : "cuda")
+                   << "\",\n  \"lazy_load\": true,\n  \"max_loaded_models\": 1,\n  \"models\": []\n}\n";
+            output.flush();
+            if (!output) throw std::runtime_error("Could not finish writing the audio.cpp server configuration.");
+        }
+
+        std::filesystem::rename(merged, final_dir, fs_error);
+        if (fs_error) throw std::runtime_error("Could not atomically activate the verified audio.cpp package: " + fs_error.message());
+        try {
+            const auto installed_server = final_dir / server_relative;
+            const auto server_config = final_dir / "local-ai-runtime-server.json";
+            if (!std::filesystem::is_regular_file(installed_server) || !std::filesystem::is_regular_file(server_config)) {
+                throw std::runtime_error("The activated audio.cpp server package is incomplete.");
+            }
+            mutate_job(job, [](DownloadManager::Job& current) {
+                current.state = "configuring";
+                current.phase = "Registering audio.cpp as a task engine without changing the Chat engine or model profile";
+            });
+            configure_audio_cpp_engine(installed_server, server_config,
+                                       component->variant == "cpu" ? "cpu" : "cuda", audio_port);
+        } catch (...) {
+            // Activation is atomic and configuration registration is the only
+            // post-activation operation. Roll back the entire version folder
+            // if that registration fails, leaving existing user data untouched.
+            std::error_code rollback_error;
+            std::filesystem::remove_all(final_dir, rollback_error);
+            throw;
+        }
+        std::filesystem::remove_all(stage_root, fs_error);
+        mutate_job(job, [&](DownloadManager::Job& current) { current.installed_path = path_to_utf8(final_dir); });
+        log_diagnostic("INFO", "engine.audio_cpp.activated", "variant=" + component->variant + " version=v0.9.3");
+    } catch (...) {
+        std::error_code cleanup_error;
+        std::filesystem::remove_all(stage_root, cleanup_error);
+        throw;
+    }
+}
+
+void DownloadManager::configure_audio_cpp_engine(const std::filesystem::path& executable,
+                                                 const std::filesystem::path& config_file,
+                                                 const std::string& backend,
+                                                 unsigned short port) {
+    if (config_.source_path.empty()) {
+        throw std::runtime_error("The runtime configuration path is unknown; cannot register the audio.cpp task engine.");
+    }
+    if ((backend != "cpu" && backend != "cuda") || port == 0 ||
+        !std::filesystem::is_regular_file(executable) || !std::filesystem::is_regular_file(config_file)) {
+        throw std::runtime_error("The audio.cpp executable, server configuration or backend is invalid.");
+    }
+    auto candidates = engines_.configurations();
+    const auto existing = std::find_if(candidates.begin(), candidates.end(), [](const EngineConfig& engine) {
+        return engine.id == "audio-cpp";
+    });
+    if (existing != candidates.end() && !existing->executable_path.empty() &&
+        std::filesystem::exists(existing->executable_path)) {
+        throw std::runtime_error("An audio.cpp engine is already configured; refusing to replace user-owned engine settings.");
+    }
+    EngineConfig engine;
+    if (existing != candidates.end()) engine = *existing;
+    engine.id = "audio-cpp";
+    engine.adapter_id = "audio.cpp";
+    engine.display_name = "audio.cpp task server";
+    engine.executable_path = executable;
+    engine.model_path.clear();
+    engine.working_directory = executable.parent_path();
+    engine.args = {"--config", path_to_utf8(config_file), "--no-ui"};
+    engine.upstream_base_url = "http://127.0.0.1:" + std::to_string(port);
+    engine.capabilities = {"asr.transcribe", "tts.synthesize"};
+    engine.default_for_chat = false;
+    if (existing == candidates.end()) candidates.push_back(engine);
+    else *existing = engine;
+
+    RuntimeConfig next_config = config_;
+    next_config.engines = candidates;
+    const auto persist = [&](std::string& persist_error) {
+        try { save_config(config_.source_path, next_config); return true; }
+        catch (const std::exception& ex) { persist_error = std::string("Could not save audio.cpp task-engine configuration: ") + ex.what(); return false; }
+    };
+    std::string error;
+    if (!engines_.replace_configs(candidates, persist, error)) {
+        throw std::runtime_error("Could not register the audio.cpp task engine: " + error);
+    }
+    config_ = std::move(next_config);
 }
 
 void DownloadManager::configure_llama_engine(const std::filesystem::path& executable,

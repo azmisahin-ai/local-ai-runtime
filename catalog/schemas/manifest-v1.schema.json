@@ -5,74 +5,361 @@
   "description": "Reviewed build-time source for public component metadata and the local installer allowlist. The manifest is embedded into the runtime binary; it is never downloaded or loaded from a user-writable path.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "manifest_version", "components"],
+  "required": [
+    "schema_version",
+    "manifest_version",
+    "components"
+  ],
   "properties": {
-    "schema_version": { "const": 1 },
-    "manifest_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "schema_version": {
+      "const": 1
+    },
+    "manifest_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
     "components": {
       "type": "array",
       "minItems": 1,
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "kind", "installable", "default_model", "install", "metadata_json"],
+        "required": [
+          "id",
+          "kind",
+          "installable",
+          "default_model",
+          "install",
+          "metadata_json"
+        ],
         "properties": {
-          "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" },
-          "kind": { "enum": ["engine", "model"] },
-          "installable": { "const": true },
-          "default_model": { "type": "boolean" },
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+          },
+          "kind": {
+            "enum": [
+              "engine",
+              "model"
+            ]
+          },
+          "installable": {
+            "const": true
+          },
+          "default_model": {
+            "type": "boolean"
+          },
           "install": {
             "type": "object",
-            "required": ["strategy", "targets"],
+            "required": [
+              "strategy",
+              "targets"
+            ],
             "properties": {
-              "strategy": { "enum": ["llama-release", "pinned-gguf"] },
-              "variant": { "enum": ["cpu", "cuda12", "cuda13"] },
-              "filename": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$" },
-              "url": { "type": "string", "pattern": "^https://huggingface\\.co/[A-Za-z0-9][A-Za-z0-9._-]{0,95}/[A-Za-z0-9][A-Za-z0-9._-]{0,95}/resolve/[a-fA-F0-9]{40}/[A-Za-z0-9][A-Za-z0-9._-]{0,254}$" },
-              "sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" },
-              "size_bytes": { "type": "integer", "minimum": 1 },
+              "strategy": {
+                "enum": [
+                  "llama-release",
+                  "pinned-gguf",
+                  "audio-cpp-release-set"
+                ]
+              },
+              "variant": {
+                "enum": [
+                  "cpu",
+                  "cuda12",
+                  "cuda13",
+                  "cuda13.3"
+                ]
+              },
+              "filename": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$"
+              },
+              "url": {
+                "type": "string",
+                "pattern": "^https://huggingface\\.co/[A-Za-z0-9][A-Za-z0-9._-]{0,95}/[A-Za-z0-9][A-Za-z0-9._-]{0,95}/resolve/[a-fA-F0-9]{40}/[A-Za-z0-9][A-Za-z0-9._-]{0,254}$"
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[a-fA-F0-9]{64}$"
+              },
+              "size_bytes": {
+                "type": "integer",
+                "minimum": 1
+              },
               "targets": {
                 "type": "array",
                 "minItems": 1,
                 "items": {
                   "type": "object",
                   "additionalProperties": false,
-                  "required": ["platform", "architecture"],
+                  "required": [
+                    "platform",
+                    "architecture"
+                  ],
                   "properties": {
-                    "platform": { "enum": ["windows", "linux", "macos"] },
-                    "architecture": { "enum": ["x64", "arm64"] }
+                    "platform": {
+                      "enum": [
+                        "windows",
+                        "linux",
+                        "macos"
+                      ]
+                    },
+                    "architecture": {
+                      "enum": [
+                        "x64",
+                        "arm64"
+                      ]
+                    }
+                  }
+                }
+              },
+              "assets": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 2,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "role",
+                    "filename",
+                    "url",
+                    "sha256",
+                    "size_bytes"
+                  ],
+                  "properties": {
+                    "role": {
+                      "enum": [
+                        "server",
+                        "runtime"
+                      ]
+                    },
+                    "filename": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$"
+                    },
+                    "url": {
+                      "type": "string",
+                      "pattern": "^https://github\\.com/0xShug0/audio\\.cpp/releases/download/v0\\.9\\.3/[A-Za-z0-9][A-Za-z0-9._-]{0,254}$"
+                    },
+                    "sha256": {
+                      "type": "string",
+                      "pattern": "^[a-fA-F0-9]{64}$"
+                    },
+                    "size_bytes": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 2147483648
+                    }
                   }
                 }
               }
             },
             "allOf": [
               {
-                "if": { "properties": { "strategy": { "const": "llama-release" } }, "required": ["strategy"] },
-                "then": { "required": ["variant"], "properties": { "filename": false, "url": false, "sha256": false, "size_bytes": false } }
+                "if": {
+                  "properties": {
+                    "strategy": {
+                      "const": "llama-release"
+                    }
+                  },
+                  "required": [
+                    "strategy"
+                  ]
+                },
+                "then": {
+                  "required": [
+                    "variant"
+                  ],
+                  "properties": {
+                    "filename": false,
+                    "url": false,
+                    "sha256": false,
+                    "size_bytes": false
+                  }
+                }
               },
               {
-                "if": { "properties": { "strategy": { "const": "pinned-gguf" } }, "required": ["strategy"] },
-                "then": { "required": ["filename", "url", "sha256", "size_bytes"], "properties": { "variant": false } }
+                "if": {
+                  "properties": {
+                    "strategy": {
+                      "const": "pinned-gguf"
+                    }
+                  },
+                  "required": [
+                    "strategy"
+                  ]
+                },
+                "then": {
+                  "required": [
+                    "filename",
+                    "url",
+                    "sha256",
+                    "size_bytes"
+                  ],
+                  "properties": {
+                    "variant": false
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "strategy": {
+                      "const": "audio-cpp-release-set"
+                    }
+                  },
+                  "required": [
+                    "strategy"
+                  ]
+                },
+                "then": {
+                  "required": [
+                    "variant",
+                    "assets"
+                  ],
+                  "properties": {
+                    "filename": false,
+                    "url": false,
+                    "sha256": false,
+                    "size_bytes": false
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "strategy": {
+                      "enum": [
+                        "llama-release",
+                        "pinned-gguf"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "strategy"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "assets": false
+                  }
+                }
               }
             ]
           },
-          "metadata_json": { "type": "string", "minLength": 2, "pattern": "^\\{.*\\}$" }
+          "metadata_json": {
+            "type": "string",
+            "minLength": 2,
+            "pattern": "^\\{.*\\}$"
+          }
         },
         "allOf": [
           {
-            "if": { "properties": { "install": { "properties": { "strategy": { "const": "pinned-gguf" } }, "required": ["strategy"] } }, "required": ["install"] },
-            "then": { "properties": { "kind": { "const": "model" } } }
-          },
-          {
-            "if": { "properties": { "install": { "properties": { "strategy": { "const": "llama-release" } }, "required": ["strategy"] } }, "required": ["install"] },
-            "then": { "properties": { "kind": { "const": "engine" } } }
-          },
-          {
-            "if": { "properties": { "default_model": { "const": true } }, "required": ["default_model"] },
+            "if": {
+              "properties": {
+                "install": {
+                  "properties": {
+                    "strategy": {
+                      "const": "pinned-gguf"
+                    }
+                  },
+                  "required": [
+                    "strategy"
+                  ]
+                }
+              },
+              "required": [
+                "install"
+              ]
+            },
             "then": {
               "properties": {
-                "kind": { "const": "model" },
-                "install": { "properties": { "strategy": { "const": "pinned-gguf" } }, "required": ["strategy"] }
+                "kind": {
+                  "const": "model"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "install": {
+                  "properties": {
+                    "strategy": {
+                      "const": "llama-release"
+                    }
+                  },
+                  "required": [
+                    "strategy"
+                  ]
+                }
+              },
+              "required": [
+                "install"
+              ]
+            },
+            "then": {
+              "properties": {
+                "kind": {
+                  "const": "engine"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "default_model": {
+                  "const": true
+                }
+              },
+              "required": [
+                "default_model"
+              ]
+            },
+            "then": {
+              "properties": {
+                "kind": {
+                  "const": "model"
+                },
+                "install": {
+                  "properties": {
+                    "strategy": {
+                      "const": "pinned-gguf"
+                    }
+                  },
+                  "required": [
+                    "strategy"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "install": {
+                  "properties": {
+                    "strategy": {
+                      "const": "audio-cpp-release-set"
+                    }
+                  },
+                  "required": [
+                    "strategy"
+                  ]
+                }
+              },
+              "required": [
+                "install"
+              ]
+            },
+            "then": {
+              "properties": {
+                "kind": {
+                  "const": "engine"
+                }
               }
             }
           }
