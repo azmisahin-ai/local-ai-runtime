@@ -2168,6 +2168,149 @@ function renderChatHistory() {
   }
 }
 
+function normalizeEscapedMarkdownDelimiters(value) {
+  // Some local models escape the paired emphasis delimiters even when they
+  // intend Markdown formatting. Normalize only matched pairs; ordinary
+  // backslash escapes and all user-authored text remain untouched.
+  return String(value || '')
+    .replace(/\\\*\\\*([\s\S]+?)\\\*\\\*/g, '**$1**')
+    .replace(/\\__([\s\S]+?)\\__/g, '__$1__')
+    .replace(/\\\*([^*\n]+?)\\\*/g, '*$1*');
+}
+
+function safeChatMarkdownHref(value) {
+  const candidate = String(value || '').trim();
+  if (!candidate || /^(?:javascript|data|vbscript):/i.test(candidate)) return null;
+  try {
+    const parsed = new URL(candidate, 'http://127.0.0.1/');
+    return ['http:', 'https:', 'mailto:'].includes(parsed.protocol) ? parsed.href : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function appendChatInlineMarkdown(parent, source) {
+  const text = normalizeEscapedMarkdownDelimiters(source);
+  const tokenPattern = /(`+)(.+?)\1|\*\*([^*\n]+?)\*\*|__([^_\n]+?)__|\*([^*\n]+?)\*|_([^_\n]+?)_|\[([^\]\n]+?)\]\(([^)\s]+)\)/g;
+  let cursor = 0;
+  let match;
+  while ((match = tokenPattern.exec(text)) !== null) {
+    if (match.index > cursor) parent.append(document.createTextNode(text.slice(cursor, match.index)));
+    if (match[1]) {
+      const code = document.createElement('code');
+      code.textContent = match[2];
+      parent.append(code);
+    } else if (match[3] || match[4]) {
+      const strong = document.createElement('strong');
+      appendChatInlineMarkdown(strong, match[3] || match[4]);
+      parent.append(strong);
+    } else if (match[5] || match[6]) {
+      const emphasis = document.createElement('em');
+      appendChatInlineMarkdown(emphasis, match[5] || match[6]);
+      parent.append(emphasis);
+    } else if (match[7] && match[8]) {
+      const href = safeChatMarkdownHref(match[8]);
+      if (href) {
+        const link = document.createElement('a');
+        link.href = href;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        appendChatInlineMarkdown(link, match[7]);
+        parent.append(link);
+      } else {
+        parent.append(document.createTextNode(match[7]));
+      }
+    }
+    cursor = tokenPattern.lastIndex;
+  }
+  if (cursor < text.length) parent.append(document.createTextNode(text.slice(cursor)));
+}
+
+function renderChatMarkdown(source) {
+  const fragment = document.createDocumentFragment();
+  const lines = String(source || '').replace(/\r\n?/g, '\n').split('\n');
+  let paragraph = [];
+  let list = null;
+
+  const flushParagraph = () => {
+    if (!paragraph.length) return;
+    const block = document.createElement('p');
+    appendChatInlineMarkdown(block, paragraph.join('\n'));
+    fragment.append(block);
+    paragraph = [];
+  };
+  const flushList = () => {
+    if (list) fragment.append(list);
+    list = null;
+  };
+  const flushTextBlocks = () => {
+    flushParagraph();
+    flushList();
+  };
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const fence = line.match(/^\s{0,3}(```+|~~~+)([a-zA-Z0-9_+.-]{0,32})\s*$/);
+    if (fence) {
+      flushTextBlocks();
+      const codeLines = [];
+      const closingFence = new RegExp(`^\\s{0,3}${fence[1][0]}{${fence[1].length},}\\s*$`);
+      index += 1;
+      while (index < lines.length && !closingFence.test(lines[index])) codeLines.push(lines[index++]);
+      const pre = document.createElement('pre');
+      const code = document.createElement('code');
+      if (fence[2] && /^[a-zA-Z0-9_+.-]{1,32}$/.test(fence[2])) code.className = `language-${fence[2]}`;
+      code.textContent = codeLines.join('\n');
+      pre.append(code);
+      fragment.append(pre);
+      continue;
+    }
+
+    if (!line.trim()) {
+      flushTextBlocks();
+      continue;
+    }
+    if (/^\s{0,3}(?:---+|___+|\*\*\*+)\s*$/.test(line)) {
+      flushTextBlocks();
+      fragment.append(document.createElement('hr'));
+      continue;
+    }
+    const heading = line.match(/^\s{0,3}(#{1,4})\s+(.+?)\s*#*\s*$/);
+    if (heading) {
+      flushTextBlocks();
+      const element = document.createElement(`h${Math.min(4, heading[1].length + 1)}`);
+      appendChatInlineMarkdown(element, heading[2]);
+      fragment.append(element);
+      continue;
+    }
+    const quote = line.match(/^\s{0,3}>\s?(.*)$/);
+    if (quote) {
+      flushTextBlocks();
+      const blockquote = document.createElement('blockquote');
+      const quoteParagraph = document.createElement('p');
+      appendChatInlineMarkdown(quoteParagraph, quote[1]);
+      blockquote.append(quoteParagraph);
+      fragment.append(blockquote);
+      continue;
+    }
+    const item = line.match(/^\s{0,3}([-+*]|\d+[.)])\s+(.+)$/);
+    if (item) {
+      flushParagraph();
+      const type = /^\d/.test(item[1]) ? 'ol' : 'ul';
+      if (list && list.tagName.toLowerCase() !== type) flushList();
+      if (!list) list = document.createElement(type);
+      const li = document.createElement('li');
+      appendChatInlineMarkdown(li, item[2]);
+      list.append(li);
+      continue;
+    }
+    flushList();
+    paragraph.push(line);
+  }
+  flushTextBlocks();
+  return fragment;
+}
+
 function renderChatMessages() {
   if (!chatMessages) return;
   chatMessages.replaceChildren();
@@ -2186,7 +2329,12 @@ function renderChatMessages() {
     } else if (message.role === 'assistant' && message.state === 'generating') {
       heading.append(make('span', 'tag loading', translation('chat.generating', 'Generating…')));
     }
-    const content = make('div', 'chat-message-content', message.content || (message.state === 'generating' ? ' ' : ''));
+    const content = make('div', 'chat-message-content');
+    if (message.role === 'assistant' && message.state !== 'generating') {
+      content.append(renderChatMarkdown(message.content));
+    } else {
+      content.textContent = message.content || (message.state === 'generating' ? ' ' : '');
+    }
     article.append(heading, content);
     chatMessages.append(article);
     if (message.role === 'assistant' && message.state === 'generating') activeAssistantMessageElement = content;

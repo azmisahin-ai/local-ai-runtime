@@ -1,3 +1,11 @@
+## Unreleased — safe assistant Markdown rendering
+
+- Render completed assistant messages with a small, dependency-free Markdown subset: paragraphs, headings, emphasis, lists, block quotes, links, inline code and fenced code blocks.
+- Normalize paired escaped emphasis delimiters emitted by some local models so users do not see raw `\*\*` markers.
+- Build formatted output exclusively with DOM nodes and text nodes; never interpret model-provided HTML, and allow only HTTP, HTTPS and mailto links.
+- Keep user-authored messages and in-progress streams as plain text; render assistant Markdown after the answer is complete.
+- Add regression coverage for formatting, safe links, untrusted HTML and the rendering integration.
+
 ## Unreleased — Qwen3 answer-first chat streaming and truthful completion state
 
 - Disable Qwen-style thinking for the normal Chat request through llama.cpp's request-level `chat_template_kwargs.enable_thinking=false`, so the standard conversation path has a token budget for the user-facing answer.
