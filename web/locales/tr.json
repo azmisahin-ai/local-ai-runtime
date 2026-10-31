@@ -152,6 +152,7 @@
   "chat.invalidStream": "Model geçersiz bir akış yanıtı döndürdü.",
   "chat.streamingUnsupported": "Bu masaüstü web ortamında akış desteği kullanılamıyor.",
   "chat.emptyResponse": "Model boş bir yanıt döndürdü.",
+  "chat.reasoningOnly": "Model iç muhakeme üretti ancak kullanıcıya gösterilecek bir yanıt üretmedi. Bu istekte düşünme modu kapatıldı; model şablonunu veya motor uyumluluğunu kontrol edin.",
   "chat.stoppedBeforeResponse": "Yanıt gelmeden önce üretim durduruldu.",
   "chat.systemPrompt": "Yardımcı bir asistansın. Kullanıcıya doğrudan ve öz biçimde, kullandığı dilde yanıt ver. Sıradan selamlaşmalara veya isteklere yanıt veremediğini söyleme. Kullanıcı kod istemedikçe kod üretme.",
   "chat.promptExplain": "Karmaşık bir konuyu basitçe açıkla.",

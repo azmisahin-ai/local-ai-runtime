@@ -1,3 +1,11 @@
+## Unreleased — Qwen3 answer-first chat streaming and truthful completion state
+
+- Disable Qwen-style thinking for the normal Chat request through llama.cpp's request-level `chat_template_kwargs.enable_thinking=false`, so the standard conversation path has a token budget for the user-facing answer.
+- Recognize separate `reasoning_content`/`reasoning` SSE fields for diagnostics without rendering or persisting private reasoning as the assistant answer.
+- Treat a stream with no visible answer as a failed request instead of saving the translated empty-response warning as a successful assistant message.
+- Record reasoning-channel character count in failure diagnostics without recording prompt, answer or reasoning contents.
+- Add direct SSE parser regression coverage for visible content, hidden reasoning, incomplete streams and malformed events.
+
 ## Unreleased — resilient Windows NVIDIA evidence probe
 
 - Resolve `nvidia-smi.exe` from the Windows System32 directory before falling back to the normal executable search path, so GUI-launched runtime processes do not depend on an inherited PATH containing the NVIDIA shim.

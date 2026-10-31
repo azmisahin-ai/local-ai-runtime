@@ -167,6 +167,10 @@ if(LAR_BUILD_TESTS)
                 NAME lar_models_ui_contract
                 COMMAND "${NODE_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models_ui_contract.js"
             )
+            add_test(
+                NAME lar_chat_stream_contract
+                COMMAND "${NODE_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/chat_stream_contract.js"
+            )
         endif()
         add_test(
             NAME lar_http_smoke

@@ -2226,7 +2226,7 @@ function appendAssistantDelta(conversation, message, text) {
   }
 }
 
-function consumeSseBlock(block, onText) {
+function consumeSseBlock(block, onText, onReasoning) {
   const dataLines = block.split(/\r?\n/).filter((line) => line.startsWith('data:'));
   if (dataLines.length === 0) return false;
   const data = dataLines.map((line) => line.slice(5).replace(/^ /, '')).join('\n');
@@ -2237,8 +2237,16 @@ function consumeSseBlock(block, onText) {
   if (event?.error?.message) throw new Error(String(event.error.message));
   const choices = Array.isArray(event?.choices) ? event.choices : [];
   for (const choice of choices) {
-    const delta = choice?.delta?.content;
-    if (typeof delta === 'string') onText(delta);
+    const delta = choice?.delta || {};
+    const content = delta.content;
+    if (typeof content === 'string') onText(content);
+    // Some reasoning-capable OpenAI-compatible servers separate private
+    // thinking from the user-facing answer. Track its presence for diagnostics,
+    // but never render or persist the reasoning channel as a chat answer.
+    const reasoning = typeof delta.reasoning_content === 'string'
+      ? delta.reasoning_content
+      : (typeof delta.reasoning === 'string' ? delta.reasoning : '');
+    if (reasoning && typeof onReasoning === 'function') onReasoning(reasoning);
   }
   return false;
 }
@@ -2252,6 +2260,10 @@ async function readChatStream(response, onText) {
   let pending = '';
   let receivedDone = false;
   let streamEnded = false;
+  let reasoningChars = 0;
+  const handleBlock = (block) => consumeSseBlock(block, onText, (reasoning) => {
+    reasoningChars += reasoning.length;
+  });
   while (!streamEnded) {
     const part = await reader.read();
     pending += decoder.decode(part.value || new Uint8Array(), { stream: !part.done });
@@ -2260,13 +2272,14 @@ async function readChatStream(response, onText) {
       if (!separator || separator.index === undefined) break;
       const block = pending.slice(0, separator.index);
       pending = pending.slice(separator.index + separator[0].length);
-      if (!receivedDone && consumeSseBlock(block, onText)) receivedDone = true;
+      if (!receivedDone && handleBlock(block)) receivedDone = true;
     }
     if (part.done) streamEnded = true;
   }
   pending += decoder.decode();
-  if (!receivedDone && pending.trim()) receivedDone = consumeSseBlock(pending, onText);
+  if (!receivedDone && pending.trim()) receivedDone = handleBlock(pending);
   if (!receivedDone) throw new Error(translation('chat.streamIncomplete', 'The model stream ended before completion.'));
+  return { reasoningChars };
 }
 
 async function parseChatError(response) {
@@ -2342,6 +2355,7 @@ document.querySelector('#chat-form').addEventListener('submit', async (event) =>
   renderChatHistory();
   reportDiagnosticEvent('ui.chat.request_started', `input_chars=${messageText.length}; stream=true`);
   const startedAt = performance.now();
+  let reasoningChars = 0;
   try {
     const conversationMessages = [
       {
@@ -2357,20 +2371,37 @@ document.querySelector('#chat-form').addEventListener('submit', async (event) =>
       headers: { 'Content-Type': 'application/json' },
       cache: 'no-store',
       signal: controller.signal,
-      body: JSON.stringify({ model: 'local-model', messages: conversationMessages, temperature: 0.2, max_tokens: 512, stream: true }),
+      // Qwen3's default template can spend the full token budget in its
+      // separate reasoning channel. Normal Chat is answer-first; advanced
+      // reasoning can become an explicit user setting later.
+      body: JSON.stringify({
+        model: 'local-model', messages: conversationMessages, temperature: 0.2,
+        max_tokens: 512, stream: true,
+        chat_template_kwargs: { enable_thinking: false },
+      }),
     });
     if (!response.ok) throw new Error(await parseChatError(response));
     const contentType = response.headers.get('content-type') || '';
     if (contentType.toLowerCase().includes('text/event-stream')) {
-      await readChatStream(response, (delta) => appendAssistantDelta(conversation, assistantMessage, delta));
+      const streamResult = await readChatStream(response, (delta) => appendAssistantDelta(conversation, assistantMessage, delta));
+      reasoningChars = streamResult.reasoningChars;
     } else {
       const result = await response.json();
-      const content = result?.choices?.[0]?.message?.content;
+      const message = result?.choices?.[0]?.message;
+      const content = message?.content;
+      const reasoning = typeof message?.reasoning_content === 'string'
+        ? message.reasoning_content
+        : (typeof message?.reasoning === 'string' ? message.reasoning : '');
+      reasoningChars = reasoning.length;
       if (typeof content === 'string') appendAssistantDelta(conversation, assistantMessage, content);
-      else throw new Error(translation('chat.emptyResponse', 'The model returned an empty response.'));
+    }
+    if (!assistantMessage.content.trim()) {
+      const emptyMessage = reasoningChars > 0
+        ? translation('chat.reasoningOnly', 'The model generated internal reasoning but no user-facing answer. Thinking mode was disabled for this request; check the model template or engine compatibility.')
+        : translation('chat.emptyResponse', 'The model returned an empty response.');
+      throw new Error(emptyMessage);
     }
     assistantMessage.state = 'complete';
-    if (!assistantMessage.content) assistantMessage.content = translation('chat.emptyResponse', 'The model returned an empty response.');
     conversation.updated_at = Date.now();
     saveChatHistory();
     updateFirstRunGuide();
@@ -2385,7 +2416,7 @@ document.querySelector('#chat-form').addEventListener('submit', async (event) =>
       assistantMessage.state = assistantMessage.content ? 'stopped' : 'complete';
       if (!assistantMessage.content) conversation.messages = conversation.messages.filter((item) => item !== assistantMessage);
       chatError.textContent = formatError(error);
-      reportDiagnosticEvent('ui.chat.request_failed', `elapsed_ms=${Math.round(performance.now() - startedAt)}; input_chars=${messageText.length}; error_type=${String(error?.name || 'Error').slice(0, 40)}`);
+      reportDiagnosticEvent('ui.chat.request_failed', `elapsed_ms=${Math.round(performance.now() - startedAt)}; input_chars=${messageText.length}; reasoning_chars=${reasoningChars}; error_type=${String(error?.name || 'Error').slice(0, 40)}`);
     }
     conversation.updated_at = Date.now();
     saveChatHistory();

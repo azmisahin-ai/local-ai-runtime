@@ -152,6 +152,7 @@
   "chat.invalidStream": "The model returned an invalid streaming response.",
   "chat.streamingUnsupported": "Streaming is not available in this desktop web runtime.",
   "chat.emptyResponse": "The model returned an empty response.",
+  "chat.reasoningOnly": "The model generated internal reasoning but no user-facing answer. Thinking mode was disabled for this request; check the model template or engine compatibility.",
   "chat.stoppedBeforeResponse": "Generation stopped before a response arrived.",
   "chat.systemPrompt": "You are a helpful assistant. Answer the user directly and concisely in the same language as the user. Do not claim you cannot answer ordinary greetings or requests. Do not provide code unless the user asks for code.",
   "chat.promptExplain": "Explain a complex idea in simple terms.",
