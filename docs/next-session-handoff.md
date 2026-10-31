@@ -1,7 +1,7 @@
 # Next Session Handoff — Local AI Runtime
 
-**Prepared:** 2026-10-31  
-**Repository:** <https://github.com/azmisahin-ai/local-ai-runtime>  
+**Prepared:** 2026-11-01
+**Repository:** <https://github.com/azmisahin-ai/local-ai-runtime>
 **Purpose:** Continue Stage 13A audio.cpp integration without repeating LLM/UI polish. Typed task adapter, exact package pins and native Windows CPU server lifecycle are in place; next work is the managed CPU installer acceptance test, then CUDA lifecycle and Qwen3-ASR Turkish acceptance.
 
 ## Read these files first
@@ -52,7 +52,7 @@
 
 ## Immediate next-session mission: Stage 13A — audio.cpp pilot
 
-**Selected:** `0xShug0/audio.cpp` v0.9.3 (research checked 2026-10-31). The current branch now contains a typed task adapter, task HTTP routes, an `audio-cpp-release-set` installer allowlist/implementation, a fake CPU lifecycle test and an end-to-end fake task HTTP test. Research and decisions are in `docs/engine-integration-research.md`.
+**Selected:** `0xShug0/audio.cpp` v0.9.3 (research checked 2026-10-31). The current branch now contains a typed task adapter, task HTTP routes, an `audio-cpp-release-set` installer allowlist/implementation, a fake CPU lifecycle test and an end-to-end fake task HTTP test. A Windows Release build at `dcace71` compiled successfully, but its first CTest run exposed a Windows diagnostics UTF-8 failure (`lar_http_smoke`, byte `0xFE` in `/v1/diagnostics/export`); this handoff branch adds invalid-UTF-8 normalization and regression coverage. Linux Release build and all 10 CTests pass with the fix. A rerun of `lar_http_smoke` on Windows is still required before treating the Windows suite as green. Research and decisions are in `docs/engine-integration-research.md`.
 
 ### Why this is the first engine
 

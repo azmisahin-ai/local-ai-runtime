@@ -8,7 +8,7 @@ Local AI Runtime should feel like an installed desktop application, not a develo
 
 The runtime, engines, and models remain separate versioned components. The catalogue must be honest about licenses, supported hardware, memory requirements, and evidence. “Detected” does not mean “supported”; “starts” does not mean “inference tested.”
 
-## Current baseline and visible progress — 2026-10-31
+## Current baseline and visible progress — 2026-11-01
 
 **Published baseline:** `v0.1.31-alpha` (`e18a084`). The user supplied a PowerShell publisher transcript confirming that the single unified main pipeline passed and published the exact tested artifact set; workflow: <https://github.com/azmisahin-ai/local-ai-runtime/actions/runs/41234340882>. The imported `v0.1.31-alpha` release is the source baseline for this Stage 13A work. The preceding `v0.1.30-alpha` handoff remains historical, not the latest release state.
 
@@ -16,7 +16,7 @@ The runtime, engines, and models remain separate versioned components. The catal
 
 **Priority change:** The user explicitly asked to stop spending disproportionate time on small Chat/Markdown polish and to prioritize integrating other AI engine families. Freeze non-critical Chat/Markdown/language polish. Fix only security, data-loss, engine lifecycle, or basic inference correctness issues. Residual Stage 12/12.5 checks remain tracked but must not block Stage 13A audio work.
 
-**Next engineering focus:** Stage 13A is the `audio.cpp` CPU installer pilot. The user has verified the official v0.9.3 Windows x64 CPU archive size/SHA-256 and the real native server version, CPU startup, `/health`, `/v1/models`, restart and final process/port cleanup. The CPU catalog item is now enabled for a managed installer test. The installer-generated server config must set `ui_management: true` for the initial empty model list. The managed Windows download/extract/activation/config-registration path remains unverified; CUDA lifecycle and Qwen3-ASR Turkish transcription are still later acceptance gates. Research and hardware decision records remain in [Engine Integration Research](engine-integration-research.md).
+**Next engineering focus:** Stage 13A is the `audio.cpp` CPU installer pilot. The user has verified the official v0.9.3 Windows x64 CPU archive size/SHA-256 and the real native server version, CPU startup, `/health`, `/v1/models`, restart and final process/port cleanup. The CPU catalog item is now enabled for a managed installer test. The installer-generated server config must set `ui_management: true` for the initial empty model list. The managed Windows download/extract/activation/config-registration path remains unverified. The Windows Release build at `dcace71` compiled successfully, but 9/10 CTests passed: `lar_http_smoke` found invalid UTF-8 in the diagnostics export (`0xFE`). This branch hardens diagnostic UTF-8 normalization and adds regression coverage; Linux Release build and 10/10 CTests pass. Rerun `lar_http_smoke` on Windows before marking the Windows suite green. CUDA lifecycle and Qwen3-ASR Turkish transcription are still later acceptance gates. Research and hardware decision records remain in [Engine Integration Research](engine-integration-research.md).
 
 ### Product delivery checklist
 
@@ -35,7 +35,7 @@ The runtime, engines, and models remain separate versioned components. The catal
 | 12 | Hardware Compatibility & Evidence; NVIDIA driver/VRAM probes and real RTX 3060 acceptance | [~] CUDA-backed Qwen3 inference observed; app-side layer count and KV-cache/context acceptance remain open | `v0.1.23-alpha` onward |
 | 12.5 | Product readiness: first-run flow, evidence hierarchy, Chat correctness and safe assistant Markdown | [~] Core onboarding/Chat fixes shipped through `v0.1.30-alpha`; residual responsive/accessibility review and latest-release manual spot-check remain non-blocking for engine work | `v0.1.24-alpha` → `v0.1.30-alpha` |
 | 12.5.1 | Unified build-once release pipeline and one-screen CI report | [x] Build-once/publish-once flow shipped and repeatedly confirmed | `v0.1.25-alpha` onward |
-| 13A | Audio task engine, typed task APIs and safe Windows release-set installer | [~] Typed adapter/routes, exact package pins and native Windows CPU server lifecycle pass; managed installer download/activation/config-registration still needs target-machine verification | Current engineering milestone |
+| 13A | Audio task engine, typed task APIs and safe Windows release-set installer | [~] Typed adapter/routes, exact package pins and native Windows CPU server lifecycle pass; Windows `dcace71` Release build compiled but `lar_http_smoke` exposed invalid diagnostics UTF-8; fix passes Linux 10/10, Windows rerun and managed installer verification remain | Current engineering milestone |
 | 13B | Turkish ASR and TTS with audio.cpp | [ ] Not started; Qwen3-ASR-0.6B first, explicit `tr`, then CUDA; Chatterbox TTS second | After native CPU/CUDA 13A gates |
 | 13C | ASR alternatives comparison | [ ] Not started; whisper.cpp first alternative, sherpa-onnx only if justified | After 13B |
 | 14 | Image generation | [ ] Not started; stable-diffusion.cpp, SD 1.5 / 512x512 pilot | Later alpha |
@@ -58,6 +58,7 @@ The runtime, engines, and models remain separate versioned components. The catal
 - [x] Add a managed fake-engine CPU lifecycle test covering `/health`, `/v1/models`, stop and restart.
 - [x] Add end-to-end typed task HTTP smoke coverage for ASR multipart + `tr`, malformed model ID rejection, TTS WAV artifact, Activity persistence and Chat isolation.
 - [x] Obtain exact byte sizes for the v0.9.3 CPU and CUDA release assets from the official GitHub release API; pin the exact byte count alongside each SHA-256 in the compiled allowlist and regression tests.
+- [x] Normalize invalid UTF-8 in local diagnostics before exporting a UTF-8 report; add regression coverage for legacy Windows code-page bytes and malformed/overlong UTF-8. Linux Release build and all 10 CTests pass; rerun the Windows `lar_http_smoke` regression on the target machine.
 - [ ] On Windows x64, install the enabled exact-pinned CPU catalog item through Local AI Runtime, verify download size/SHA-256, safe extraction, atomic activation, generated config, engine registration and managed start/health/models/stop/restart. Keep CUDA and model tasks separate.
 - [ ] On the same Windows target, install the CUDA 13.3 server+CUDART pair, validate CPU fallback on the CUDA-enabled binary, then CUDA process readiness. Record driver/backend evidence separately.
 - [ ] Only after native CPU and CUDA lifecycle gates, pin Qwen3-ASR model revision/files/license/hash; run the same licensed WAV with reference transcript on CPU, then CUDA.

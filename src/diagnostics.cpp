@@ -33,6 +33,67 @@ std::string lower_ascii(std::string value) {
     return value;
 }
 
+// Diagnostics can include operating-system error messages and filesystem
+// strings supplied by platform APIs. On Windows some of those originate in
+// the active ANSI code page rather than UTF-8. The HTTP export is explicitly
+// advertised as UTF-8, so replace malformed sequences instead of emitting an
+// invalid response body that breaks clients and diagnostic downloads.
+void append_utf8_replacement(std::string& output) {
+    output.append("\xEF\xBF\xBD", 3);
+}
+
+std::string normalize_utf8(std::string_view input) {
+    std::string output;
+    output.reserve(input.size());
+    std::size_t i = 0;
+    while (i < input.size()) {
+        const auto lead = static_cast<unsigned char>(input[i]);
+        if (lead <= 0x7FU) {
+            output.push_back(static_cast<char>(lead));
+            ++i;
+            continue;
+        }
+
+        std::size_t length = 0;
+        if (lead >= 0xC2U && lead <= 0xDFU) length = 2;
+        else if (lead >= 0xE0U && lead <= 0xEFU) length = 3;
+        else if (lead >= 0xF0U && lead <= 0xF4U) length = 4;
+        if (length == 0 || input.size() - i < length) {
+            append_utf8_replacement(output);
+            ++i;
+            continue;
+        }
+
+        bool valid = true;
+        for (std::size_t offset = 1; offset < length; ++offset) {
+            const auto continuation = static_cast<unsigned char>(input[i + offset]);
+            if ((continuation & 0xC0U) != 0x80U) {
+                valid = false;
+                break;
+            }
+        }
+        if (valid) {
+            const auto second = static_cast<unsigned char>(input[i + 1]);
+            // Reject overlong encodings, UTF-16 surrogate code points and
+            // code points beyond U+10FFFF.
+            if ((lead == 0xE0U && second < 0xA0U) ||
+                (lead == 0xEDU && second > 0x9FU) ||
+                (lead == 0xF0U && second < 0x90U) ||
+                (lead == 0xF4U && second > 0x8FU)) {
+                valid = false;
+            }
+        }
+        if (!valid) {
+            append_utf8_replacement(output);
+            ++i;
+            continue;
+        }
+        output.append(input.substr(i, length));
+        i += length;
+    }
+    return output;
+}
+
 std::string replace_case_insensitive(std::string value, const std::string& needle,
                                      const std::string& replacement) {
     if (needle.empty()) return value;
@@ -118,7 +179,9 @@ std::string sanitize_locked(std::string_view text) {
         value = replace_case_insensitive(std::move(value), json_escape_path(home), "<USER_HOME>");
         value = replace_case_insensitive(std::move(value), home, "<USER_HOME>");
     }
-    // Keep each log event to one safe, readable line.
+    // Keep each log event to one safe, readable line and guarantee that the
+    // exported diagnostics report is valid UTF-8 on every platform.
+    value = normalize_utf8(value);
     for (char& ch : value) {
         if (ch == '\r' || ch == '\n' || ch == '\t') ch = ' ';
         else if (static_cast<unsigned char>(ch) < 0x20U) ch = '?';

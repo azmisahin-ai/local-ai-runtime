@@ -1073,6 +1073,18 @@ int main() {
         require(diagnostic_report.find("<LOCAL_DATA>/private-model.gguf") != std::string::npos, "diagnostics should redact the local data directory path");
         require(diagnostic_report.find(diagnostic_root.string()) == std::string::npos, "diagnostic report must not expose the raw user-data path");
         require(diagnostic_report.find("Remote telemetry: disabled") != std::string::npos, "diagnostics must state that data is not sent automatically");
+        const std::string legacy_windows_message = std::string("localized-error-") + static_cast<char>(0xFE) + "-tail";
+        const auto normalized_diagnostic = lar::sanitize_diagnostic_text(legacy_windows_message);
+        require(normalized_diagnostic == std::string("localized-error-\xEF\xBF\xBD-tail"),
+                "diagnostic text must replace non-UTF-8 Windows code-page bytes before UTF-8 export");
+        lar::log_diagnostic("ERROR", "test.utf8", legacy_windows_message);
+        const auto utf8_report = lar::build_diagnostic_report("test-version", diagnostic_jobs, "{\"data\":[]}");
+        require(utf8_report.find("localized-error-\xEF\xBF\xBD-tail") != std::string::npos,
+                "diagnostics export must contain only valid UTF-8 for legacy Windows error bytes");
+        const std::string malformed_utf8 = std::string("bad-") + "\xE0\x80\xAF" + "-tail";
+        const auto normalized_malformed = lar::sanitize_diagnostic_text(malformed_utf8);
+        require(normalized_malformed.find("\xEF\xBF\xBD") != std::string::npos,
+                "diagnostic text must replace overlong UTF-8 encodings");
         std::filesystem::remove_all(diagnostic_root);
 
         std::cout << "All core and process integration tests passed.\n";
