@@ -363,7 +363,12 @@ def main():
 
             status, hardware_raw, hardware_type = request(base + "/v1/system/hardware")
             hardware_info = json.loads(hardware_raw)
+            hardware_schema_path = Path(__file__).resolve().parents[1] / "catalog" / "schemas" / "hardware-v1.schema.json"
+            hardware_schema = json.loads(hardware_schema_path.read_text(encoding="utf-8"))
+            hardware_errors = validate_catalog_schema(hardware_info, hardware_schema)
             assert status == 200 and "application/json" in hardware_type
+            assert not hardware_errors, "Hardware API did not satisfy hardware-v1 schema: " + "; ".join(hardware_errors[:12])
+            assert hardware_info["schema_version"] == 1
             assert hardware_info["platform"] and hardware_info["architecture"]
             assert isinstance(hardware_info["logical_cpu_count"], int) and hardware_info["logical_cpu_count"] >= 1
             assert isinstance(hardware_info["total_memory_bytes"], int)
@@ -372,6 +377,15 @@ def main():
             assert hardware_info["gpu_probe_status"] in ("complete", "partial", "unsupported")
             assert isinstance(hardware_info["gpus"], list)
             assert hardware_info["gpu_use_requires_validation"] is True
+            nvidia_probe = hardware_info["nvidia_probe"]
+            assert nvidia_probe["source"] == "nvidia-smi"
+            assert nvidia_probe["status"] in ("available", "partial", "unavailable")
+            assert isinstance(nvidia_probe["devices"], list)
+            for nvidia_device in nvidia_probe["devices"]:
+                assert isinstance(nvidia_device["index"], int) and nvidia_device["index"] >= 0
+                assert nvidia_device["name"]
+                for field in ("memory_total_bytes", "memory_free_bytes", "memory_used_bytes"):
+                    assert nvidia_device[field] is None or (isinstance(nvidia_device[field], int) and nvidia_device[field] >= 0)
             status, resources_raw, resources_type = request(base + "/v1/system/resources")
             resources_info = json.loads(resources_raw)
             resources_schema_path = Path(__file__).resolve().parents[1] / "catalog" / "schemas" / "resources-v1.schema.json"

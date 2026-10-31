@@ -10,7 +10,7 @@ See [Catalog authoring guide](catalog-authoring.md) for the component-v1 metadat
 
 The product flow is:
 
-1. The runtime detects the current OS/architecture and exposes only platform/backend combinations the current asset selector supports. Hardware/driver detection and performance-backed recommendations are not implemented yet.
+1. The runtime detects the current OS/architecture and exposes only platform/backend combinations the current asset selector supports. Initial local hardware inventory and NVIDIA driver/VRAM evidence are available, but driver/runtime compatibility and performance-backed model recommendations remain unverified.
 2. The user chooses a catalog item, reviews its upstream license, and confirms the download. A download is not started when consent is missing.
 3. Downloads use HTTPS-only redirects with TLS validation, byte limits, cancellation, staging paths and SHA-256 checks. The model is also checked for exact byte size and GGUF magic. Engine archives are extracted only when entries are regular files/directories with safe relative paths; symlinks, hardlinks and special files are rejected.
 4. Verified files are placed in the per-user Local AI Runtime data directory, and the first `llama.cpp` engine is registered into the user's runtime config. If configuration registration fails, the newly activated engine directory is rolled back. Windows uses `%LOCALAPPDATA%\LocalAIRuntime`; Linux follows `$XDG_DATA_HOME/local-ai-runtime` or `~/.local/share/local-ai-runtime`; macOS follows `$XDG_DATA_HOME/local-ai-runtime` or `~/Library/Application Support/LocalAIRuntime`. Config, engine/model files and logs live outside the extracted program directory so replacing the app bundle does not overwrite user data.

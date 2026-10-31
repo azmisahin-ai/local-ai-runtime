@@ -518,5 +518,12 @@
   "models.profileDrafted": "Selection added to the profile above. Review it and apply the profile to use it in Chat.",
   "models.installEngine": "Install engine runtime",
   "models.installModel": "Install model",
-  "models.viewActivity": "View activity"
+  "models.viewActivity": "View activity",
+  "hardware.nvidiaEvidence": "NVIDIA DRIVER EVIDENCE",
+  "hardware.nvidiaDriver": "Driver version: {version}",
+  "hardware.computeCapability": "Compute capability: {version}",
+  "hardware.vramTotal": "VRAM total: {size}",
+  "hardware.vramFree": "VRAM free: {size}",
+  "hardware.vramUsed": "VRAM used: {size}",
+  "hardware.nvidiaUnavailable": "NVIDIA driver details are unavailable. The operating-system adapter inventory above is a separate source."
 }

@@ -119,9 +119,10 @@ std::string engine_backend_target(const EngineConfig& config) {
     return *std::next(option) == "0" ? "cpu" : "gpu-requested";
 }
 
-std::string hardware_json(const HardwareInfo& info) {
+std::string hardware_json(const HardwareInfo& info, const NvidiaGpuCapabilitySnapshot& nvidia_probe) {
     std::ostringstream out;
-    out << "{\"platform\":" << json_quoted(info.platform)
+    out << "{\"schema_version\":1"
+        << ",\"platform\":" << json_quoted(info.platform)
         << ",\"architecture\":" << json_quoted(info.architecture)
         << ",\"logical_cpu_count\":" << info.logical_cpu_count
         << ",\"total_memory_bytes\":" << info.total_memory_bytes
@@ -139,7 +140,33 @@ std::string hardware_json(const HardwareInfo& info) {
             << ",\"device_id\":" << json_quoted(gpu.device_id)
             << ",\"dedicated_memory_bytes\":" << gpu.dedicated_memory_bytes << '}';
     }
-    out << "],\"memory_profile\":";
+    out << "],\"nvidia_probe\":{\"source\":\"nvidia-smi\",\"status\":"
+        << json_quoted(nvidia_probe.status) << ",\"message\":" << json_quoted(nvidia_probe.message)
+        << ",\"devices\":[";
+    const auto append_mib_bytes = [&](int value) {
+        if (value < 0) out << "null";
+        else out << static_cast<std::uint64_t>(value) * 1024ULL * 1024ULL;
+    };
+    for (std::size_t i = 0; i < nvidia_probe.devices.size(); ++i) {
+        if (i) out << ',';
+        const auto& device = nvidia_probe.devices[i];
+        out << "{\"index\":" << device.index
+            << ",\"name\":" << json_quoted(device.name)
+            << ",\"driver_version\":";
+        if (device.driver_version.empty()) out << "null";
+        else out << json_quoted(device.driver_version);
+        out << ",\"compute_capability\":";
+        if (device.compute_capability.empty()) out << "null";
+        else out << json_quoted(device.compute_capability);
+        out << ",\"memory_total_bytes\":";
+        append_mib_bytes(device.memory_total_mib);
+        out << ",\"memory_free_bytes\":";
+        append_mib_bytes(device.memory_free_mib);
+        out << ",\"memory_used_bytes\":";
+        append_mib_bytes(device.memory_used_mib);
+        out << '}';
+    }
+    out << "]},\"memory_profile\":";
     const auto gib = 1024ULL * 1024ULL * 1024ULL;
     if (info.total_memory_bytes == 0) out << json_quoted("unknown");
     else if (info.total_memory_bytes < 8ULL * gib) out << json_quoted("low-memory");
@@ -1469,19 +1496,28 @@ http::response<http::string_body> handle_request(const http::request<http::strin
     }
     if (request.method() == http::verb::get && target == "/v1/system/hardware") {
         const auto hardware = detect_hardware(DownloadManager::user_data_directory());
+        const auto nvidia = read_nvidia_gpu_capabilities();
         std::ostringstream summary;
         summary << "platform=" << hardware.platform << " architecture=" << hardware.architecture
                 << " logical_cpus=" << hardware.logical_cpu_count
                 << " total_ram_bytes=" << hardware.total_memory_bytes
                 << " available_ram_bytes=" << hardware.available_memory_bytes
                 << " free_disk_bytes=" << hardware.available_disk_bytes
-                << " gpu_probe=" << hardware.gpu_probe_status;
+                << " gpu_probe=" << hardware.gpu_probe_status
+                << " nvidia_probe=" << nvidia.status;
         for (const auto& gpu : hardware.gpus) {
             summary << " gpu=" << gpu.vendor << ':' << gpu.device_id
                     << ":vram_bytes=" << gpu.dedicated_memory_bytes;
         }
+        for (const auto& gpu : nvidia.devices) {
+            summary << " nvidia_gpu_index=" << gpu.index
+                    << ":driver=" << (gpu.driver_version.empty() ? "unknown" : gpu.driver_version)
+                    << ":compute_cap=" << (gpu.compute_capability.empty() ? "unknown" : gpu.compute_capability)
+                    << ":vram_total_mib=" << gpu.memory_total_mib
+                    << ":vram_free_mib=" << gpu.memory_free_mib;
+        }
         log_diagnostic("INFO", "hardware.snapshot", summary.str());
-        return json_response(http::status::ok, version, hardware_json(hardware));
+        return json_response(http::status::ok, version, hardware_json(hardware, nvidia));
     }
     if (request.method() == http::verb::post && target == "/v1/diagnostics/gpu-observation") {
         static std::mutex observation_mutex;

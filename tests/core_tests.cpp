@@ -582,6 +582,32 @@ int main() {
         require(!lar::parse_nvidia_smi_snapshot("0, N/A, N/A, N/A\n", nvidia_samples),
                 "a CSV row with no usable metrics must not count as a measurement");
 
+        stage("NVIDIA driver and VRAM capability parser");
+        std::vector<lar::NvidiaGpuCapability> nvidia_devices;
+        require(lar::parse_nvidia_smi_capabilities(
+                    "0, NVIDIA GeForce RTX 3060, 555.99, 6144, 4096, 2048\n"
+                    "1, \"NVIDIA, Virtual GPU\", N/A, N/A, N/A, N/A\n", nvidia_devices),
+                "NVIDIA identity and VRAM CSV should parse, including quoted commas");
+        require(nvidia_devices.size() == 2 && nvidia_devices[0].index == 0 &&
+                nvidia_devices[0].name == "NVIDIA GeForce RTX 3060" &&
+                nvidia_devices[0].driver_version == "555.99" &&
+                nvidia_devices[0].memory_total_mib == 6144 &&
+                nvidia_devices[0].memory_free_mib == 4096 &&
+                nvidia_devices[0].memory_used_mib == 2048,
+                "NVIDIA driver and total/free/used VRAM values should be parsed without unit guessing");
+        require(nvidia_devices[1].name == "NVIDIA, Virtual GPU" &&
+                nvidia_devices[1].driver_version.empty() && nvidia_devices[1].memory_total_mib == -1,
+                "unsupported NVIDIA capability values must remain unknown");
+        std::vector<std::pair<int, std::string>> compute_caps;
+        require(lar::parse_nvidia_smi_compute_capabilities("0, 8.6\n1, N/A\n", compute_caps),
+                "valid NVIDIA compute capability values should parse separately");
+        require(compute_caps.size() == 1 && compute_caps[0].first == 0 && compute_caps[0].second == "8.6",
+                "compute capability must be associated with the same nvidia-smi device index");
+        require(!lar::parse_nvidia_smi_compute_capabilities("0, 8.x\n", compute_caps),
+                "malformed compute capability must not be accepted");
+        require(!lar::parse_nvidia_smi_capabilities("nvidia-smi failed\n", nvidia_devices),
+                "nvidia-smi diagnostic text must not be accepted as device data");
+
         stage("local hardware inventory");
         const auto hardware = lar::detect_hardware(std::filesystem::temp_directory_path());
         require(!hardware.platform.empty(), "hardware probe must report the platform");

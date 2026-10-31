@@ -125,7 +125,7 @@ The initial UX shell and the four-step first-run guide are implemented and publi
 ## Priority 2 — hardware-aware first run and compatibility reporting
 
 - [x] Add the first local hardware inventory endpoint and dashboard panel for OS/architecture, logical CPU count, total/available RAM and available disk; enumerate GPU adapters using DXGI on Windows and DRM/sysfs on Linux.
-- [ ] Complete hardware discovery on macOS and add CPU-feature, driver-version, GPU-runtime and VRAM probes where platform APIs expose reliable information.
+- [~] Add first NVIDIA driver/compute-capability/VRAM evidence through a separate local `nvidia-smi` probe; DXGI/DRM adapter inventory remains a separate source. CPU-feature and CUDA-runtime compatibility probes, broader AMD/Intel coverage, and native macOS GPU enumeration remain open.
 - [x] Distinguish the installed engine package and configured execution target from actual GPU inference evidence. Current-session logs are parsed for CUDA initialization and explicit offloaded-layer counts, without treating startup messages as live utilization measurements.
 - [x] Add an opt-in GPU observation action that sends a fixed local chat request and samples NVIDIA system-wide utilization/memory during the request when `nvidia-smi` is available. It reports sample count, peak utilization and memory before/peak/after; it explicitly warns that system-wide readings may include other apps and does not by itself prove which process used the GPU (current alpha implementation).
 - [ ] Validate real GPU offload on a physical NVIDIA device and record driver, model, context, layer offload, telemetry sample and repeatability evidence.

@@ -57,23 +57,53 @@ int parse_metric(std::string_view value) {
     return result;
 }
 
-std::vector<std::string_view> comma_fields(std::string_view line) {
-    std::vector<std::string_view> fields;
-    std::size_t start = 0;
-    for (;;) {
-        const auto comma = line.find(',', start);
-        if (comma == std::string_view::npos) {
-            fields.push_back(line.substr(start));
-            break;
+std::vector<std::string> csv_fields(std::string_view line) {
+    std::vector<std::string> fields;
+    std::string field;
+    bool quoted = false;
+    for (std::size_t i = 0; i < line.size(); ++i) {
+        const char ch = line[i];
+        if (ch == '"') {
+            if (quoted && i + 1 < line.size() && line[i + 1] == '"') {
+                field.push_back('"');
+                ++i;
+            } else {
+                quoted = !quoted;
+            }
+        } else if (ch == ',' && !quoted) {
+            fields.push_back(trim(field));
+            field.clear();
+        } else {
+            field.push_back(ch);
         }
-        fields.push_back(line.substr(start, comma - start));
-        start = comma + 1;
     }
+    if (quoted) return {};
+    fields.push_back(trim(field));
     return fields;
 }
 
+std::string clean_text_field(std::string_view value) {
+    const auto cleaned = trim(value);
+    if (cleaned.empty() || cleaned == "N/A" || cleaned == "Not Supported" || cleaned == "[Not Supported]") return {};
+    return cleaned;
+}
+
+bool valid_compute_capability(std::string_view value) {
+    const auto dot = value.find('.');
+    if (dot == std::string_view::npos || dot == 0 || dot + 1 >= value.size() ||
+        value.find('.', dot + 1) != std::string_view::npos) return false;
+    for (std::size_t i = 0; i < value.size(); ++i) {
+        if (i == dot) {
+            if (value[i] != '.') return false;
+        } else if (value[i] < '0' || value[i] > '9') {
+            return false;
+        }
+    }
+    return true;
+}
+
 #ifdef _WIN32
-std::optional<std::string> run_nvidia_smi() {
+std::optional<std::string> run_nvidia_smi(std::string_view query_fields) {
     std::wstring executable(32768, L'\0');
     const DWORD path_length = SearchPathW(nullptr, L"nvidia-smi.exe", nullptr,
                                            static_cast<DWORD>(executable.size()), executable.data(), nullptr);
@@ -95,7 +125,9 @@ std::optional<std::string> run_nvidia_smi() {
                                     &security, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (null_input == INVALID_HANDLE_VALUE) null_input = GetStdHandle(STD_INPUT_HANDLE);
 
-    std::wstring command = L"\"" + executable + L"\" --query-gpu=index,utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits";
+    std::wstring query_argument = L"--query-gpu=";
+    query_argument.append(query_fields.begin(), query_fields.end());
+    std::wstring command = L"\"" + executable + L"\" " + query_argument + L" --format=csv,noheader,nounits";
     std::vector<wchar_t> mutable_command(command.begin(), command.end());
     mutable_command.push_back(L'\0');
     STARTUPINFOW startup{};
@@ -153,7 +185,7 @@ std::optional<std::string> run_nvidia_smi() {
     return output;
 }
 #else
-std::optional<std::string> run_nvidia_smi() {
+std::optional<std::string> run_nvidia_smi(std::string_view query_fields) {
     int descriptors[2]{};
     if (pipe(descriptors) != 0) return std::nullopt;
 
@@ -175,9 +207,9 @@ std::optional<std::string> run_nvidia_smi() {
     }
 
     char executable[] = "nvidia-smi";
-    char query[] = "--query-gpu=index,utilization.gpu,memory.used,memory.total";
+    std::string query_argument = "--query-gpu=" + std::string(query_fields);
     char format[] = "--format=csv,noheader,nounits";
-    char* arguments[] = {executable, query, format, nullptr};
+    char* arguments[] = {executable, query_argument.data(), format, nullptr};
     pid_t child = -1;
     const int spawn_status = posix_spawnp(&child, executable, &actions, nullptr, arguments, environ);
     posix_spawn_file_actions_destroy(&actions);
@@ -230,7 +262,7 @@ std::optional<std::string> run_nvidia_smi() {
 #endif
 
 std::optional<std::vector<NvidiaGpuSample>> current_snapshot() {
-    const auto output = run_nvidia_smi();
+    const auto output = run_nvidia_smi("index,utilization.gpu,memory.used,memory.total");
     if (!output) return std::nullopt;
     std::vector<NvidiaGpuSample> samples;
     if (!parse_nvidia_smi_snapshot(*output, samples)) return std::nullopt;
@@ -274,6 +306,84 @@ void apply_after(std::map<int, DeviceAggregate>& aggregate, const std::vector<Nv
 }
 } // namespace
 
+bool parse_nvidia_smi_capabilities(std::string_view output,
+                                   std::vector<NvidiaGpuCapability>& devices) {
+    devices.clear();
+    if (output.size() > max_snapshot_bytes) return false;
+    std::istringstream lines{std::string(output)};
+    std::string line;
+    while (std::getline(lines, line)) {
+        if (trim(line).empty()) continue;
+        const auto fields = csv_fields(line);
+        if (fields.size() != 6) continue;
+        NvidiaGpuCapability device;
+        device.index = parse_metric(fields[0]);
+        device.name = clean_text_field(fields[1]);
+        device.driver_version = clean_text_field(fields[2]);
+        device.memory_total_mib = parse_metric(fields[3]);
+        device.memory_free_mib = parse_metric(fields[4]);
+        device.memory_used_mib = parse_metric(fields[5]);
+        if (device.index < 0 || device.name.empty()) continue;
+        devices.push_back(std::move(device));
+        if (devices.size() >= 32) break;
+    }
+    return !devices.empty();
+}
+
+bool parse_nvidia_smi_compute_capabilities(
+    std::string_view output, std::vector<std::pair<int, std::string>>& capabilities) {
+    capabilities.clear();
+    if (output.size() > max_snapshot_bytes) return false;
+    std::istringstream lines{std::string(output)};
+    std::string line;
+    while (std::getline(lines, line)) {
+        if (trim(line).empty()) continue;
+        const auto fields = csv_fields(line);
+        if (fields.size() != 2) continue;
+        const int index = parse_metric(fields[0]);
+        const auto capability = clean_text_field(fields[1]);
+        if (index < 0 || !valid_compute_capability(capability)) continue;
+        capabilities.emplace_back(index, capability);
+        if (capabilities.size() >= 32) break;
+    }
+    return !capabilities.empty();
+}
+
+NvidiaGpuCapabilitySnapshot read_nvidia_gpu_capabilities() {
+    NvidiaGpuCapabilitySnapshot result;
+    const auto identity_output = run_nvidia_smi(
+        "index,name,driver_version,memory.total,memory.free,memory.used");
+    if (!identity_output || !parse_nvidia_smi_capabilities(*identity_output, result.devices)) {
+        result.status = "unavailable";
+        result.message = "NVIDIA identity, driver and VRAM details were unavailable from nvidia-smi.";
+        result.devices.clear();
+        return result;
+    }
+
+    bool complete = true;
+    const auto compute_output = run_nvidia_smi("index,compute_cap");
+    std::vector<std::pair<int, std::string>> compute_capabilities;
+    if (compute_output && parse_nvidia_smi_compute_capabilities(*compute_output, compute_capabilities)) {
+        for (const auto& [index, capability] : compute_capabilities) {
+            const auto device = std::find_if(result.devices.begin(), result.devices.end(),
+                [index](const NvidiaGpuCapability& item) { return item.index == index; });
+            if (device != result.devices.end()) device->compute_capability = capability;
+        }
+    } else {
+        complete = false;
+    }
+    if (std::any_of(result.devices.begin(), result.devices.end(), [](const NvidiaGpuCapability& device) {
+            return device.driver_version.empty() || device.compute_capability.empty() ||
+                   device.memory_total_mib < 0 || device.memory_free_mib < 0 || device.memory_used_mib < 0;
+        })) complete = false;
+
+    result.status = complete ? "available" : "partial";
+    result.message = complete
+        ? "NVIDIA device identity, driver, compute capability and current VRAM were read locally."
+        : "NVIDIA device identity was read, but one or more driver, compute-capability or VRAM fields were unavailable; unknown values were not inferred.";
+    return result;
+}
+
 bool read_nvidia_gpu_snapshot(std::vector<NvidiaGpuSample>& samples) {
     const auto snapshot = current_snapshot();
     if (!snapshot) {
@@ -291,7 +401,7 @@ bool parse_nvidia_smi_snapshot(std::string_view output, std::vector<NvidiaGpuSam
     std::string line;
     while (std::getline(lines, line)) {
         if (trim(line).empty()) continue;
-        const auto fields = comma_fields(line);
+        const auto fields = csv_fields(line);
         if (fields.size() != 4) continue;
         NvidiaGpuSample sample;
         sample.index = parse_metric(fields[0]);

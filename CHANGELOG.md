@@ -1,3 +1,11 @@
+## Unreleased — NVIDIA hardware evidence and hardware-v1 contract
+
+- Version `GET /v1/system/hardware` with the new `hardware-v1` schema and publish NVIDIA driver evidence separately from the operating-system DXGI/DRM adapter inventory.
+- Query NVIDIA device name, driver version, compute capability, and total/free/used VRAM locally through bounded `nvidia-smi` subprocesses; do not invoke a shell or retain raw command output.
+- Keep `compute_cap` as an independent best-effort query so older drivers that do not expose that field can still report identity, driver and VRAM data.
+- Preserve unknown metrics as `null` and report partial/unavailable probe states rather than inferring driver, memory or compute capability values.
+- Add a separate bilingual NVIDIA evidence panel, parser regression tests, and HTTP schema validation. Real RTX 3060 hardware/offload validation remains a manual acceptance gate.
+
 ## Unreleased — shared engine adapter foundation
 
 - Add an explicit `adapter_id` to engine configuration under the versioned Shared Engine Adapter contract, with migration for legacy configs.

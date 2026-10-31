@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://azmisahin-ai.github.io/local-ai-runtime/schemas/hardware-v1.schema.json",
+  "title": "Local AI Runtime hardware inventory v1",
+  "type": "object",
+  "required": [
+    "schema_version", "platform", "architecture", "logical_cpu_count",
+    "total_memory_bytes", "available_memory_bytes", "available_disk_bytes",
+    "gpu_probe_status", "gpu_probe_message", "gpus", "nvidia_probe",
+    "memory_profile", "recommendation", "gpu_use_requires_validation", "recommendations"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "platform": { "type": "string", "minLength": 1 },
+    "architecture": { "type": "string", "minLength": 1 },
+    "logical_cpu_count": { "type": "integer", "minimum": 1 },
+    "total_memory_bytes": { "type": "integer", "minimum": 0 },
+    "available_memory_bytes": { "type": "integer", "minimum": 0 },
+    "available_disk_bytes": { "type": "integer", "minimum": 0 },
+    "gpu_probe_status": { "enum": ["complete", "partial", "unsupported"] },
+    "gpu_probe_message": { "type": "string" },
+    "gpus": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "vendor", "vendor_id", "device_id", "dedicated_memory_bytes"],
+        "properties": {
+          "name": { "type": "string" },
+          "vendor": { "type": "string" },
+          "vendor_id": { "type": "string" },
+          "device_id": { "type": "string" },
+          "dedicated_memory_bytes": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "nvidia_probe": {
+      "type": "object",
+      "required": ["source", "status", "message", "devices"],
+      "properties": {
+        "source": { "const": "nvidia-smi" },
+        "status": { "enum": ["available", "partial", "unavailable"] },
+        "message": { "type": "string" },
+        "devices": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["index", "name", "driver_version", "compute_capability", "memory_total_bytes", "memory_free_bytes", "memory_used_bytes"],
+            "properties": {
+              "index": { "type": "integer", "minimum": 0 },
+              "name": { "type": "string", "minLength": 1 },
+              "driver_version": { "type": ["string", "null"] },
+              "compute_capability": { "type": ["string", "null"], "pattern": "^[0-9]+\\.[0-9]+$" },
+              "memory_total_bytes": { "type": ["integer", "null"], "minimum": 0 },
+              "memory_free_bytes": { "type": ["integer", "null"], "minimum": 0 },
+              "memory_used_bytes": { "type": ["integer", "null"], "minimum": 0 }
+            }
+          }
+        }
+      }
+    },
+    "memory_profile": { "enum": ["unknown", "low-memory", "baseline", "memory-headroom"] },
+    "recommendation": { "type": "string" },
+    "gpu_use_requires_validation": { "const": true },
+    "recommendations": { "type": "array", "minItems": 2, "items": { "type": "object" } }
+  }
+}

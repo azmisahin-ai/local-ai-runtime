@@ -518,5 +518,12 @@
   "models.profileDrafted": "Seçim yukarıdaki profile eklendi. Sohbette kullanmak için profili gözden geçirip uygulayın.",
   "models.installEngine": "Motor paketini kur",
   "models.installModel": "Modeli kur",
-  "models.viewActivity": "Activity bölümünü aç"
+  "models.viewActivity": "Activity bölümünü aç",
+  "hardware.nvidiaEvidence": "NVIDIA SÜRÜCÜ KANITI",
+  "hardware.nvidiaDriver": "Sürücü sürümü: {version}",
+  "hardware.computeCapability": "Compute capability: {version}",
+  "hardware.vramTotal": "Toplam VRAM: {size}",
+  "hardware.vramFree": "Boş VRAM: {size}",
+  "hardware.vramUsed": "Kullanılan VRAM: {size}",
+  "hardware.nvidiaUnavailable": "NVIDIA sürücü ayrıntıları kullanılamıyor. Yukarıdaki işletim sistemi bağdaştırıcı listesi ayrı bir kaynaktır."
 }

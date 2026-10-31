@@ -1608,6 +1608,27 @@ function renderHardware(info) {
     hardwareSummary.append(make('p', 'hint', probeMessage));
   }
 
+  // NVIDIA driver telemetry is intentionally shown as a separate evidence
+  // source; it is not merged with the OS DXGI/DRM adapter inventory above.
+  const nvidiaProbe = info.nvidia_probe || {};
+  hardwareSummary.append(make('p', 'eyebrow', translation('hardware.nvidiaEvidence', 'NVIDIA DRIVER EVIDENCE')));
+  if (Array.isArray(nvidiaProbe.devices) && nvidiaProbe.devices.length) {
+    const nvidiaList = make('div', 'hardware-gpu-list');
+    for (const gpu of nvidiaProbe.devices) {
+      const item = make('article', 'hardware-gpu');
+      item.append(make('h3', '', gpu.name || translation('hardware.unknown', 'Unknown')));
+      item.append(make('p', '', formatMessage('hardware.nvidiaDriver', { version: gpu.driver_version || translation('common.notAvailable', 'Not available') })));
+      item.append(make('p', '', formatMessage('hardware.computeCapability', { version: gpu.compute_capability || translation('common.notAvailable', 'Not available') })));
+      item.append(make('p', '', formatMessage('hardware.vramTotal', { size: formatBytes(gpu.memory_total_bytes) })));
+      item.append(make('p', '', formatMessage('hardware.vramFree', { size: formatBytes(gpu.memory_free_bytes) })));
+      item.append(make('p', '', formatMessage('hardware.vramUsed', { size: formatBytes(gpu.memory_used_bytes) })));
+      nvidiaList.append(item);
+    }
+    hardwareSummary.append(nvidiaList);
+  } else {
+    hardwareSummary.append(make('p', 'hint', nvidiaProbe.message || translation('hardware.nvidiaUnavailable', 'NVIDIA driver details are unavailable. The operating-system adapter inventory above is a separate source.')));
+  }
+
   const guidance = make('div', 'hardware-guidance');
   guidance.append(make('strong', '', formatMessage('hardware.startingProfile', { profile: String(info.memory_profile || translation('hardware.unknown', 'unknown')).replaceAll('-', ' ') })));
   guidance.append(make('p', '', info.recommendation || translation('hardware.cpuBaseline', 'Start with the CPU baseline and verify each model on this computer.')));
