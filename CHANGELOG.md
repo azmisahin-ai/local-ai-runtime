@@ -1,3 +1,11 @@
+## Unreleased — resilient Windows NVIDIA evidence probe
+
+- Resolve `nvidia-smi.exe` from the Windows System32 directory before falling back to the normal executable search path, so GUI-launched runtime processes do not depend on an inherited PATH containing the NVIDIA shim.
+- Increase the bounded NVIDIA identity/driver/VRAM and compute-capability query timeout to 5 seconds to tolerate cold NVML initialization; keep repeated live telemetry samples separately bounded at 1.5 seconds.
+- Distinguish a command launch/timeout failure from a completed command that returned no parseable device record.
+- Add parser regression coverage using the verified RTX 3060 Laptop GPU output (driver 616.92, 6144 MiB VRAM, 5994 MiB free, compute capability 8.6).
+- Preserve the rule that system-wide GPU telemetry and GPU-offload evidence are separate signals.
+
 ## Unreleased — NVIDIA hardware evidence and hardware-v1 contract
 
 - Version `GET /v1/system/hardware` with the new `hardware-v1` schema and publish NVIDIA driver evidence separately from the operating-system DXGI/DRM adapter inventory.

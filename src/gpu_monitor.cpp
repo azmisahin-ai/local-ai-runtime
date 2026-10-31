@@ -37,7 +37,11 @@ namespace lar {
 namespace {
 using Clock = std::chrono::steady_clock;
 constexpr std::size_t max_snapshot_bytes = 16U * 1024U;
-constexpr auto command_timeout = std::chrono::milliseconds(1200);
+// Driver/identity probing may trigger a cold NVML initialization on Windows.
+// Give that one-time metadata query a generous bound while keeping repeated
+// live telemetry samples short and responsive.
+constexpr auto capability_command_timeout = std::chrono::milliseconds(5000);
+constexpr auto telemetry_command_timeout = std::chrono::milliseconds(1500);
 
 std::string trim(std::string_view value) {
     const auto first = value.find_first_not_of(" \t\r\n");
@@ -103,12 +107,41 @@ bool valid_compute_capability(std::string_view value) {
 }
 
 #ifdef _WIN32
-std::optional<std::string> run_nvidia_smi(std::string_view query_fields) {
+std::optional<std::wstring> resolve_nvidia_smi_executable() {
+    // Prefer the Windows system directory. NVIDIA commonly installs the
+    // nvidia-smi shim in System32, and GUI-launched applications may inherit a
+    // reduced PATH that does not contain that directory.
+    std::wstring system_directory(32768, L'\0');
+    const UINT system_length = GetSystemDirectoryW(
+        system_directory.data(), static_cast<UINT>(system_directory.size()));
+    if (system_length > 0 && system_length < system_directory.size()) {
+        system_directory.resize(system_length);
+        if (!system_directory.empty() && system_directory.back() != L'\\' &&
+            system_directory.back() != L'/') {
+            system_directory.push_back(L'\\');
+        }
+        const std::wstring system_candidate = system_directory + L"nvidia-smi.exe";
+        const DWORD attributes = GetFileAttributesW(system_candidate.c_str());
+        if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0) {
+            return system_candidate;
+        }
+    }
+
+    // Fall back to the normal Windows executable search order for standard
+    // NVIDIA NVSMI installs and custom driver layouts.
     std::wstring executable(32768, L'\0');
     const DWORD path_length = SearchPathW(nullptr, L"nvidia-smi.exe", nullptr,
                                            static_cast<DWORD>(executable.size()), executable.data(), nullptr);
     if (path_length == 0 || path_length >= executable.size()) return std::nullopt;
     executable.resize(path_length);
+    return executable;
+}
+
+std::optional<std::string> run_nvidia_smi(std::string_view query_fields,
+                                          std::chrono::milliseconds timeout) {
+    const auto resolved_executable = resolve_nvidia_smi_executable();
+    if (!resolved_executable) return std::nullopt;
+    const std::wstring& executable = *resolved_executable;
 
     SECURITY_ATTRIBUTES security{};
     security.nLength = sizeof(security);
@@ -149,7 +182,7 @@ std::optional<std::string> run_nvidia_smi(std::string_view query_fields) {
 
     std::string output;
     output.reserve(512);
-    const auto deadline = Clock::now() + command_timeout;
+    const auto deadline = Clock::now() + timeout;
     bool exited = false;
     while (Clock::now() < deadline) {
         DWORD available = 0;
@@ -185,7 +218,8 @@ std::optional<std::string> run_nvidia_smi(std::string_view query_fields) {
     return output;
 }
 #else
-std::optional<std::string> run_nvidia_smi(std::string_view query_fields) {
+std::optional<std::string> run_nvidia_smi(std::string_view query_fields,
+                                          std::chrono::milliseconds timeout) {
     int descriptors[2]{};
     if (pipe(descriptors) != 0) return std::nullopt;
 
@@ -228,7 +262,7 @@ std::optional<std::string> run_nvidia_smi(std::string_view query_fields) {
     }
     std::string output;
     output.reserve(512);
-    const auto deadline = Clock::now() + command_timeout;
+    const auto deadline = Clock::now() + timeout;
     int child_status = 0;
     bool exited = false;
     while (Clock::now() < deadline) {
@@ -262,7 +296,7 @@ std::optional<std::string> run_nvidia_smi(std::string_view query_fields) {
 #endif
 
 std::optional<std::vector<NvidiaGpuSample>> current_snapshot() {
-    const auto output = run_nvidia_smi("index,utilization.gpu,memory.used,memory.total");
+    const auto output = run_nvidia_smi("index,utilization.gpu,memory.used,memory.total", telemetry_command_timeout);
     if (!output) return std::nullopt;
     std::vector<NvidiaGpuSample> samples;
     if (!parse_nvidia_smi_snapshot(*output, samples)) return std::nullopt;
@@ -352,16 +386,22 @@ bool parse_nvidia_smi_compute_capabilities(
 NvidiaGpuCapabilitySnapshot read_nvidia_gpu_capabilities() {
     NvidiaGpuCapabilitySnapshot result;
     const auto identity_output = run_nvidia_smi(
-        "index,name,driver_version,memory.total,memory.free,memory.used");
-    if (!identity_output || !parse_nvidia_smi_capabilities(*identity_output, result.devices)) {
+        "index,name,driver_version,memory.total,memory.free,memory.used", capability_command_timeout);
+    if (!identity_output) {
         result.status = "unavailable";
-        result.message = "NVIDIA identity, driver and VRAM details were unavailable from nvidia-smi.";
+        result.message = "The nvidia-smi metadata query could not be located, started or completed within 5 seconds.";
+        result.devices.clear();
+        return result;
+    }
+    if (!parse_nvidia_smi_capabilities(*identity_output, result.devices)) {
+        result.status = "unavailable";
+        result.message = "nvidia-smi ran, but its output did not contain a valid NVIDIA device record.";
         result.devices.clear();
         return result;
     }
 
     bool complete = true;
-    const auto compute_output = run_nvidia_smi("index,compute_cap");
+    const auto compute_output = run_nvidia_smi("index,compute_cap", capability_command_timeout);
     std::vector<std::pair<int, std::string>> compute_capabilities;
     if (compute_output && parse_nvidia_smi_compute_capabilities(*compute_output, compute_capabilities)) {
         for (const auto& [index, capability] : compute_capabilities) {

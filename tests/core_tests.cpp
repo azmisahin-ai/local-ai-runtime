@@ -611,6 +611,21 @@ int main() {
                 "compute capability must be associated with the same nvidia-smi device index");
         require(!lar::parse_nvidia_smi_compute_capabilities("0, 8.x\n", compute_caps),
                 "malformed compute capability must not be accepted");
+        std::vector<lar::NvidiaGpuCapability> user_rtx3060_devices;
+        require(lar::parse_nvidia_smi_capabilities(
+                    "0, NVIDIA GeForce RTX 3060 Laptop GPU, 616.92, 6144, 5994, 0\n",
+                    user_rtx3060_devices),
+                "the verified Windows RTX 3060 nvidia-smi output should parse");
+        require(user_rtx3060_devices.size() == 1 && user_rtx3060_devices[0].index == 0 &&
+                user_rtx3060_devices[0].name == "NVIDIA GeForce RTX 3060 Laptop GPU" &&
+                user_rtx3060_devices[0].driver_version == "616.92" &&
+                user_rtx3060_devices[0].memory_total_mib == 6144 &&
+                user_rtx3060_devices[0].memory_free_mib == 5994 &&
+                user_rtx3060_devices[0].memory_used_mib == 0,
+                "the verified Windows RTX 3060 driver and VRAM values should remain exact");
+        require(lar::parse_nvidia_smi_compute_capabilities("0, 8.6\n", compute_caps) &&
+                compute_caps.size() == 1 && compute_caps[0].first == 0 && compute_caps[0].second == "8.6",
+                "the verified RTX 3060 compute capability output should parse");
         require(!lar::parse_nvidia_smi_capabilities("nvidia-smi failed\n", nvidia_devices),
                 "nvidia-smi diagnostic text must not be accepted as device data");
 
