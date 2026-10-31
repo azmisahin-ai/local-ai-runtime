@@ -75,4 +75,8 @@ public:
 std::shared_ptr<TaskEngineAdapter> create_task_engine_adapter(const EngineConfig& config,
                                                               std::string& error);
 
+// Creates the API-only audio.cpp server configuration used by managed installs.
+// ui_management is required by v0.9.3 when the initial models array is empty.
+std::string build_audio_cpp_server_config_json(std::string_view backend, unsigned short port);
+
 } // namespace lar

@@ -4,6 +4,7 @@ import argparse
 import http.client
 import json
 import os
+import platform
 import shutil
 import signal
 import socket
@@ -569,6 +570,19 @@ def main():
             assert model_item["provenance"]["revision_policy"] == "pinned-revision"
             assert "llama.cpp-cpu" in items
             assert items["llama.cpp-cpu"]["compatibility"]["backends"] == ["cpu"]
+            audio_catalog_visible = os.name == "nt" and platform.machine().lower() in {"amd64", "x86_64"}
+            if audio_catalog_visible:
+                assert "audio.cpp-v0.9.3-cpu" in items
+                audio_item = items["audio.cpp-v0.9.3-cpu"]
+                assert audio_item["family"] == "audio.cpp" and audio_item["version"] == "v0.9.3"
+                assert audio_item["backend"] == "cpu" and audio_item["installed"] is False
+                assert audio_item["size_bytes"] == 30547092
+                assert audio_item["sha256"] == "3ac66f46395b4e92e4f3bb68b200f0032310bd9922f12d97f10ccdadb02dee4b"
+                assert audio_item["evidence"]["real_task_test"] == "not-verified"
+            else:
+                assert "audio.cpp-v0.9.3-cpu" not in items, (
+                    "the Windows-only audio.cpp pilot must not appear on other OS/architectures"
+                )
             cpu_item = items["llama.cpp-cpu"]
             assert cpu_item["installed"] is True, (
                 "Catalog did not discover the installed fixture under the explicit user-data root: " + json.dumps(cpu_item)

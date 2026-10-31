@@ -254,6 +254,15 @@ def main() -> None:
     if variants != {"cpu", "cuda12", "cuda13"}:
         fail(f"unexpected engine release variant set: {sorted(variants)}")
 
+    active_audio = [entry for entry in components if entry.get("install", {}).get("strategy") == "audio-cpp-release-set"]
+    if len(active_audio) != 1 or active_audio[0].get("id") != "audio.cpp-v0.9.3-cpu":
+        fail("the only active audio.cpp catalog record must be the exact-pinned Windows x64 CPU pilot")
+    validate_audio_cpp_contract(
+        active_audio[0]["id"], active_audio[0], json.loads(active_audio[0]["metadata_json"])
+    )
+    if any(entry.get("install", {}).get("variant") == "cuda13.3" for entry in active_audio):
+        fail("CUDA audio.cpp must remain inactive until its native Windows lifecycle gate passes")
+
     # Prove that a second, non-default model from another reviewed HF repository
     # is accepted without changing the single default-model invariant.
     starter_entry = copy.deepcopy(next(entry for entry in components if entry.get("install", {}).get("strategy") == "pinned-gguf"))
@@ -362,7 +371,7 @@ def main() -> None:
         pass
     else:
         fail("incomplete CUDA package set was accepted")
-    print(f"Catalog manifest contract passed: {len(components)} reviewed components, {len(ids)} unique IDs, {len(variants)} llama.cpp engine variants; GGUF pinning and audio.cpp CPU/CUDA package-set fixtures passed.")
+    print(f"Catalog manifest contract passed: {len(components)} reviewed components, {len(ids)} unique IDs, {len(variants)} llama.cpp engine variants and one exact-pinned audio.cpp CPU item; GGUF pinning and CPU/CUDA package-set fixtures passed.")
 
 
 if __name__ == "__main__":

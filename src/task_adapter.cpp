@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cctype>
 #include <sstream>
+#include <stdexcept>
 #include <utility>
 
 namespace lar {
@@ -209,6 +210,23 @@ private:
 };
 
 } // namespace
+
+std::string build_audio_cpp_server_config_json(std::string_view backend, unsigned short port) {
+    if ((backend != "cpu" && backend != "cuda") || port == 0U) {
+        throw std::invalid_argument("audio.cpp server configuration requires a CPU/CUDA backend and non-zero port.");
+    }
+    std::ostringstream output;
+    output << "{\n"
+           << "  \"host\": \"127.0.0.1\",\n"
+           << "  \"port\": " << port << ",\n"
+           << "  \"backend\": \"" << backend << "\",\n"
+           << "  \"ui_management\": true,\n"
+           << "  \"lazy_load\": true,\n"
+           << "  \"max_loaded_models\": 1,\n"
+           << "  \"models\": []\n"
+           << "}\n";
+    return output.str();
+}
 
 std::shared_ptr<TaskEngineAdapter> create_task_engine_adapter(const EngineConfig& config,
                                                               std::string& error) {

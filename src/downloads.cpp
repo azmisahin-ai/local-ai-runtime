@@ -1,6 +1,7 @@
 #include "lar/downloads.hpp"
 #include "lar/catalog.hpp"
 #include "lar/diagnostics.hpp"
+#include "lar/task_adapter.hpp"
 
 #include <archive.h>
 #include <archive_entry.h>
@@ -2442,9 +2443,8 @@ void DownloadManager::download_audio_cpp_release_set(const std::shared_ptr<Job>&
         {
             std::ofstream output(staged_config, std::ios::binary | std::ios::trunc);
             if (!output) throw std::runtime_error("Could not create the audio.cpp API-only server configuration.");
-            output << "{\n  \"host\": \"127.0.0.1\",\n  \"port\": " << audio_port
-                   << ",\n  \"backend\": \"" << (component->variant == "cpu" ? "cpu" : "cuda")
-                   << "\",\n  \"lazy_load\": true,\n  \"max_loaded_models\": 1,\n  \"models\": []\n}\n";
+            output << build_audio_cpp_server_config_json(
+                component->variant == "cpu" ? "cpu" : "cuda", audio_port);
             output.flush();
             if (!output) throw std::runtime_error("Could not finish writing the audio.cpp server configuration.");
         }

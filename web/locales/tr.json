@@ -592,5 +592,7 @@
   "chat.startEngineFirst": "Sohbet profilin hazır. Devam etmek için Etkinlikler bölümünden motoru başlat.",
   "engine.openChat": "Sohbeti aç",
   "profile.openActivity": "Etkinliklere devam et",
-  "profile.draftNotApplied": "Seçimin değişti ancak henüz etkin değil. Motoru başlatmadan önce profili uygula."
+  "profile.draftNotApplied": "Seçimin değişti ancak henüz etkin değil. Motoru başlatmadan önce profili uygula.",
+  "catalog.audio.cpp-v0.9.3-cpu.description": "Sabitlenmiş audio.cpp v0.9.3 Windows x64 CPU görev sunucusunu kurar. Model ağırlıkları ayrıdır; bu CPU profili taşınabilirlik ve test içindir.",
+  "catalog.audio.cpp-v0.9.3-cpu.limits": "Yerel CPU sunucusunun başlatma ve yaşam döngüsü testleri geçti; gerçek ASR/TTS görevleri ve transkripsiyon kalitesi henüz doğrulanmadı. Konuşma modeli içermez."
 }

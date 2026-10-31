@@ -2,7 +2,7 @@
 
 **Prepared:** 2026-10-31  
 **Repository:** <https://github.com/azmisahin-ai/local-ai-runtime>  
-**Purpose:** Continue Stage 13A audio.cpp integration without repeating the LLM/UI polishing loop. The typed task-adapter and safe release-set installer foundations are in code; next work is native Windows CPU lifecycle, CUDA lifecycle and Qwen3-ASR Turkish acceptance.
+**Purpose:** Continue Stage 13A audio.cpp integration without repeating LLM/UI polish. Typed task adapter, exact package pins and native Windows CPU server lifecycle are in place; next work is the managed CPU installer acceptance test, then CUDA lifecycle and Qwen3-ASR Turkish acceptance.
 
 ## Read these files first
 
@@ -47,7 +47,7 @@
 
 - Stage 12 is not fully closed: app-side GPU layer-offload count/current-session CUDA evidence and KV-cache restore/context behavior remain open. This is follow-up work, not a blocker for audio integration.
 - Stage 12.5 has shipped key onboarding, first-run flow, hardware evidence labels, curated text model shortlist, Qwen3 streaming correction and safe Markdown. Full manual responsive/accessibility/screen-reader review and v0.1.30 post-release visual check remain. These low-priority UI checks must not block Stage 13A.
-- The manifest now has a fail-closed `audio-cpp-release-set` strategy in code/schema for a CPU archive or a paired CUDA server+CUDART bundle. On 2026-10-31 the user queried the official v0.9.3 GitHub release API and supplied exact byte sizes: CPU `30547092`, CUDA server `277336614`, CUDA runtime `575457454`. These exact values and SHA-256 digests are now enforced by the compiled allowlist and tests. No audio.cpp record is active until the Windows CPU package installer/lifecycle smoke passes. Qwen3-ASR model assets still need their own immutable file pin/licence work.
+- The manifest now has a fail-closed `audio-cpp-release-set` strategy in code/schema for a CPU archive or a paired CUDA server+CUDART bundle. On 2026-10-31 the user queried the official v0.9.3 GitHub release API and supplied exact byte sizes: CPU `30547092`, CUDA server `277336614`, CUDA runtime `575457454`. These exact values and SHA-256 digests are now enforced by the compiled allowlist and tests. The user completed the native Windows CPU server lifecycle smoke: verified v0.9.3 Windows AMD64 CPU binary; `/health` returned `status=ok`, `backend=cpu`, `models=0`; `/v1/models` returned an empty list; second start succeeded; final process query and port 18082 listener query were both empty. The CPU catalog item is now enabled only to exercise the managed installer. Qwen3-ASR model assets still need their own immutable file pin/licence work.
 - Existing `EngineAdapter` v1 exposes lifecycle/readiness and an upstream Chat completions path. It is not a generic task API. Do not register audio.cpp under `openai-compatible-process` or pretend that audio routes are Chat completions.
 
 ## Immediate next-session mission: Stage 13A — audio.cpp pilot
@@ -66,8 +66,8 @@
 
 1. Verified official v0.9.3 release asset names, SHA-256 pins and exact byte sizes using the GitHub release API output supplied by the user (see `docs/engine-integration-research.md`). The compiled allowlist and tests require exact matches; do not install from floating `latest`.
 2. Implemented: separate typed `TaskEngineAdapter`, `asr.transcribe` / `tts.synthesize`, typed WAV/transcript results and capability declarations. Chat v1 remains unchanged. Per-task cancellation is not yet supported and is advertised as false.
-3. Implemented: `audio-cpp-release-set` strategy and staged downloader for CPU `audio-v0.9.3-bin-windows-x64-cpu.zip` or CUDA 13.3 server+CUDART pair. Exact byte sizes are now pinned. The active catalog entry remains blocked pending native Windows CPU installer/lifecycle validation; no model files are included. The installer creates the server config in staging and chooses a loopback ephemeral port before atomic activation.
-4. Hosted fake-engine CPU lifecycle and HTTP task tests exercise `/health`, `/v1/models`, stop/restart, ASR multipart with `tr`, TTS WAV and Chat isolation. Still required on Windows: install the real CPU zip and run the same lifecycle.
+3. Implemented: `audio-cpp-release-set` strategy and staged downloader for CPU `audio-v0.9.3-bin-windows-x64-cpu.zip` or CUDA 13.3 server+CUDART pair. Exact byte sizes are now pinned. The CPU catalog entry is enabled after native server lifecycle acceptance; no model files are included. The installer creates the API-only server config in staging, enables `ui_management` so audio.cpp v0.9.3 accepts an initially empty model list, and chooses a loopback ephemeral port before atomic activation.
+4. Hosted fake-engine CPU lifecycle and HTTP task tests exercise `/health`, `/v1/models`, stop/restart, ASR multipart with `tr`, TTS WAV and Chat isolation. Still required on Windows: install the real CPU zip through the managed Local AI Runtime catalog installer and verify activation, engine registration and managed lifecycle.
 5. Then install the CUDA package pair and verify lifecycle plus CPU fallback on the CUDA-enabled binary. The target's compute capability 8.6 and driver 616.92 meet published package prerequisites, but this is not a CUDA task result.
 6. Only after native CPU and CUDA lifecycle gates, pin Qwen3-ASR-0.6B model repo revision, files, sizes, hashes and license. Use explicit language `tr` and a small, non-sensitive licensed WAV fixture plus human-reviewed reference transcript.
 7. Run one CPU transcription, then one CUDA transcription, capturing task result, elapsed time/RTF, process RSS, `nvidia-smi` before/peak/after, and engine log evidence. Do not call GPU inference validated solely from system-wide telemetry.

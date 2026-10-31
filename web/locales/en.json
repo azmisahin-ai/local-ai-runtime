@@ -592,5 +592,7 @@
   "chat.startEngineFirst": "Your Chat profile is ready. Start its engine in Activity to continue.",
   "engine.openChat": "Open Chat",
   "profile.openActivity": "Continue to Activity",
-  "profile.draftNotApplied": "Your selection has changed but is not active yet. Apply the profile before starting the engine."
+  "profile.draftNotApplied": "Your selection has changed but is not active yet. Apply the profile before starting the engine.",
+  "catalog.audio.cpp-v0.9.3-cpu.description": "Installs the pinned audio.cpp v0.9.3 Windows x64 CPU task server. Model weights are separate; this CPU profile is for portability and testing.",
+  "catalog.audio.cpp-v0.9.3-cpu.limits": "The native CPU server passed startup and lifecycle checks, but real ASR/TTS tasks and transcription quality are not validated. No speech model is included."
 }

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "manifest_version": "1.1.0",
+  "manifest_version": "1.2.0",
   "components": [
     {
       "id": "llama.cpp-cpu",
@@ -168,6 +168,32 @@
         ]
       },
       "metadata_json": "{\"schema_version\":1,\"id\":\"qwen2.5-1.5b-q4km\",\"type\":\"model\",\"name\":\"Qwen2.5 1.5B Instruct — Q4_K_M\",\"description\":\"Lightweight fallback chat model for low-memory systems and CPU-first setup. GGUF weights are about 1.04 GiB; the active context and runtime add memory overhead.\",\"family\":\"Qwen2.5\",\"workspaces\":[\"language-chat\"],\"tasks\":[\"chat\",\"text-generation\"],\"modalities\":[\"text\"],\"input_formats\":[\"GGUF\"],\"output_formats\":[\"text\"],\"version\":\"dd26da440ef0330c47919d1ecae0966d24022222\",\"backend\":\"gguf\",\"compatibility\":{\"targets\":[{\"platform\":\"windows\",\"architecture\":\"x64\"},{\"platform\":\"linux\",\"architecture\":\"x64\"},{\"platform\":\"macos\",\"architecture\":\"x64\"},{\"platform\":\"macos\",\"architecture\":\"arm64\"}],\"backends\":[\"llama.cpp-cpu\",\"llama.cpp-cuda12\",\"llama.cpp-cuda13\"],\"cpu_features\":[],\"driver_requirements\":[],\"known_limits\":[\"Model fit depends on context and runtime overhead.\",\"CUDA compatibility and GPU placement must be tested on the target machine.\"]},\"resources\":{\"download_bytes\":1117320736,\"download_size_policy\":\"pinned-exact-size\",\"minimum_system_ram_bytes\":4294967296,\"recommended_system_ram_bytes\":8589934592,\"minimum_vram_bytes\":null,\"recommended_vram_bytes\":null,\"estimate_confidence\":\"heuristic\",\"notes\":\"RAM guidance is heuristic; context size, runtime overhead and GPU offload change memory needs.\"},\"provenance\":{\"source_url\":\"https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF\",\"revision_policy\":\"pinned-revision\",\"revision\":\"dd26da440ef0330c47919d1ecae0966d24022222\",\"license_id\":\"Apache-2.0\",\"license_url\":\"https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/blob/dd26da440ef0330c47919d1ecae0966d24022222/LICENSE\",\"digest_policy\":\"pinned-sha256-and-exact-size\",\"dependencies\":[]},\"evidence\":{\"metadata_review\":\"reviewed\",\"package_verification\":\"sha256-and-header-at-install\",\"real_task_test\":\"not-verified-by-hosted-ci\",\"profile_validation\":\"not-validated\"},\"lifecycle\":{\"install_scope\":\"per-user-data-directory\",\"user_data_separate\":true,\"update_policy\":\"pinned-model-revision\",\"automatic_update\":false},\"license\":\"Apache-2.0\",\"license_url\":\"https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/blob/dd26da440ef0330c47919d1ecae0966d24022222/LICENSE\",\"source_url\":\"https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF\",\"size_bytes\":1117320736,\"sha256\":\"6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e\",\"model_profile\":{\"task_group\":\"chat\",\"architecture\":\"Qwen2\",\"parameter_count\":\"1.5B\",\"format\":\"GGUF\",\"quantization\":\"Q4_K_M\",\"recommended_for\":\"low-memory\",\"context_tokens\":32768,\"preferred_context_tokens\":2048}}"
+    },
+    {
+      "id": "audio.cpp-v0.9.3-cpu",
+      "kind": "engine",
+      "installable": true,
+      "default_model": false,
+      "install": {
+        "strategy": "audio-cpp-release-set",
+        "variant": "cpu",
+        "assets": [
+          {
+            "role": "server",
+            "filename": "audio-v0.9.3-bin-windows-x64-cpu.zip",
+            "url": "https://github.com/0xShug0/audio.cpp/releases/download/v0.9.3/audio-v0.9.3-bin-windows-x64-cpu.zip",
+            "sha256": "3ac66f46395b4e92e4f3bb68b200f0032310bd9922f12d97f10ccdadb02dee4b",
+            "size_bytes": 30547092
+          }
+        ],
+        "targets": [
+          {
+            "platform": "windows",
+            "architecture": "x64"
+          }
+        ]
+      },
+      "metadata_json": "{\"schema_version\":1,\"id\":\"audio.cpp-v0.9.3-cpu\",\"type\":\"engine\",\"name\":\"audio.cpp v0.9.3 — CPU task runtime\",\"description\":\"Installs the pinned audio.cpp v0.9.3 Windows x64 CPU server. The package contains the task runtime only; speech models are installed separately. This is a portability/testing CPU profile, not a performance claim.\",\"family\":\"audio.cpp\",\"workspaces\":[\"audio\"],\"tasks\":[\"asr.transcribe\",\"tts.synthesize\"],\"modalities\":[\"audio\"],\"input_formats\":[\"audio/wav\",\"application/json\"],\"output_formats\":[\"application/json\",\"audio/wav\"],\"version\":\"v0.9.3\",\"backend\":\"cpu\",\"compatibility\":{\"targets\":[{\"platform\":\"windows\",\"architecture\":\"x64\"}],\"backends\":[\"cpu\"],\"cpu_features\":[],\"driver_requirements\":[],\"known_limits\":[\"The upstream CPU package is intended for portability and testing; performance and model coverage may be lower than CUDA.\",\"No ASR or TTS model weights are included in this engine package.\",\"A successful server lifecycle does not validate real transcription or speech synthesis quality.\"]},\"resources\":{\"download_bytes\":30547092,\"download_size_policy\":\"pinned-exact-size\",\"minimum_system_ram_bytes\":null,\"recommended_system_ram_bytes\":null,\"minimum_vram_bytes\":null,\"recommended_vram_bytes\":null,\"estimate_confidence\":\"not-estimated-for-engine-only\",\"notes\":\"Engine package only. Model memory requirements depend on the separately selected speech model and task.\"},\"provenance\":{\"source_url\":\"https://github.com/0xShug0/audio.cpp\",\"revision_policy\":\"pinned-release\",\"revision\":\"v0.9.3\",\"license_id\":\"Apache-2.0\",\"license_url\":\"https://github.com/0xShug0/audio.cpp/blob/main/LICENSE\",\"digest_policy\":\"pinned-sha256-and-exact-size\",\"dependencies\":[]},\"evidence\":{\"metadata_review\":\"reviewed\",\"package_verification\":\"sha256-and-exact-size-pinned\",\"real_task_test\":\"not-verified\",\"profile_validation\":\"not-validated\"},\"lifecycle\":{\"install_scope\":\"per-user-data-directory\",\"user_data_separate\":true,\"update_policy\":\"pinned-engine-release\",\"automatic_update\":false},\"license\":\"Apache-2.0\",\"license_url\":\"https://github.com/0xShug0/audio.cpp/blob/main/LICENSE\",\"source_url\":\"https://github.com/0xShug0/audio.cpp\",\"size_bytes\":30547092,\"sha256\":\"3ac66f46395b4e92e4f3bb68b200f0032310bd9922f12d97f10ccdadb02dee4b\"}"
     }
   ]
 }

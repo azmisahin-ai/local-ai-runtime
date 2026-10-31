@@ -180,6 +180,25 @@ int main() {
             std::filesystem::remove(invalid_gguf_path, ignored);
         }
 
+        stage("audio.cpp generated API-only server configuration");
+        {
+            const auto cpu_json = lar::build_audio_cpp_server_config_json("cpu", 18432U);
+            require(cpu_json.find("\"ui_management\": true") != std::string::npos,
+                    "managed audio.cpp config must enable ui_management for an initially empty model list");
+            require(cpu_json.find("\"models\": []") != std::string::npos,
+                    "managed audio.cpp config must not invent or download a model during engine installation");
+            require(cpu_json.find("\"backend\": \"cpu\"") != std::string::npos,
+                    "CPU installer config must select the CPU backend");
+            bool rejected_bad_backend = false;
+            try { (void)lar::build_audio_cpp_server_config_json("arbitrary", 18432U); }
+            catch (const std::invalid_argument&) { rejected_bad_backend = true; }
+            require(rejected_bad_backend, "audio.cpp config builder must reject unreviewed backends");
+            bool rejected_bad_port = false;
+            try { (void)lar::build_audio_cpp_server_config_json("cpu", 0U); }
+            catch (const std::invalid_argument&) { rejected_bad_port = true; }
+            require(rejected_bad_port, "audio.cpp config builder must reject port zero");
+        }
+
         stage("audio.cpp CPU process lifecycle smoke");
         {
             namespace asio = boost::asio;
@@ -274,10 +293,11 @@ int main() {
 
         stage("compiled reviewed component manifest");
         const auto& manifest_components = lar::catalog::components();
-        require(manifest_components.size() == 6, "compiled catalog manifest should contain three engine variants and three reviewed chat models");
+        require(manifest_components.size() == 7, "compiled catalog manifest should contain three llama.cpp variants, one audio.cpp CPU engine and three reviewed chat models");
         const auto* cpu_catalog_item = lar::catalog::find_component("llama.cpp-cpu");
         const auto* cuda12_catalog_item = lar::catalog::find_component("llama.cpp-cuda12");
         const auto* cuda13_catalog_item = lar::catalog::find_component("llama.cpp-cuda13");
+        const auto* audio_cpu_catalog_item = lar::catalog::find_component("audio.cpp-v0.9.3-cpu");
         const auto* starter_model = lar::catalog::default_model_component();
         const auto* qwen3_model = lar::catalog::find_component("qwen3-4b-q4km");
         const auto* gemma4_model = lar::catalog::find_component("gemma4-e2b-q4");
@@ -291,6 +311,12 @@ int main() {
                 "CUDA 12 engine should resolve through the compiled manifest");
         require(cuda13_catalog_item && cuda13_catalog_item->installer == "llama-release" && cuda13_catalog_item->variant == "cuda13",
                 "CUDA 13 engine should resolve through the compiled manifest");
+        require(audio_cpu_catalog_item && audio_cpu_catalog_item->installer == "audio-cpp-release-set" &&
+                audio_cpu_catalog_item->variant == "cpu" && audio_cpu_catalog_item->assets.size() == 1U,
+                "audio.cpp CPU engine should resolve only through its exact-pinned Windows release-set entry");
+        require(lar::catalog::supports_target(*audio_cpu_catalog_item, "windows", "x64") &&
+                !lar::catalog::supports_target(*audio_cpu_catalog_item, "linux", "x64"),
+                "audio.cpp pilot must remain Windows x64 only");
         require(cpu_catalog_item->dependencies.empty(), "CPU llama.cpp must not declare a CUDA runtime dependency");
         require(cuda12_catalog_item->dependencies.size() == 1 &&
                 cuda12_catalog_item->dependencies.front().id == "llama.cpp-cudart-cuda12",
