@@ -1,16 +1,16 @@
 ﻿[CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)]
-    [ValidatePattern('^[0-9a-fA-F]{40}$')]
-    [string]$ExpectedCommitSha,
+    [ValidatePattern('^$|^[0-9a-fA-F]{40}$')]
+    [string]$ExpectedCommitSha = '',
     [ValidateRange(30, 3600)]
     [int]$CiTimeoutSeconds = 1800,
     [ValidateRange(10, 120)]
     [int]$PollSeconds = 30
 )
 
-# This release gate is intentionally invoked by the stable root-level
-# Publish-LocalAIRuntime.ps1 after it imports and pushes this exact commit.
+# Canonical repository-local publisher. It safely fast-forwards the current
+# clean main branch to GitHub, waits for main CI, then creates and verifies the
+# next alpha release. No bundle, Downloads clone, or bootstrap script is needed.
 $ErrorActionPreference = 'Stop'
 $repositorySlug = 'azmisahin-ai/local-ai-runtime'
 $repositoryUrl = 'https://github.com/azmisahin-ai/local-ai-runtime.git'
@@ -289,10 +289,36 @@ try {
     Invoke-Git -GitArgs @('fetch', '--tags', 'origin', '+refs/heads/main:refs/remotes/origin/main') | Out-Null
 
     $commitSha = (Invoke-Git -GitArgs @('rev-parse', 'HEAD')).ToLowerInvariant()
-    $expectedSha = $ExpectedCommitSha.ToLowerInvariant()
-    if ($commitSha -ne $expectedSha) { throw "The working copy is $($commitSha.Substring(0, 7)), but bootstrap imported $($expectedSha.Substring(0, 7)). Refusing to create a release tag." }
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedCommitSha)) {
+        $expectedSha = $ExpectedCommitSha.ToLowerInvariant()
+        if ($commitSha -ne $expectedSha) {
+            throw "The current checkout is $($commitSha.Substring(0, 7)), not the requested commit $($expectedSha.Substring(0, 7)). No push or release tag was created."
+        }
+    }
+
     $remoteSha = (Invoke-Git -GitArgs @('rev-parse', 'origin/main')).ToLowerInvariant()
-    if ($remoteSha -ne $commitSha) { throw 'GitHub main does not match the prepared commit. No version tag will be created.' }
+    if ($remoteSha -ne $commitSha) {
+        & git merge-base --is-ancestor origin/main HEAD
+        $localIsAhead = ($LASTEXITCODE -eq 0)
+        if (-not $localIsAhead) {
+            & git merge-base --is-ancestor HEAD origin/main
+            if ($LASTEXITCODE -eq 0) {
+                throw 'GitHub main is ahead of this checkout. Run git pull --ff-only origin main, review the updated code, then retry. No push or release tag was created.'
+            }
+            throw 'Local main and GitHub main have diverged. Resolve the history explicitly; this publisher never resets or force-pushes. No release tag was created.'
+        }
+        Write-Host "Pushing local main to GitHub (fast-forward only): $($commitSha.Substring(0, 7))" -ForegroundColor Cyan
+        Invoke-Git -GitArgs @('push', 'origin', 'main') | Out-Null
+    } else {
+        Write-Host 'This exact commit is already on GitHub main.' -ForegroundColor Yellow
+    }
+
+    # Re-read the remote after push. A concurrent main update must block tagging.
+    Invoke-Git -GitArgs @('fetch', '--tags', 'origin', '+refs/heads/main:refs/remotes/origin/main') | Out-Null
+    $remoteSha = (Invoke-Git -GitArgs @('rev-parse', 'origin/main')).ToLowerInvariant()
+    if ($remoteSha -ne $commitSha) {
+        throw 'GitHub main does not match the local commit after push. No version tag will be created.'
+    }
     $commitMessage = Invoke-Git -GitArgs @('log', '-1', '--pretty=%s')
     Write-Host "Publishing commit: $($commitSha.Substring(0, 7)) $commitMessage" -ForegroundColor Green
 

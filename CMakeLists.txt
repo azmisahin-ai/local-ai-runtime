@@ -19,17 +19,35 @@ if(NOT Boost_FOUND)
         "If using CMake directly on Windows, pass -DCMAKE_TOOLCHAIN_FILE=<vcpkg-root>/scripts/buildsystems/vcpkg.cmake.")
 endif()
 # The reviewed component manifest is the single source for catalog metadata
-# and install allowlisting. Embed it into the binary so users cannot replace it
-# with arbitrary URLs or installer strategies from a writable data directory.
+# and install allowlisting. Embed its exact UTF-8 bytes into the binary so users
+# cannot replace it with arbitrary URLs or installer strategies from a writable
+# data directory. A byte array avoids MSVC's 16,383-character limit for a single
+# string literal (the manifest is now larger than that limit).
 set(LAR_CATALOG_MANIFEST_FILE "${CMAKE_CURRENT_SOURCE_DIR}/catalog/manifest-v1.json")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${LAR_CATALOG_MANIFEST_FILE}")
-file(READ "${LAR_CATALOG_MANIFEST_FILE}" LAR_CATALOG_MANIFEST_JSON)
+file(READ "${LAR_CATALOG_MANIFEST_FILE}" LAR_CATALOG_MANIFEST_HEX HEX)
+string(LENGTH "${LAR_CATALOG_MANIFEST_HEX}" LAR_CATALOG_MANIFEST_HEX_LENGTH)
+math(EXPR LAR_CATALOG_MANIFEST_HEX_REMAINDER "${LAR_CATALOG_MANIFEST_HEX_LENGTH} % 2")
+if(NOT LAR_CATALOG_MANIFEST_HEX_REMAINDER EQUAL 0)
+    message(FATAL_ERROR "The component manifest did not produce an even-length byte sequence.")
+endif()
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated/lar")
-configure_file(
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/catalog_manifest_embedded.hpp.in"
-    "${CMAKE_CURRENT_BINARY_DIR}/generated/lar/catalog_manifest_embedded.hpp"
-    @ONLY
-)
+set(LAR_CATALOG_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/lar/catalog_manifest_embedded.hpp")
+set(LAR_CATALOG_HEADER_CONTENT "#pragma once\n\nnamespace lar::catalog::detail {\ninline constexpr unsigned char embedded_manifest_json[] = {\n")
+set(LAR_CATALOG_HEX_OFFSET 0)
+while(LAR_CATALOG_HEX_OFFSET LESS LAR_CATALOG_MANIFEST_HEX_LENGTH)
+    math(EXPR LAR_CATALOG_HEX_REMAINING "${LAR_CATALOG_MANIFEST_HEX_LENGTH} - ${LAR_CATALOG_HEX_OFFSET}")
+    set(LAR_CATALOG_HEX_LINE_LENGTH 32)
+    if(LAR_CATALOG_HEX_REMAINING LESS LAR_CATALOG_HEX_LINE_LENGTH)
+        set(LAR_CATALOG_HEX_LINE_LENGTH "${LAR_CATALOG_HEX_REMAINING}")
+    endif()
+    string(SUBSTRING "${LAR_CATALOG_MANIFEST_HEX}" ${LAR_CATALOG_HEX_OFFSET} ${LAR_CATALOG_HEX_LINE_LENGTH} LAR_CATALOG_HEX_LINE)
+    string(REGEX REPLACE "([0-9A-Fa-f][0-9A-Fa-f])" "0x\\1, " LAR_CATALOG_BYTE_LITERALS "${LAR_CATALOG_HEX_LINE}")
+    string(APPEND LAR_CATALOG_HEADER_CONTENT "    ${LAR_CATALOG_BYTE_LITERALS}\n")
+    math(EXPR LAR_CATALOG_HEX_OFFSET "${LAR_CATALOG_HEX_OFFSET} + ${LAR_CATALOG_HEX_LINE_LENGTH}")
+endwhile()
+string(APPEND LAR_CATALOG_HEADER_CONTENT "    0x00\n};\n} // namespace lar::catalog::detail\n")
+file(WRITE "${LAR_CATALOG_HEADER}" "${LAR_CATALOG_HEADER_CONTENT}")
 
 find_package(Threads REQUIRED)
 find_package(LibArchive REQUIRED)
@@ -127,6 +145,13 @@ if(LAR_BUILD_TESTS)
         add_test(
             NAME lar_catalog_manifest_contract
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/catalog_manifest_contract.py"
+        )
+        add_test(
+            NAME lar_catalog_embed_contract
+            COMMAND "${Python3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/catalog_embed_contract.py"
+                    "${LAR_CATALOG_MANIFEST_FILE}"
+                    "${LAR_CATALOG_HEADER}"
         )
         find_program(NODE_EXECUTABLE node)
         if(NODE_EXECUTABLE)

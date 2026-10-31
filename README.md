@@ -8,7 +8,7 @@ Project site: **https://azmisahin-ai.github.io/local-ai-runtime/** (available af
 
 This is an early C++20 alpha. It orchestrates existing model engines; it does not implement inference itself. The product name and API are still evolving.
 
-> **Product status:** `v0.1.21-alpha` is the current published reference release. It includes the Windows per-user desktop installer, verified in-app update staging, embedded component manifest, persistent Activity and FIFO install queue, Runtime Profiles, task-first Models UI and reviewed multi-model pinned-GGUF catalog contract. The current shipped catalog still contains the reviewed Qwen starter plus three llama.cpp variants. Real GPU inference evidence, native screen-reader acceptance, publisher signing, cross-platform update parity and additional engine/workspace families remain open. The next milestone is the Shared Engine Adapter contract, with llama.cpp remaining the first built-in adapter. See the [roadmap](docs/roadmap.md).
+> **Product status:** `v0.1.23-alpha` is the current published reference release. It includes the Windows per-user desktop installer, verified in-app update staging, embedded component manifest, persistent Activity and FIFO install queue, Runtime Profiles, task-first Models UI and reviewed multi-model pinned-GGUF catalog contract. The current shipped catalog still contains the reviewed Qwen starter plus three llama.cpp variants. Real GPU inference evidence, native screen-reader acceptance, publisher signing, cross-platform update parity and additional engine/workspace families remain open. The next milestones are the RTX 3060 hardware-compatibility acceptance and the Stage 12.5 product-readiness review before MCP stdio integration. See the [roadmap](docs/roadmap.md).
 
 ## For users
 
@@ -99,7 +99,7 @@ Open http://127.0.0.1:8000. Use **Models** for the verified llama.cpp CPU/CUDA p
 ## CI and releases
 
 - [Canonical pipeline](https://github.com/azmisahin-ai/local-ai-runtime/actions/workflows/pipeline.yml): one workflow orchestrates Windows/MSVC, Ubuntu/GCC and macOS Apple Clang on Intel and Apple Silicon. Pull requests build and test without packaging; each `main` push builds/tests/packages the four release targets in parallel, smoke-tests the extracted packages, and **only after all platform jobs pass** publishes the website as the final job. Commit-specific preview archives are retained for 14 days. Pushing a `v*` tag runs the same platform jobs and publishes a GitHub Release with Windows, Linux and both macOS architectures plus SHA-256 checksums only after every package passes. A weekly scheduled run performs only the macOS compatibility gate; a manual run performs a versioned rehearsal without creating a Release. Enable **Settings → Pages → Source → GitHub Actions** once.
-- Maintainers can use the fixed root-level [publish helper](Publish-LocalAIRuntime.ps1) and replace only `local-ai-runtime-update.bundle` for each prepared change. The bundle preserves the exact commit hash prepared for that release. It pushes without force, waits for the four-platform `main` workflow, then tags and waits for the versioned Release. The same downloaded command calls the release-gate code included in each prepared commit. See [release and update process](docs/release-and-update.md).
+- Maintainers use the repository-local [`scripts/Publish-LocalAIRuntime.ps1`](scripts/Publish-LocalAIRuntime.ps1) from a clean `main` checkout. It pushes only fast-forward commits, waits for four-platform `main` CI and Pages, then creates the next alpha tag and waits for the tagged Release workflow. The root-level `Publish-LocalAIRuntime.ps1` is a compatibility wrapper; bundles are optional source-transfer artifacts, not part of normal publishing. See [release and update process](docs/release-and-update.md).
 
 GitHub Actions is the source for repeatable cross-platform build/test results. Local hardware/model checks are separate, and no NVIDIA/CUDA combination is claimed supported until that exact configuration is tested and recorded.
 
@@ -131,7 +131,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md), [diagnostics and troubleshooting](docs/d
 
 ### Windows PowerShell 5.1 publishing
 
-The stable `Publish-LocalAIRuntime.ps1` script is compatible with Windows PowerShell 5.1. Git commands are checked by their exit codes rather than treating successful stderr diagnostics (such as `git bundle verify` reporting that the bundle is okay) as failures. If an older publisher stops with `NativeCommandError`, replace both `Publish-LocalAIRuntime.ps1` and `local-ai-runtime-update.bundle` with the matching files from the latest publisher kit, then rerun the same command. The bootstrap checks the bundle and will not force-push or overwrite local work.
+The repository-local publisher is compatible with Windows PowerShell 5.1. Git commands are checked by their exit codes rather than treating successful stderr diagnostics as failures. Run it from the existing repository checkout; it never clones a second working directory, imports a bundle, resets local changes, or force-pushes.
 
 ## Engine integration architecture
 

@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $temporaryRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('lar-publisher-git-smoke-' + [guid]::NewGuid().ToString('N'))
 $originalPath = $env:PATH
@@ -22,7 +22,7 @@ exit /b 17
     $env:PATH = $temporaryRoot + ';' + $originalPath
     $env:LAR_FAKE_GIT_EXIT = '0'
 
-    foreach ($relativePath in @('Publish-LocalAIRuntime.ps1', 'scripts/Publish-LocalAIRuntime.ps1')) {
+    foreach ($relativePath in @('scripts/Publish-LocalAIRuntime.ps1')) {
         $scriptPath = Join-Path $repositoryRoot $relativePath
         $tokens = $null
         $parseErrors = $null

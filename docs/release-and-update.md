@@ -11,16 +11,19 @@
 
 ## One repeatable maintainer publish command
 
-Use the root-level [`Publish-LocalAIRuntime.ps1`](../Publish-LocalAIRuntime.ps1) as the one stable entry point instead of creating a new push script for each change. Download it once into the Downloads folder as `Publish-LocalAIRuntime.ps1`. The stable helper imports the exact commit from the prepared bundle, pushes `main` by fast-forward only, then delegates CI and release gating to `scripts/Publish-LocalAIRuntime.ps1` included in that bundle. For each prepared change, replace the fixed `local-ai-runtime-update.bundle` file in Downloads, then run the same command from PowerShell 5.1:
+Use the repository-local [`scripts/Publish-LocalAIRuntime.ps1`](../scripts/Publish-LocalAIRuntime.ps1) as the single publisher. From a clean checkout on `main`, after committing the intended changes, run:
 
 ```powershell
-Set-ExecutionPolicy -Scope Process Bypass
-.\Publish-LocalAIRuntime.ps1
+.\scripts\Publish-LocalAIRuntime.ps1
 ```
 
-The script uses the standard `local-ai-runtime-real-engine-push` working folder, fetches the official `main`, verifies and imports the prepared bundle at its original commit SHA, refuses stale/diverged bundles and dirty worktrees, and does a normal non-force push. It waits for the `main` workflow to pass all four platform/package gates and the Pages deployment before creating the next unused `vX.Y.Z-alpha` tag. It then waits for the tag workflow; GitHub publishes the Release and `SHA256SUMS.txt` only if those platform jobs also pass. The version is calculated from the existing version tags, so maintainers do not hand-edit a version for each alpha iteration. If a gate fails, the script stops before the next step and prints the Actions link. It never force-pushes, deletes a tag, or moves an existing release.
+The publisher checks the current branch and clean working tree, fetches the official `main` and version tags, and pushes the current commit only when it is a normal fast-forward of GitHub `main`. It never resets or force-pushes. If GitHub is ahead or history has diverged, it stops and asks the maintainer to reconcile the checkout.
 
-Each new prepared bundle should replace the previous file at the same fixed path; keep the helper script and command unchanged. Preview/site deployment happens after successful `main` CI; the public download links change when the tag-driven Release finishes. Do not describe a preview build as the public release.
+After pushing, it waits for the `main` workflow to pass all four platform/package gates and the Pages deployment before creating the next unused `vX.Y.Z-alpha` tag. It then waits for the tag workflow; GitHub publishes the Release and `SHA256SUMS.txt` only if those platform jobs also pass. The version is calculated from the fetched version tags, so maintainers do not hand-edit a version for each alpha iteration. If a gate fails, the script stops before the next step and prints the Actions link. It never force-pushes, deletes a tag, or moves an existing release.
+
+The root-level [`Publish-LocalAIRuntime.ps1`](../Publish-LocalAIRuntime.ps1) remains only as a compatibility shortcut and delegates to the repository-local publisher. It does not download bundles, clone a second checkout, or create a Downloads working directory. Git bundles are optional one-time source-transfer artifacts only; they are not part of the normal release process.
+
+For a fresh machine with no checkout, clone the repository once, then use the repository-local script. If a maintainer receives an offline source-transfer bundle, fetch/merge that bundle into the clone first; subsequent updates and releases use the same checkout and publisher command.
 
 ## Preview builds and release rehearsal
 

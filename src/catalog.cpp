@@ -42,7 +42,8 @@ bool has_only_keys(const pt::ptree& node, const std::set<std::string>& allowed) 
 }
 
 std::vector<ComponentDefinition> parse_embedded_manifest() {
-    std::istringstream input(detail::embedded_manifest_json);
+    const auto* manifest_text = reinterpret_cast<const char*>(detail::embedded_manifest_json);
+    std::istringstream input(manifest_text);
     pt::ptree root;
     try {
         pt::read_json(input, root);
