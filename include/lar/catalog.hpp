@@ -66,9 +66,8 @@ bool is_supported_engine_archive(const std::string& name, const std::string& var
 bool is_supported_cuda_runtime_archive(const std::string& name, const std::string& variant,
                                        const std::string& os, const std::string& architecture);
 
-// Exact upstream v0.9.3 Windows x64 asset allowlist. Size is supplied by the
-// immutable release manifest and must be positive/bounded; the publisher's
-// exact byte count was not available from the release HTML snapshot.
+// Exact upstream v0.9.3 Windows x64 asset allowlist. Filename, canonical URL,
+// SHA-256 and exact byte size must all match the official release API pin.
 bool is_supported_audio_cpp_release_asset(std::string_view role, std::string_view filename,
                                           std::string_view url, std::string_view sha256,
                                           std::uint64_t size_bytes, std::string_view variant);

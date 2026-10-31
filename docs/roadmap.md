@@ -16,7 +16,7 @@ The runtime, engines, and models remain separate versioned components. The catal
 
 **Priority change:** The user explicitly asked to stop spending disproportionate time on small Chat/Markdown polish and to prioritize integrating other AI engine families. Freeze non-critical Chat/Markdown/language polish. Fix only security, data-loss, engine lifecycle, or basic inference correctness issues. Residual Stage 12/12.5 checks remain tracked but must not block Stage 13A audio work.
 
-**Next engineering focus:** Stage 13A is an `audio.cpp` pilot. A typed task adapter, normalized ASR/TTS routes, a CPU lifecycle contract test, and the `audio-cpp-release-set` installer strategy are now implemented and covered by hosted tests. No real audio.cpp archive has yet been installed on Windows; no CUDA task or Qwen3-ASR Turkish transcription has been validated. The runtime catalog still has only `llama.cpp` active entries until exact byte-size pins and the Windows package smoke are available. Research and hardware decision records remain in [Engine Integration Research](engine-integration-research.md).
+**Next engineering focus:** Stage 13A is an `audio.cpp` pilot. A typed task adapter, normalized ASR/TTS routes, a CPU lifecycle contract test, and the `audio-cpp-release-set` installer strategy are now implemented and covered by hosted tests. No real audio.cpp archive has yet been installed on Windows; no CUDA task or Qwen3-ASR Turkish transcription has been validated. The runtime catalog still has only `llama.cpp` active entries: exact API-reported v0.9.3 asset sizes and hashes are now pinned in the compiled allowlist, but the Windows CPU package install/lifecycle smoke is still required before enabling the audio.cpp catalog record. Research and hardware decision records remain in [Engine Integration Research](engine-integration-research.md).
 
 ### Product delivery checklist
 
@@ -57,8 +57,8 @@ The runtime, engines, and models remain separate versioned components. The catal
 - [x] Implement HTTPS download, exact-size/SHA-256 verification, safe archive extraction, safe merge of package pairs, per-user staging, activation rollback and non-Chat engine registration.
 - [x] Add a managed fake-engine CPU lifecycle test covering `/health`, `/v1/models`, stop and restart.
 - [x] Add end-to-end typed task HTTP smoke coverage for ASR multipart + `tr`, malformed model ID rejection, TTS WAV artifact, Activity persistence and Chat isolation.
-- [ ] Obtain exact byte sizes for the v0.9.3 release assets from authoritative release metadata and add catalog records only after those values are independently confirmed; do not use rounded release-page MB labels.
-- [ ] On Windows x64, download and install the exact official CPU archive, verify executable, start/health/models/stop/restart and record process/runtime evidence.
+- [x] Obtain exact byte sizes for the v0.9.3 CPU and CUDA release assets from the official GitHub release API; pin the exact byte count alongside each SHA-256 in the compiled allowlist and regression tests.
+- [ ] On Windows x64, install the exact official CPU archive through the Local AI Runtime installer, verify executable and digest, start/health/models/stop/restart, and record process/runtime evidence. Enable the CPU catalog entry only after this gate passes.
 - [ ] On the same Windows target, install the CUDA 13.3 server+CUDART pair, validate CPU fallback on the CUDA-enabled binary, then CUDA process readiness. Record driver/backend evidence separately.
 - [ ] Only after native CPU and CUDA lifecycle gates, pin Qwen3-ASR model revision/files/license/hash; run the same licensed WAV with reference transcript on CPU, then CUDA.
 

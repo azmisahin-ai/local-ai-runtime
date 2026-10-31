@@ -72,14 +72,17 @@ def validate_audio_cpp_contract(component_id: str, entry: dict, metadata: dict) 
         ("cpu", "server"): (
             "audio-v0.9.3-bin-windows-x64-cpu.zip",
             "3ac66f46395b4e92e4f3bb68b200f0032310bd9922f12d97f10ccdadb02dee4b",
+            30547092,
         ),
         ("cuda13.3", "server"): (
             "audio-v0.9.3-bin-windows-x64-cuda13.3.zip",
             "0bd3988be10c31ec078c40df2bd0d4266e660804f6d5083aeb05d1309d091e43",
+            277336614,
         ),
         ("cuda13.3", "runtime"): (
             "audio-v0.9.3-cudart-windows-x64-cuda13.3.zip",
             "839eb20f684a8aab64895b1e466b32ce9b29dfc19dc1ce15b2ef35218512ac0a",
+            575457454,
         ),
     }
     assets = install.get("assets", [])
@@ -96,8 +99,8 @@ def validate_audio_cpp_contract(component_id: str, entry: dict, metadata: dict) 
         if asset.get("url") != expected_url:
             fail(f"{component_id}: asset URL must be the immutable official v0.9.3 release URL")
         size = asset.get("size_bytes")
-        if not isinstance(size, int) or size <= 0 or size > 2 * 1024 * 1024 * 1024:
-            fail(f"{component_id}: asset requires a bounded exact byte size")
+        if not isinstance(size, int) or size != expected[2]:
+            fail(f"{component_id}: asset byte size must exactly match the official release API pin")
     if metadata.get("family") != "audio.cpp" or metadata.get("version") != "v0.9.3" or metadata.get("backend") != variant:
         fail(f"{component_id}: engine metadata must pin audio.cpp v0.9.3 and selected backend")
     provenance = metadata.get("provenance", {})
@@ -327,8 +330,16 @@ def main() -> None:
                              "assets": [{"role": "server", "filename": cpu_file,
                                          "url": f"https://github.com/0xShug0/audio.cpp/releases/download/v0.9.3/{cpu_file}",
                                          "sha256": "3ac66f46395b4e92e4f3bb68b200f0032310bd9922f12d97f10ccdadb02dee4b",
-                                         "size_bytes": 1000}]}}
+                                         "size_bytes": 30547092}]}}
     validate_audio_cpp_contract("audio-cpp-cpu", cpu_entry, base_audio_metadata)
+    wrong_cpu_size = copy.deepcopy(cpu_entry)
+    wrong_cpu_size["install"]["assets"][0]["size_bytes"] += 1
+    try:
+        validate_audio_cpp_contract("audio-cpp-cpu", wrong_cpu_size, base_audio_metadata)
+    except SystemExit:
+        pass
+    else:
+        fail("non-exact CPU archive byte size was accepted")
     cuda_metadata = {**base_audio_metadata, "id": "audio-cpp-cuda", "backend": "cuda13.3"}
     cuda_entry = copy.deepcopy(cpu_entry)
     cuda_entry["install"]["variant"] = "cuda13.3"
@@ -337,10 +348,10 @@ def main() -> None:
     cuda_entry["install"]["assets"] = [
         {"role": "server", "filename": cuda_server,
          "url": f"https://github.com/0xShug0/audio.cpp/releases/download/v0.9.3/{cuda_server}",
-         "sha256": "0bd3988be10c31ec078c40df2bd0d4266e660804f6d5083aeb05d1309d091e43", "size_bytes": 2000},
+         "sha256": "0bd3988be10c31ec078c40df2bd0d4266e660804f6d5083aeb05d1309d091e43", "size_bytes": 277336614},
         {"role": "runtime", "filename": cuda_runtime,
          "url": f"https://github.com/0xShug0/audio.cpp/releases/download/v0.9.3/{cuda_runtime}",
-         "sha256": "839eb20f684a8aab64895b1e466b32ce9b29dfc19dc1ce15b2ef35218512ac0a", "size_bytes": 3000},
+         "sha256": "839eb20f684a8aab64895b1e466b32ce9b29dfc19dc1ce15b2ef35218512ac0a", "size_bytes": 575457454},
     ]
     validate_audio_cpp_contract("audio-cpp-cuda", cuda_entry, cuda_metadata)
     invalid_cuda = copy.deepcopy(cuda_entry)

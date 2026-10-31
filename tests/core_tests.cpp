@@ -355,32 +355,44 @@ int main() {
         constexpr std::string_view audio_cpu_name = "audio-v0.9.3-bin-windows-x64-cpu.zip";
         constexpr std::string_view audio_cpu_hash = "3ac66f46395b4e92e4f3bb68b200f0032310bd9922f12d97f10ccdadb02dee4b";
         const std::string audio_cpu_url = "https://github.com/0xShug0/audio.cpp/releases/download/v0.9.3/" + std::string(audio_cpu_name);
+        constexpr std::uint64_t audio_cpu_size = 30547092ULL;
         require(lar::catalog::is_supported_audio_cpp_release_asset("server", audio_cpu_name, audio_cpu_url,
-                    audio_cpu_hash, 1024U, "cpu"),
+                    audio_cpu_hash, audio_cpu_size, "cpu"),
                 "exact audio.cpp v0.9.3 Windows x64 CPU server artifact should pass the allowlist");
         require(!lar::catalog::is_supported_audio_cpp_release_asset("server", audio_cpu_name, audio_cpu_url,
+                    audio_cpu_hash, audio_cpu_size + 1U, "cpu"),
+                "audio.cpp CPU archive must reject any non-exact byte size");
+        require(!lar::catalog::is_supported_audio_cpp_release_asset("server", audio_cpu_name, audio_cpu_url,
                     audio_cpu_hash, 0U, "cpu"),
-                "audio.cpp package size must be a positive exact catalog pin");
+                "audio.cpp package size must equal the exact positive byte pin");
         require(!lar::catalog::is_supported_audio_cpp_release_asset("server", audio_cpu_name, audio_cpu_url + "?download=1",
-                    audio_cpu_hash, 1024U, "cpu"),
+                    audio_cpu_hash, audio_cpu_size, "cpu"),
                 "audio.cpp release assets must reject query-string URL variants");
         require(!lar::catalog::is_supported_audio_cpp_release_asset("server", audio_cpu_name, audio_cpu_url,
-                    std::string(64U, '0'), 1024U, "cpu"),
+                    std::string(64U, '0'), audio_cpu_size, "cpu"),
                 "audio.cpp release assets must match their upstream SHA-256 pin");
         constexpr std::string_view audio_cuda_name = "audio-v0.9.3-bin-windows-x64-cuda13.3.zip";
         constexpr std::string_view audio_cuda_hash = "0bd3988be10c31ec078c40df2bd0d4266e660804f6d5083aeb05d1309d091e43";
         const std::string audio_cuda_url = "https://github.com/0xShug0/audio.cpp/releases/download/v0.9.3/" + std::string(audio_cuda_name);
+        constexpr std::uint64_t audio_cuda_server_size = 277336614ULL;
         require(lar::catalog::is_supported_audio_cpp_release_asset("server", audio_cuda_name, audio_cuda_url,
-                    audio_cuda_hash, 1024U, "cuda13.3"),
+                    audio_cuda_hash, audio_cuda_server_size, "cuda13.3"),
                 "exact audio.cpp CUDA 13.3 server artifact should pass the allowlist");
+        require(!lar::catalog::is_supported_audio_cpp_release_asset("server", audio_cuda_name, audio_cuda_url,
+                    audio_cuda_hash, audio_cuda_server_size - 1U, "cuda13.3"),
+                "CUDA server archive must reject a non-exact byte size");
         constexpr std::string_view audio_cudart_name = "audio-v0.9.3-cudart-windows-x64-cuda13.3.zip";
         constexpr std::string_view audio_cudart_hash = "839eb20f684a8aab64895b1e466b32ce9b29dfc19dc1ce15b2ef35218512ac0a";
         const std::string audio_cudart_url = "https://github.com/0xShug0/audio.cpp/releases/download/v0.9.3/" + std::string(audio_cudart_name);
+        constexpr std::uint64_t audio_cudart_size = 575457454ULL;
         require(lar::catalog::is_supported_audio_cpp_release_asset("runtime", audio_cudart_name, audio_cudart_url,
-                    audio_cudart_hash, 2048U, "cuda13.3"),
+                    audio_cudart_hash, audio_cudart_size, "cuda13.3"),
                 "exact audio.cpp CUDA 13.3 CUDART artifact should pass the allowlist");
         require(!lar::catalog::is_supported_audio_cpp_release_asset("runtime", audio_cudart_name, audio_cudart_url,
-                    audio_cudart_hash, 2048U, "cpu"),
+                    audio_cudart_hash, audio_cudart_size + 1U, "cuda13.3"),
+                "CUDA runtime archive must reject a non-exact byte size");
+        require(!lar::catalog::is_supported_audio_cpp_release_asset("runtime", audio_cudart_name, audio_cudart_url,
+                    audio_cudart_hash, audio_cudart_size, "cpu"),
                 "CUDA runtime DLLs must not be paired with the CPU-only package variant");
 
         stage("runtime update version ordering");

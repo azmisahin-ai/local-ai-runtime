@@ -369,19 +369,26 @@ bool is_supported_pinned_gguf_url(std::string_view url, std::string_view filenam
 bool is_supported_audio_cpp_release_asset(std::string_view role, std::string_view filename,
                                           std::string_view url, std::string_view sha256,
                                           std::uint64_t size_bytes, std::string_view variant) {
-    struct Pin { std::string_view role; std::string_view filename; std::string_view sha256; };
+    struct Pin {
+        std::string_view role;
+        std::string_view filename;
+        std::string_view sha256;
+        std::uint64_t size_bytes;
+    };
+    // Exact `assets[].size` values and SHA-256 digests from the official
+    // GitHub v0.9.3 release API. These are immutable pins, not rounded UI sizes.
     static constexpr Pin cpu{"server", "audio-v0.9.3-bin-windows-x64-cpu.zip",
-        "3ac66f46395b4e92e4f3bb68b200f0032310bd9922f12d97f10ccdadb02dee4b"};
+        "3ac66f46395b4e92e4f3bb68b200f0032310bd9922f12d97f10ccdadb02dee4b", 30547092ULL};
     static constexpr Pin cuda_server{"server", "audio-v0.9.3-bin-windows-x64-cuda13.3.zip",
-        "0bd3988be10c31ec078c40df2bd0d4266e660804f6d5083aeb05d1309d091e43"};
+        "0bd3988be10c31ec078c40df2bd0d4266e660804f6d5083aeb05d1309d091e43", 277336614ULL};
     static constexpr Pin cuda_runtime{"runtime", "audio-v0.9.3-cudart-windows-x64-cuda13.3.zip",
-        "839eb20f684a8aab64895b1e466b32ce9b29dfc19dc1ce15b2ef35218512ac0a"};
+        "839eb20f684a8aab64895b1e466b32ce9b29dfc19dc1ce15b2ef35218512ac0a", 575457454ULL};
     const Pin* expected = nullptr;
     if (variant == "cpu") expected = &cpu;
     else if (variant == "cuda13.3" && role == "server") expected = &cuda_server;
     else if (variant == "cuda13.3" && role == "runtime") expected = &cuda_runtime;
     if (!expected || expected->role != role || expected->filename != filename ||
-        expected->sha256 != sha256 || size_bytes == 0U || size_bytes > 2ULL * 1024ULL * 1024ULL * 1024ULL) {
+        expected->sha256 != sha256 || expected->size_bytes != size_bytes) {
         return false;
     }
     const auto expected_url = std::string("https://github.com/0xShug0/audio.cpp/releases/download/v0.9.3/") + std::string(filename);
