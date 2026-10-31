@@ -102,29 +102,24 @@
               <button id="first-run-dismiss" class="button ghost" type="button" data-i18n="onboarding.dismiss">Hide guide</button>
             </div>
             <div class="first-run-progress" aria-live="polite">
-              <progress id="first-run-progress" max="4" value="0" aria-label="Setup progress" data-i18n-aria="onboarding.progressLabel"></progress>
-              <span id="first-run-progress-label" class="hint" data-i18n="onboarding.progressEmpty">0 of 4 steps complete</span>
+              <progress id="first-run-progress" max="3" value="0" aria-label="Setup progress" data-i18n-aria="onboarding.progressLabel"></progress>
+              <span id="first-run-progress-label" class="hint" data-i18n="onboarding.progressEmpty">0 of 3 steps complete</span>
             </div>
             <ol class="first-run-steps" aria-label="First-run setup steps" data-i18n-aria="accessibility.firstRunSteps">
-              <li data-first-run-step="device">
-                <span class="first-run-number" aria-hidden="true">1</span>
-                <div class="first-run-copy"><strong data-i18n="onboarding.deviceTitle">Check this device</strong><p data-i18n="onboarding.deviceDescription">Read local CPU, memory and graphics information before choosing a model.</p><small data-first-run-status data-i18n="onboarding.stepPending">Not completed</small></div>
-                <button class="button secondary" type="button" data-first-run-action="device" data-i18n="onboarding.deviceAction">Review device</button>
-              </li>
               <li data-first-run-step="model">
-                <span class="first-run-number" aria-hidden="true">2</span>
-                <div class="first-run-copy"><strong data-i18n="onboarding.modelTitle">Choose a model</strong><p data-i18n="onboarding.modelDescription">Browse reviewed components, check the license and install a model for local chat.</p><small data-first-run-status data-i18n="onboarding.stepPending">Not completed</small></div>
-                <button class="button secondary" type="button" data-first-run-action="models" data-i18n="onboarding.modelAction">Browse models</button>
+                <span class="first-run-number" aria-hidden="true">1</span>
+                <div class="first-run-copy"><strong data-i18n="onboarding.modelTitle">Choose and install a model</strong><p data-i18n="onboarding.modelDescription">Choose a model and engine, install them, then apply the Chat profile.</p><small data-first-run-status data-i18n="onboarding.stepPending">Not completed</small></div>
+                <button class="button secondary" type="button" data-first-run-action="models" data-i18n="onboarding.modelAction">Open Models</button>
               </li>
               <li data-first-run-step="engine">
-                <span class="first-run-number" aria-hidden="true">3</span>
-                <div class="first-run-copy"><strong data-i18n="onboarding.engineTitle">Start the local engine</strong><p data-i18n="onboarding.engineDescription">Start a configured engine and wait for its health check to pass.</p><small data-first-run-status data-i18n="onboarding.stepPending">Not completed</small></div>
+                <span class="first-run-number" aria-hidden="true">2</span>
+                <div class="first-run-copy"><strong data-i18n="onboarding.engineTitle">Start the local engine</strong><p data-i18n="onboarding.engineDescription">Start the selected engine and wait until its status is Ready.</p><small data-first-run-status data-i18n="onboarding.stepPending">Not completed</small></div>
                 <button class="button secondary" type="button" data-first-run-action="activity" data-i18n="onboarding.engineAction">Open Activity</button>
               </li>
               <li data-first-run-step="chat">
-                <span class="first-run-number" aria-hidden="true">4</span>
-                <div class="first-run-copy"><strong data-i18n="onboarding.chatTitle">Send your first message</strong><p data-i18n="onboarding.chatDescription">Chat with the model. Prompts and responses stay in this browser on this device.</p><small data-first-run-status data-i18n="onboarding.stepPending">Not completed</small></div>
-                <button class="button primary" type="button" data-first-run-action="chat" data-i18n="onboarding.chatAction">Open chat</button>
+                <span class="first-run-number" aria-hidden="true">3</span>
+                <div class="first-run-copy"><strong data-i18n="onboarding.chatTitle">Send your first message</strong><p data-i18n="onboarding.chatDescription">Open Chat and send a message to your local model.</p><small data-first-run-status data-i18n="onboarding.stepPending">Not completed</small></div>
+                <button class="button primary" type="button" data-first-run-action="chat" data-i18n="onboarding.chatAction">Open Chat</button>
               </li>
             </ol>
             <p id="first-run-status" class="status-message" role="status" aria-live="polite"></p>
@@ -175,7 +170,7 @@
         <section id="view-chat" class="app-view" data-view="chat" aria-labelledby="page-title" hidden>
           <section id="chat-panel" class="panel chat-panel chat-workspace">
             <div class="chat-heading">
-              <div><p class="eyebrow" data-i18n="chat.eyebrow">LOCAL CONVERSATION</p><h2 data-i18n="chat.title">Chat with your model</h2><p id="chat-readiness" class="hint" data-i18n="chat.notReady">Install and start a chat model to begin.</p><div id="chat-setup-actions" class="chat-setup-actions"><button class="button secondary" type="button" data-view-target="models" data-i18n="chat.chooseModel">Choose a model</button><button class="button secondary" type="button" data-view-target="activity" data-i18n="chat.openActivity">Open Activity</button></div></div>
+              <div><p class="eyebrow" data-i18n="chat.eyebrow">LOCAL CONVERSATION</p><h2 data-i18n="chat.title">Chat with your model</h2><p id="chat-readiness" class="hint" data-i18n="chat.notReady">Choose and apply a model to begin.</p><div id="chat-setup-actions" class="chat-setup-actions"><button id="chat-choose-model" class="button primary" type="button" data-view-target="models" data-i18n="chat.chooseModel">Choose a model</button><button id="chat-open-activity" class="button primary" type="button" data-view-target="activity" data-i18n="chat.openActivity" hidden>Open Activity</button></div></div>
               <div class="chat-heading-actions">
                 <div class="chat-private-badge"><span class="local-indicator"></span><span data-i18n="common.privateSession">Private local session</span></div>
                 <button id="chat-new" class="button secondary" type="button" data-i18n="chat.new">New chat</button>
@@ -230,7 +225,10 @@
             </div>
             <div class="profile-footer">
               <p id="runtime-profile-summary" class="hint" role="status" aria-live="polite" data-i18n="profile.loading">Loading your active profile…</p>
-              <button id="runtime-profile-apply" class="button primary" type="button" data-i18n="profile.apply">Use this profile in Chat</button>
+              <div class="profile-actions">
+                <button id="profile-open-activity" class="button secondary" type="button" data-view-target="activity" data-i18n="profile.openActivity" hidden>Continue to Activity</button>
+                <button id="runtime-profile-apply" class="button primary" type="button" data-i18n="profile.apply">Use this profile in Chat</button>
+              </div>
             </div>
             <p id="runtime-profile-error" class="error" role="status" aria-live="polite"></p>
           </section>

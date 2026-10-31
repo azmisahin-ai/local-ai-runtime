@@ -10,9 +10,9 @@ The runtime, engines, and models remain separate versioned components. The catal
 
 ## Current baseline and visible progress — 2026-10-31
 
-**Published baseline:** `v0.1.24-alpha` (`5bf4116`). The user confirmed that its main and tagged publisher workflows both passed. The Stage 12.5 UI/catalog improvements are present in that release; manual screen-reader review and real model/GPU acceptance remain open. The release contains the hardware-v1 contract, NVIDIA driver/compute-capability/VRAM evidence, plus the previously published five-area dashboard, local streaming chat, persistent Activity/jobs, live CPU/RAM/engine telemetry, EN/TR onboarding/accessibility, embedded component manifest v1, explicit Runtime Profiles, and persistent FIFO install queue with duplicate protection and safe restart recovery. Hosted CI uses fake engines and does not prove real GPU/model task compatibility.
+**Published baseline:** `v0.1.26-alpha` (`a739155`). The user confirmed that its main and tagged publisher workflows both passed. That release includes the interim Stage 12.5 hardware-evidence and catalogue UI slice; the current guided-setup refactor is a new local change. Manual screen-reader review and real model/GPU acceptance remain open. The release contains the hardware-v1 contract, NVIDIA driver/compute-capability/VRAM evidence, plus the previously published five-area dashboard, local streaming chat, persistent Activity/jobs, live CPU/RAM/engine telemetry, EN/TR onboarding/accessibility, embedded component manifest v1, explicit Runtime Profiles, and persistent FIFO install queue with duplicate protection and safe restart recovery. Hosted CI uses fake engines and does not prove real GPU/model task compatibility.
 
-**Current work:** Stage 12 hardware evidence has been implemented and published, but the RTX 3060 physical inference/offload acceptance remains open. Stage 12.5 has shipped its interim hardware UI, evidence hierarchy, Chat setup route and curated multilingual GGUF shortlist for the 6 GB RTX 3060 Laptop GPU / 16 GB RAM profile. Its remaining gates are manual screen/accessibility review and real model installation/inference on the target computer. The catalogue still uses immutable single-file GGUF pins; multi-file multimodal, ONNX, SafeTensors and non-llama engine installers still require dedicated strategies. `/v1/catalog` remains backward compatible.
+**Current work:** Stage 12 hardware evidence is published. On the target RTX 3060 Laptop GPU, CUDA-backed Qwen3 4B inference has run with external NVIDIA process/utilization evidence and approximately 85–91 generated tokens/s in recent engine logs; the application still does not parse a per-layer CUDA offload count, and KV-cache restore/context-limit behavior remains open. Stage 12.5 has shipped the hardware evidence hierarchy and curated multilingual model shortlist; this working update simplifies the first-run path and makes the next action explicit. Its remaining gates are manual screen/accessibility review and recorded repeatable real-model CPU/GPU acceptance on the target computer. The catalogue still uses immutable single-file GGUF pins; multi-file multimodal, ONNX, SafeTensors and non-llama engine installers still require dedicated strategies. `/v1/catalog` remains backward compatible.
 
 ### Product delivery checklist
 
@@ -28,10 +28,10 @@ The runtime, engines, and models remain separate versioned components. The catal
 | 9 | Persistent install queue, duplicate/dependency handling and reliable retries | [x] Published; main and tagged four-platform CI passed | `v0.1.20-alpha` |
 | 10 | Catalog v2, simplified Models UI and extensible multi-model pinned GGUF allowlist | [x] Published; main and tagged four-platform CI succeeded | `v0.1.21-alpha` |
 | 11 | Shared Engine Adapter lifecycle; keep llama.cpp as first adapter | [x] Published; main and tagged four-platform CI passed | `v0.1.22-alpha` |
-| 12 | Hardware Compatibility & Evidence; NVIDIA driver/VRAM probes and real RTX 3060 acceptance | [~] Driver evidence published; physical inference/offload acceptance remains open | `v0.1.23-alpha` |
-| 12.5 | Product-readiness review: clearer UX, hardware evidence hierarchy, Chat onboarding and curated model catalogue | [~] Shipped in v0.1.24; manual UI and local inference acceptance remain open | `v0.1.24-alpha` |
-| 12.5.1 | Unified build-once release pipeline and one-screen CI report | [~] Local implementation and 7/7 CTest pass; live GitHub CI confirmation pending | `v0.1.25-alpha` |
-| 13 | Local MCP stdio MVP for the user's other project | [ ] Not started; gated on Stage 12.5 manual acceptance and release-pipeline CI | `v0.1.26-alpha` |
+| 12 | Hardware Compatibility & Evidence; NVIDIA driver/VRAM probes and real RTX 3060 acceptance | [~] CUDA-backed inference observed on target GPU; app-side layer count and KV-cache/context acceptance remain open | `v0.1.23-alpha` |
+| 12.5 | Product-readiness review: clearer UX, hardware evidence hierarchy, Chat onboarding and curated model catalogue | [~] Interim slice shipped; guided setup simplification implemented locally; manual UI/accessibility and real-model acceptance remain open | `v0.1.24-alpha` + current UX pass |
+| 12.5.1 | Unified build-once release pipeline and one-screen CI report | [x] Build-once/publish-once flow shipped and confirmed in `v0.1.25-alpha` / `v0.1.26-alpha` | `v0.1.25-alpha` |
+| 13 | Local MCP stdio MVP for the user's other project | [ ] Not started; gated on Stage 12.5 manual acceptance | `v0.1.27-alpha` (planned next) |
 | 14 | Documents, embeddings and local RAG | [ ] Not started | Later alpha |
 | 15 | Vision and Speech pilots | [ ] Not started | Later alpha |
 | 16 | Image generation workspace and adapter | [ ] Not started | Later alpha |
@@ -47,6 +47,8 @@ The runtime, engines, and models remain separate versioned components. The catal
 - [x] Pin model files to immutable Hugging Face revisions with reviewed exact byte sizes and SHA-256 digests; keep all three models marked as not validated on the user's physical machine until real tasks are run.
 - [x] Display a conservative starting context for each model; do not claim full GPU fit or multimodal app support from model-card capabilities alone.
 - [x] Localize the curated model descriptions and evidence explanations in English and Turkish; add explicit Chat-page actions to choose a model or open Activity.
+- [x] Reduce the required setup path to profile → ready engine → first message; keep device inspection optional and enable only the next incomplete action.
+- [x] Make Chat show only the currently required next action; provide direct Models → Activity → Chat continuation actions.
 - [ ] Manually review every screen at desktop and narrow widths, including keyboard navigation, focus order, screen-reader labels, and empty/error/loading states.
 - [ ] Install each shortlist candidate on the target Windows device; record download verification, CPU baseline, CUDA start, actual layer offload, context, generation latency and peak VRAM.
 - [ ] Only after the UI review and at least one complete local Chat path passes, proceed to Stage 13 MCP stdio.
@@ -60,7 +62,7 @@ The runtime, engines, and models remain separate versioned components. The catal
 - [x] Deploy GitHub Pages after the same-run Release gate and write a final workflow summary for every stage.
 - [x] Reduce the local PowerShell publisher to fast-forward push, one-run status polling and release verification.
 - [x] Add version-planner and unified-workflow regression tests to CTest.
-- [ ] Verify the new workflow on GitHub: one run only, all four targets green, tag on the same SHA, release assets/checksums correct, and website deployed.
+- [x] Verify the unified workflow on GitHub: one run, all platform targets green, tag on the tested SHA, and the same tested artifacts published.
 
 
 ### Stage 9 acceptance checklist

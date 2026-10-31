@@ -62,6 +62,16 @@
 
 # Changelog
 
+## Unreleased — guided first-run and single-next-action UI pass
+
+- Reduce the first-run guide from four steps to three user outcomes: apply a model/engine profile, start the engine, and send the first chat message; hardware details remain available but are no longer a setup gate.
+- Enable only the next incomplete onboarding action, visually distinguish upcoming steps, and keep the guide reopenable from Settings.
+- Make Chat readiness offer only the next required destination (Models or Activity) instead of presenting competing navigation actions.
+- Add direct continuation from an applied Runtime Profile to Activity and from a ready default Chat engine to Chat.
+- Clarify draft profile changes and hide redundant Start actions for an already-running engine; retain the existing five-area navigation.
+- Update English/Turkish guidance and add UI contract checks for the new guided flow and direct navigation.
+- Browser-level visual, responsive, keyboard and screen-reader acceptance remains a manual Windows gate.
+
 ## Unreleased — single-run, build-once release pipeline
 
 - Plan the next alpha version before platform compilation so every Windows, Linux and macOS artifact embeds the version that will be released.

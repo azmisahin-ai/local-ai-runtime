@@ -23,7 +23,7 @@ The app uses five persistent destinations:
 5. Show one cancellable installation job with progress, verification, and actionable recovery.
 6. Open Chat when the model server is ready and provide a simple first prompt.
 
-The current implementation exposes a dismissible four-step first-run guide (device check, model selection, engine readiness, first chat), with progress derived from local hardware, installed catalog state, engine readiness and local chat history. It can be reopened from Settings. A fully guided install wizard with recommendation-specific recovery remains future work. The flow should not ask ordinary users to locate executables, edit JSON, or choose among duplicate CUDA runtime assets. Those controls belong in Advanced settings.
+The current implementation exposes a dismissible three-step local-chat guide (choose and apply a model/engine profile, start the engine, send the first chat message). Hardware information remains available on Overview but is not a blocking setup step. Only the next incomplete action is enabled, so the guide does not invite users to jump ahead. It can be reopened from Settings. Chat itself shows only the one next action required: choose a profile or open Activity. A ready Chat engine offers a direct Open Chat action from Activity. The flow should not ask ordinary users to locate executables, edit JSON, or choose among duplicate CUDA runtime assets. Those controls belong in Advanced settings.
 
 ## Visual and interaction rules
 
@@ -46,9 +46,10 @@ The UI must separate `Listed`, `Package verified`, `Installed`, `Process ready`,
 
 ## Implementation sequence
 
-1. Establish the navigation, visual shell, Overview/Chat hierarchy, and EN/TR resource loading.
+1. Keep the five persistent destinations stable and establish the Overview/Chat hierarchy and EN/TR resource loading.
 2. Unify operation state and progress in the Activity/job contract.
-3. Complete dynamic localization, first-run onboarding and accessibility; verify assistive technology manually.
+3. Keep first-run setup task-first: profile → ready engine → first message; show one next action at a time and provide direct cross-navigation only when the next task is ready.
+4. Complete dynamic localization and accessibility; verify assistive technology manually.
 4. Move reviewed engine/model/dependency definitions to a versioned checked-in authoring manifest that generates both catalogue metadata and install allowlists.
 5. Finalize the common engine adapter lifecycle against `llama.cpp`.
 6. Validate real CPU/GPU model profiles and add model-family pilots on the existing engine.
