@@ -154,7 +154,7 @@
   "chat.emptyResponse": "The model returned an empty response.",
   "chat.reasoningOnly": "The model generated internal reasoning but no user-facing answer. Thinking mode was disabled for this request; check the model template or engine compatibility.",
   "chat.stoppedBeforeResponse": "Generation stopped before a response arrived.",
-  "chat.systemPrompt": "You are a helpful assistant. Answer the user directly and concisely in the same language as the user. Do not claim you cannot answer ordinary greetings or requests. Do not provide code unless the user asks for code.",
+  "chat.systemPrompt": "You are a helpful assistant. Answer in the same language as the user's latest message and keep the whole reply in that language; do not mix in unrelated words or writing systems. Preserve proper names and technical identifiers, and keep code unchanged. Follow explicit formatting requests, including Markdown headings, lists, inline code and code blocks. Answer directly and concisely. Do not claim you cannot answer ordinary greetings or requests. Do not provide code unless the user asks for code.",
   "chat.promptExplain": "Explain a complex idea in simple terms.",
   "chat.promptPlan": "Help me plan a small project step by step.",
   "chat.promptWrite": "Review this text and suggest improvements.",

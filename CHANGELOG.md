@@ -1,3 +1,10 @@
+## Unreleased — Markdown entity compatibility and language-consistent replies
+
+- Decode a small, explicit set of named and numeric HTML character references before Markdown tokenization, so references such as `&#x20;` render as their intended characters instead of leaking into assistant text.
+- Keep decoded angle brackets and HTML-like text inside safe text nodes; do not parse model-provided HTML or create executable elements from decoded content.
+- Strengthen the localized Chat system instruction to keep replies in the user's latest-message language and follow explicit Markdown formatting requests, including inline code and fenced code blocks.
+- Extend the Markdown contract test for numeric/named entities, encoded Markdown markers, HTML-like text isolation and both localized prompt variants.
+
 ## Unreleased — safe assistant Markdown rendering
 
 - Render completed assistant messages with a small, dependency-free Markdown subset: paragraphs, headings, emphasis, lists, block quotes, links, inline code and fenced code blocks.

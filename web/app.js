@@ -2168,6 +2168,24 @@ function renderChatHistory() {
   }
 }
 
+function decodeChatMarkdownEntities(value) {
+  // Match Markdown's HTML-entity behaviour without parsing model-provided HTML.
+  // Decoded characters are still inserted only through text nodes/known DOM tags.
+  const named = {
+    amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: '\u00a0',
+  };
+  return String(value || '').replace(/&(#x[0-9a-f]{1,6}|#[0-9]{1,7}|amp|lt|gt|quot|apos|nbsp);/gi,
+    (entity, reference) => {
+      if (reference[0] !== '#') return named[reference.toLowerCase()] ?? entity;
+      const codePoint = reference[1].toLowerCase() === 'x'
+        ? Number.parseInt(reference.slice(2), 16)
+        : Number.parseInt(reference.slice(1), 10);
+      if (!Number.isInteger(codePoint) || codePoint < 0 || codePoint > 0x10ffff
+        || (codePoint >= 0xd800 && codePoint <= 0xdfff)) return '\ufffd';
+      return String.fromCodePoint(codePoint);
+    });
+}
+
 function normalizeEscapedMarkdownDelimiters(value) {
   // Some local models escape the paired emphasis delimiters even when they
   // intend Markdown formatting. Normalize only matched pairs; ordinary
@@ -2228,7 +2246,7 @@ function appendChatInlineMarkdown(parent, source) {
 
 function renderChatMarkdown(source) {
   const fragment = document.createDocumentFragment();
-  const lines = String(source || '').replace(/\r\n?/g, '\n').split('\n');
+  const lines = decodeChatMarkdownEntities(source).replace(/\r\n?/g, '\n').split('\n');
   let paragraph = [];
   let list = null;
 

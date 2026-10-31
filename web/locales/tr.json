@@ -154,7 +154,7 @@
   "chat.emptyResponse": "Model boş bir yanıt döndürdü.",
   "chat.reasoningOnly": "Model iç muhakeme üretti ancak kullanıcıya gösterilecek bir yanıt üretmedi. Bu istekte düşünme modu kapatıldı; model şablonunu veya motor uyumluluğunu kontrol edin.",
   "chat.stoppedBeforeResponse": "Yanıt gelmeden önce üretim durduruldu.",
-  "chat.systemPrompt": "Yardımcı bir asistansın. Kullanıcıya doğrudan ve öz biçimde, kullandığı dilde yanıt ver. Sıradan selamlaşmalara veya isteklere yanıt veremediğini söyleme. Kullanıcı kod istemedikçe kod üretme.",
+  "chat.systemPrompt": "Yardımcı bir asistansın. Kullanıcının son mesajıyla aynı dilde yanıt ver ve yanıtın tamamını bu dilde tut; ilgisiz başka dil veya alfabelerden sözcükler karıştırma. Özel adları ve teknik tanımlayıcıları koru, kodu değiştirme. Başlık, liste, satır içi kod ve kod bloğu gibi açık biçimlendirme isteklerine uy. Doğrudan ve öz yanıt ver. Sıradan selamlaşmalara veya isteklere yanıt veremediğini söyleme. Kullanıcı kod istemedikçe kod üretme.",
   "chat.promptExplain": "Karmaşık bir konuyu basitçe açıkla.",
   "chat.promptPlan": "Küçük bir projeyi adım adım planlamama yardım et.",
   "chat.promptWrite": "Bu metni gözden geçir ve iyileştirme önerileri sun.",
