@@ -43,3 +43,15 @@ The following are not part of this milestone:
 - hardware compatibility evidence and automatic backend selection.
 
 A future adapter that uses a different wire protocol must add an explicit request/response translation contract and tests. It must not silently masquerade as an OpenAI-compatible process. Each new adapter also requires manifest metadata, dependency/install strategy, platform packaging, lifecycle tests and real-task evidence before being shown as supported.
+
+## Future typed task adapters (planned; not implemented)
+
+The v1 `EngineAdapter` is intentionally Chat-oriented: it exposes a readiness path and an upstream Chat completions path. It is not a general-purpose multimodal/task protocol. Do not register ASR, TTS, image generation, OCR, embeddings, video or 3D tools as `openai-compatible-process` merely because the executable can be started.
+
+Stage 13A (see [engine integration research](engine-integration-research.md)) will design a separate typed task-adapter boundary or an explicitly versioned successor contract. The first candidate is `audio.cpp`, whose server exposes `GET /health`, `GET /v1/models`, `POST /v1/audio/transcriptions`, `POST /v1/audio/speech`, and `POST /v1/tasks/run`. Its routes and binary audio request/response semantics do not match `/v1/chat/completions`.
+
+The task contract must declare stable engine ID, task capabilities (initially `asr.transcribe` and `tts.synthesize`), config validation, process lifecycle, readiness, typed request/response mapping, bounded local file staging, output-artifact metadata, cancellation, per-task limits and engine-specific evidence. Keep prompt/audio content out of diagnostics by default. Reuse the existing managed-process, FIFO job queue, Activity and telemetry services only where their semantics remain correct.
+
+The catalog and installer must evolve independently and fail closed. Current manifest-v1 strategies (`llama-release` and `pinned-gguf`) do not describe an audio.cpp runtime archive pair or a multi-file model package. Add a reviewed installer strategy and/or a versioned manifest contract only after exact upstream release assets, model files, sizes, SHA-256 values, licenses and extraction behavior have been verified. No arbitrary URL, command or upstream model-manager script is permitted.
+
+This section is an architecture decision and work plan, not a claim that task adapters or audio.cpp support already exist.

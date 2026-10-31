@@ -46,3 +46,9 @@ For the first local GPU validation, record the exact Windows build, NVIDIA drive
 - Models are independently selected and licensed.
 - Roll back the engine package independently of runtime/config/model data.
 - Never execute install scripts supplied by model repositories.
+
+## Planned non-Chat engine families (research only)
+
+The next target is an `audio.cpp` pilot for ASR/TTS. This is not installable through the current v1 catalog today: the current manifest strategies are limited to `llama-release` and single-file `pinned-gguf`, while the Windows CUDA distribution requires a paired runtime/profile archive and audio models may require a pinned multi-file/model-bundle package. See [engine integration research](engine-integration-research.md) for exact upstream references, hardware fit, and the Stage 13A acceptance plan.
+
+Before exposing any non-llama engine, add a typed task adapter rather than reusing the Chat-only `EngineAdapter` as a false compatibility layer. The catalog/installer must pin every asset and model file, verify each size/hash, review engine and model licenses separately, safely extract/stage/activate, and support rollback. A new record must remain un-installable until its strategy is implemented and compiled into the runtime. Hosted CI must not mark real task or GPU support as verified.

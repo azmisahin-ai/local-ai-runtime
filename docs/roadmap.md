@@ -10,9 +10,13 @@ The runtime, engines, and models remain separate versioned components. The catal
 
 ## Current baseline and visible progress — 2026-10-31
 
-**Published baseline:** `v0.1.29-alpha` (`99730e8`). The user confirmed that its single main pipeline passed and that the exact built artifacts were published. This release includes the three-step first-run guide, explicit next-action Chat navigation, and the Qwen3 answer-first chat-stream fix. Manual screen-reader review and real model/GPU acceptance remain open. The release contains the hardware-v1 contract, NVIDIA driver/compute-capability/VRAM evidence, plus the previously published five-area dashboard, local streaming chat, persistent Activity/jobs, live CPU/RAM/engine telemetry, EN/TR onboarding/accessibility, embedded component manifest v1, explicit Runtime Profiles, and persistent FIFO install queue with duplicate protection and safe restart recovery. Hosted CI uses fake engines and does not prove real GPU/model task compatibility.
+**Published baseline:** `v0.1.30-alpha` (`2307210`). The user confirmed that the single unified main pipeline passed and published the exact tested artifact set; workflow: <https://github.com/azmisahin-ai/local-ai-runtime/actions/runs/41230378240>. This release contains the bounded chat character-entity normalization and stronger EN/TR chat instruction follow-up. The user has manually validated visible Qwen3 final answers on `v0.1.28-alpha` and the core assistant Markdown renderer (headings, emphasis, lists and fenced C++ code) on `v0.1.29-alpha`. A post-`v0.1.30-alpha` manual UI test is not yet recorded.
 
-**Current work:** Stage 12 hardware evidence is published. On the target RTX 3060 Laptop GPU, CUDA-backed Qwen3 4B inference has run with external NVIDIA process/utilization evidence and approximately 85–91 generated tokens/s in recent engine logs; the application still does not parse a per-layer CUDA offload count, and KV-cache restore/context-limit behavior remains open. Stage 12.5 has shipped the hardware evidence hierarchy, curated model shortlist, simplified first-run path and Qwen3 answer-first streaming fix. The user confirmed on `v0.1.28-alpha` that Qwen3 4B now returns a visible response, including a two-paragraph C++ AI article; the earlier empty-response fallback did not recur in that test. That manual test exposed a separate presentation issue: assistant Markdown delimiters such as `\*\*Qwen\*\*` were rendered literally because chat messages were placed into `textContent` with no Markdown renderer. The user manually confirmed on `v0.1.29-alpha` that headings, emphasis, lists and fenced C++ code render correctly. That acceptance exposed visible encoded spaces (`&#x20;`) and occasional language/formatting drift in model output. The current unreleased follow-up safely decodes a bounded set of numeric/named character references before Markdown parsing, preserves text-node-only HTML isolation, and strengthens the localized Chat instruction for language and explicit formatting compliance. Stage 12.5 still requires this follow-up to be released and manually retested, full screen/accessibility review, repeatable CPU/GPU acceptance, application-side layer-offload evidence, and KV-cache/context acceptance on the target computer. The catalogue still uses immutable single-file GGUF pins; multi-file multimodal, ONNX, SafeTensors and non-llama engine installers still require dedicated strategies. `/v1/catalog` remains backward compatible.
+**Hardware baseline:** On the user's Windows x64 device (RTX 3060 Laptop GPU 6 GB, 16 GB RAM, driver 616.92, compute capability 8.6), Qwen3 4B with llama.cpp CUDA 13 has generated real answers; recent engine timing records are around 85–91 generated tokens/s. Previous NVIDIA process/utilization observations support that CUDA work occurred, but Local AI Runtime still lacks verified per-layer offload evidence in its current-session status, and KV-cache/context restore remains an open follow-up. Do not equate system-wide GPU telemetry with process-specific offload proof.
+
+**Priority change:** The user explicitly asked to stop spending disproportionate time on small Chat/Markdown polish and to prioritize integrating other AI engine families. Freeze non-critical Chat/Markdown/language polish. Fix only security, data-loss, engine lifecycle, or basic inference correctness issues. Residual Stage 12/12.5 checks remain tracked but must not block Stage 13A audio work.
+
+**Next engineering focus:** Stage 13A is an `audio.cpp` pilot. Research, upstream links, model choices, license notes, Windows package constraints, adapter/catalog gaps and task acceptance gates are recorded in [Engine Integration Research](engine-integration-research.md). The fresh-session starting instructions and current machine/release state are recorded in [Next Session Handoff](next-session-handoff.md). No audio.cpp, Whisper, sherpa-onnx, stable-diffusion.cpp, ONNX Runtime, FFmpeg or 3D engine integration is implemented yet. The current catalog still has only `llama.cpp` managed engine packages and three pinned text-chat GGUF models.
 
 ### Product delivery checklist
 
@@ -26,34 +30,35 @@ The runtime, engines, and models remain separate versioned components. The catal
 | 7 | Embedded Component Catalog Manifest v1 | [x] Published | `v0.1.18-alpha` |
 | 8 | Runtime Profile, explicit model/backend selection and Chat readiness | [x] Published; main and tagged workflow succeeded after Release-job rerun | `v0.1.19-alpha` |
 | 9 | Persistent install queue, duplicate/dependency handling and reliable retries | [x] Published; main and tagged four-platform CI passed | `v0.1.20-alpha` |
-| 10 | Catalog v2, simplified Models UI and extensible multi-model pinned GGUF allowlist | [x] Published; main and tagged four-platform CI succeeded | `v0.1.21-alpha` |
-| 11 | Shared Engine Adapter lifecycle; keep llama.cpp as first adapter | [x] Published; main and tagged four-platform CI passed | `v0.1.22-alpha` |
-| 12 | Hardware Compatibility & Evidence; NVIDIA driver/VRAM probes and real RTX 3060 acceptance | [~] CUDA-backed inference observed on target GPU; app-side layer count and KV-cache/context acceptance remain open | `v0.1.23-alpha` |
-| 12.5 | Product-readiness review: clearer UX, hardware evidence hierarchy, Chat onboarding, safe Markdown and curated model catalogue | [~] UI and Qwen3 chat fixes published through `v0.1.29-alpha`; entity/language polish, accessibility and hardware acceptance remain open | `v0.1.24-alpha` → `v0.1.29-alpha` |
-| 12.5.1 | Unified build-once release pipeline and one-screen CI report | [x] Build-once/publish-once flow shipped and confirmed in `v0.1.25-alpha` / `v0.1.26-alpha` | `v0.1.25-alpha` |
-| 13 | Local MCP stdio MVP for the user's other project | [ ] Not started; gated on Stage 12.5 manual acceptance | Next alpha after acceptance |
-| 14 | Documents, embeddings and local RAG | [ ] Not started | Later alpha |
-| 15 | Vision and Speech pilots | [ ] Not started | Later alpha |
-| 16 | Image generation workspace and adapter | [ ] Not started | Later alpha |
-| 17 | Video understanding (frames + audio + vision) | [ ] Not started | Later alpha |
-| 18 | Music and advanced audio generation | [ ] Not started | Later alpha |
-| 19 | Signing, provenance, cross-platform install/update/recovery parity and v1.0 acceptance | [ ] Not started | v1.0 gate |
+| 10 | Catalog v2, simplified Models UI and extensible multi-model pinned GGUF allowlist | [x] Published | `v0.1.21-alpha` |
+| 11 | Shared Engine Adapter lifecycle; keep llama.cpp as first adapter | [x] Published | `v0.1.22-alpha` |
+| 12 | Hardware Compatibility & Evidence; NVIDIA driver/VRAM probes and real RTX 3060 acceptance | [~] CUDA-backed Qwen3 inference observed; app-side layer count and KV-cache/context acceptance remain open | `v0.1.23-alpha` onward |
+| 12.5 | Product readiness: first-run flow, evidence hierarchy, Chat correctness and safe assistant Markdown | [~] Core onboarding/Chat fixes shipped through `v0.1.30-alpha`; residual responsive/accessibility review and latest-release manual spot-check remain non-blocking for engine work | `v0.1.24-alpha` → `v0.1.30-alpha` |
+| 12.5.1 | Unified build-once release pipeline and one-screen CI report | [x] Build-once/publish-once flow shipped and repeatedly confirmed | `v0.1.25-alpha` onward |
+| 13A | Audio task engine and typed task-adapter foundation | [ ] Research recorded; implementation not started | Next engineering task |
+| 13B | Turkish ASR and TTS with audio.cpp | [ ] Not started; Qwen3-ASR first, Chatterbox second | After 13A |
+| 13C | ASR alternatives comparison | [ ] Not started; whisper.cpp first alternative, sherpa-onnx only if justified | After 13B |
+| 14 | Image generation | [ ] Not started; stable-diffusion.cpp, SD 1.5 / 512x512 pilot | Later alpha |
+| 15 | Vision and OCR | [ ] Not started; ONNX Runtime + OpenCV and one pinned model | Later alpha |
+| 16 | Media and video processing | [ ] Not started; FFmpeg as audited media infrastructure, not AI model | Later alpha |
+| 17 | Documents, embeddings and local RAG | [ ] Not started | Later alpha |
+| 18 | 3D reconstruction | [ ] Not started; COLMAP + Open3D | Later alpha |
+| 19 | Music and advanced audio generation | [ ] Not started; audio.cpp ACE-Step only after speech tasks pass and VRAM is measured | Later alpha |
+| 20 | MCP stdio, Agent / Planning and orchestration of tested local tasks | [ ] Not started; do not expose untested engines as tools | Later alpha |
+| 21 | Signing, provenance, cross-platform install/update/recovery parity and v1.0 acceptance | [ ] Not started | v1.0 gate |
 
-### Stage 12.5 acceptance checklist — Product readiness before MCP
+### Stage 12.5 acceptance checklist — Product readiness (non-blocking for Stage 13A)
 
 - [x] Replace the large always-open hardware dump with a plain-language device summary and an expandable technical evidence section.
 - [x] Explain the distinction between OS adapter inventory, NVIDIA driver/VRAM evidence, live system-wide telemetry, configured backend and engine-log offload evidence.
-- [x] Add a curated text-chat shortlist for the reported RTX 3060 Laptop GPU (6 GB VRAM) / 16 GB RAM profile: Qwen3 4B Q4_K_M as the balanced candidate, Gemma 4 E2B QAT Q4_0 as an alternative, and Qwen2.5 1.5B Q4_K_M as the compact CPU-first fallback.
-- [x] Pin model files to immutable Hugging Face revisions with reviewed exact byte sizes and SHA-256 digests; keep all three models marked as not validated on the user's physical machine until real tasks are run.
-- [x] Display a conservative starting context for each model; do not claim full GPU fit or multimodal app support from model-card capabilities alone.
-- [x] Localize the curated model descriptions and evidence explanations in English and Turkish; add explicit Chat-page actions to choose a model or open Activity.
-- [x] Reduce the required setup path to profile → ready engine → first message; keep device inspection optional and enable only the next incomplete action.
-- [x] Make Chat show only the currently required next action; provide direct Models → Activity → Chat continuation actions.
-- [x] Validate Qwen3 normal Chat returns a visible final answer on `v0.1.28-alpha`, including a two-paragraph response; hidden reasoning-only/incomplete streams must fail truthfully and never be shown as successful answers.
-- [ ] Release and manually verify safe Markdown rendering for assistant paragraphs, headings, emphasis, lists, links and code; raw HTML must remain inert and user-authored messages must remain plain text.
-- [ ] Manually review every screen at desktop and narrow widths, including keyboard navigation, focus order, screen-reader labels, and empty/error/loading states.
-- [ ] Install each shortlist candidate on the target Windows device; record download verification, CPU baseline, CUDA start, actual layer offload, context, generation latency and peak VRAM.
-- [ ] Only after the UI review and at least one complete local Chat path passes, proceed to Stage 13 MCP stdio.
+- [x] Add a curated text-chat shortlist for the reported RTX 3060 Laptop GPU (6 GB VRAM) / 16 GB RAM profile.
+- [x] Pin existing text-chat model files to immutable revisions with reviewed sizes and SHA-256 digests.
+- [x] Reduce the required setup path to profile → ready engine → first message; keep device inspection optional.
+- [x] Validate Qwen3 normal Chat returns a visible final answer on `v0.1.28-alpha`.
+- [x] Manually validate core Markdown presentation (headings, emphasis, lists and fenced C++ code) on `v0.1.29-alpha`; raw HTML remains inert by the renderer contract.
+- [~] `v0.1.30-alpha` entity normalization and locale-instruction follow-up is published; post-release manual spot-check still open. Do not spend another release solely on cosmetic language/inline-formatting differences.
+- [ ] Manually review desktop/narrow UI, keyboard focus, screen-reader labels and empty/error/loading states when time permits; this does not block Stage 13A.
+- [ ] Keep Stage 12 app-side GPU layer-offload evidence and KV-cache/context acceptance as a hardware follow-up; do not block audio CPU/CUDA package work.
 
 ### Stage 12.5.1 acceptance checklist — single-run release pipeline
 
@@ -106,11 +111,11 @@ The runtime, engines, and models remain separate versioned components. The catal
 
 The Stage 8 Runtime Profile milestone is published in `v0.1.19-alpha`. Stage 9 is published in `v0.1.20-alpha` after the four-platform publisher workflow passed. Its Windows acceptance check should still confirm rapid successive CPU/CUDA package requests on a real user machine. The queue core test must remain platform-neutral: CUDA availability is asserted in manifest contract tests, while sequential queue/cancel/re-queue behavior uses components supported on every CI host.
 
-The default product workflow remains task-first: users choose a task/workspace, the runtime helps select a compatible model and engine profile, Activity shows preparation/execution, and the Chat or task workspace only offers controls supported by the selected model's capabilities. The next feature milestone is MCP stdio, gated by Stage 12.5 manual acceptance and the live single-run release pipeline confirmation. No additional engine family is added until adapter, profile, queue, hardware-evidence and distribution gates are ready.
+The default product workflow remains task-first: users choose a task/workspace, the runtime helps select a compatible model and engine profile, Activity shows preparation/execution, and each task workspace only offers controls supported by the selected model's capabilities. The next feature milestone is Stage 13A audio.cpp, not MCP. The current Chat adapter is not a general task protocol; a typed task adapter and new fail-closed installer strategies are required before any non-Chat engine is catalogued. See [engine integration research](engine-integration-research.md) and [next-session handoff](next-session-handoff.md).
 
 ## Distribution status
 
-- The `v0.1.2-alpha` milestone introduced the Windows per-user setup installer `local-ai-runtime-windows-x64-setup.exe`; the current published baseline is `v0.1.24-alpha`. The user has confirmed installation, launch and a Qwen2.5 starter-model chat on one Windows environment. This is not evidence for both Windows 10 and 11, real GPU inference, or every upgrade/uninstall path. Publisher signing remains outstanding. Always check the [live Releases page](https://github.com/azmisahin-ai/local-ai-runtime/releases) for current assets.
+- The `v0.1.2-alpha` milestone introduced the Windows per-user setup installer `local-ai-runtime-windows-x64-setup.exe`; the current published baseline is `v0.1.30-alpha`. The user has confirmed installation, launch and local Qwen/Qwen3 chat on one Windows environment. This is not evidence for both Windows 10 and 11, real GPU inference, or every upgrade/uninstall path. Publisher signing remains outstanding. Always check the [live Releases page](https://github.com/azmisahin-ai/local-ai-runtime/releases) for current assets.
 - The Windows shell hosts the dashboard in WebView2, starts the C++ runtime without a console window, and uses a tray menu for reopen, update check and graceful exit. Clean Windows 10/11 manual acceptance remains a release gate.
 - The managed catalogue contains llama.cpp CPU/CUDA packages and three pinned text-chat GGUF candidates (Qwen3 4B, Gemma 4 E2B and Qwen2.5 1.5B). Manifest v1 is embedded at build time. It is a curated shortlist, not a general catalogue of every model or C/C++ engine. Real model/CPU/GPU task evidence is still required per declared platform/profile.
 - The dashboard has five destinations (Overview, Chat, Models, Activity, Settings), local EN/TR resources, first-run onboarding, accessibility basics, persistent jobs and resource telemetry. Manual screen-reader review remains open. See [product information architecture](product-information-architecture.md) and [UI/UX principles](ui-ux.md).
@@ -119,7 +124,7 @@ The default product workflow remains task-first: users choose a task/workspace, 
 
 ## Historical foundation status
 
-`v0.1.12-alpha` introduced the five-area UI and first `/v1/activity` snapshot. `v0.1.13-alpha` added SSE streaming and local conversation history. `v0.1.14-alpha` added durable component jobs and interrupted-state recovery. `v0.1.15-alpha` unified runtime operation jobs. `v0.1.16-alpha` added resource monitoring. `v0.1.17-alpha` expanded onboarding, localization and accessibility and included CI diagnostics/process cleanup. `v0.1.18-alpha` published the manifest-driven catalogue. The Runtime Profile milestone shipped in `v0.1.19-alpha`, the persistent install queue in `v0.1.20-alpha`, Catalog v2 in `v0.1.21-alpha`, Shared Engine Adapter in `v0.1.22-alpha`, NVIDIA driver evidence in `v0.1.23-alpha`, and the interim product-readiness UI/model shortlist in `v0.1.24-alpha`; real RTX 3060 inference/offload is still pending.
+`v0.1.12-alpha` introduced the five-area UI and first `/v1/activity` snapshot. `v0.1.13-alpha` added SSE streaming and local conversation history. `v0.1.14-alpha` added durable component jobs and interrupted-state recovery. `v0.1.15-alpha` unified runtime operation jobs. `v0.1.16-alpha` added resource monitoring. `v0.1.17-alpha` expanded onboarding, localization and accessibility and included CI diagnostics/process cleanup. `v0.1.18-alpha` published the manifest-driven catalogue. The Runtime Profile milestone shipped in `v0.1.19-alpha`, the persistent install queue in `v0.1.20-alpha`, Catalog v2 in `v0.1.21-alpha`, Shared Engine Adapter in `v0.1.22-alpha`, NVIDIA driver evidence in `v0.1.23-alpha`, and the product-readiness UI/model shortlist in `v0.1.24-alpha`; Qwen3 chat/Markdown follow-ups continued through `v0.1.30-alpha`. CUDA-backed Qwen3 inference has been observed on the RTX 3060, while app-side layer-offload evidence and repeatable device-profile validation remain open.
 
 - [x] Fix the Windows PowerShell 5.1 publisher smoke-test regression and confirm the canonical four-target pipeline passes. `f841c80` was the confirmed green publisher/installer baseline when this roadmap update began (`v0.1.2-alpha`).
 - [x] Keep one repository-local maintainer command. It pushes only normal fast-forwards, never force-pushes, and stops at a failed CI gate. Git bundles are optional one-time source-transfer artifacts, not part of routine publishing.
@@ -178,7 +183,7 @@ The metadata contract and distribution boundaries live in [engine distribution s
 - [x] Implement exact official CUDA server + companion runtime asset selection, SHA-256 verification, safe extraction/merge, aggregate progress, conservative free-space checks, diagnostic asset hashes, and regression coverage for Windows/Linux x64 asset naming. The real GPU task test remains a separate gate.
 - [ ] Run CUDA validation with a real NVIDIA GPU, driver, VRAM, model quantization, context and backend evidence. `--n-gpu-layers auto` alone is not proof of GPU inference.
 - [ ] Expand model choices with size/quantization and hardware guidance; recommend only combinations with evidence and keep “unverified” combinations clearly labelled.
-- [ ] Add engine families incrementally under the adapter contract: consider `stable-diffusion.cpp` for image generation, `whisper.cpp`/`sherpa-onnx` for speech, OpenCV/OCR and embeddings/reranking for knowledge workflows. Evaluate music/SFX and video runtimes separately. Each needs its own licence review, catalog metadata, process/lifecycle tests, platform builds, real task smoke test, and documented hardware requirements before being marked supported.
+- [ ] Add engine families incrementally under the task-adapter and fail-closed installer design. The research decision is `audio.cpp` first (ASR/TTS), then `stable-diffusion.cpp`, ONNX Runtime + OpenCV, FFmpeg media infrastructure, COLMAP/Open3D, advanced audio/music, and MCP/Agent orchestration. See [engine integration research](engine-integration-research.md). Each needs separate engine/model license review, exact pinned assets and hashes, task/lifecycle tests, platform builds, and real task evidence before being marked supported.
 - [ ] Resume interrupted downloads and probe a newly installed engine/model before marking the combination tested.
 
 ## Priority 4 — safe, understandable updates
