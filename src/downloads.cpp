@@ -2510,6 +2510,15 @@ void DownloadManager::configure_audio_cpp_asr_model(const std::filesystem::path&
     if (!input.good() && !input.eof()) {
         throw std::runtime_error("Could not read the complete managed audio.cpp server configuration.");
     }
+    // Windows will reject MoveFileExW(..., MOVEFILE_REPLACE_EXISTING) with
+    // ERROR_ACCESS_DENIED when this process still holds the destination open
+    // without FILE_SHARE_DELETE. Release the input handle before the atomic
+    // replacement below; POSIX permits renaming open files, which hid this bug
+    // in the Linux tests.
+    input.close();
+    if (input.fail()) {
+        throw std::runtime_error("Could not close the managed audio.cpp server configuration before atomic replacement.");
+    }
     const auto absolute_model_path = std::filesystem::absolute(model_file, fs_error).lexically_normal();
     if (fs_error) throw std::runtime_error("Could not resolve the installed Qwen3-ASR model path: " + fs_error.message());
     const auto updated_json = register_audio_cpp_asr_model_config_json(
