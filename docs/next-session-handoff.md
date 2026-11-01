@@ -2,104 +2,87 @@
 
 **Prepared:** 2026-11-01
 **Repository:** <https://github.com/azmisahin-ai/local-ai-runtime>
-**Purpose:** Continue Stage 13A/13B audio.cpp work without repeating LLM/UI polish. Typed task adapter, exact CPU/CUDA package pins, managed Windows CPU and CUDA installation/lifecycle checks are verified. The Qwen3-ASR 0.6B Q8_0 artifact is now pinned and its installer/config-registration path is implemented with Linux build/CTest coverage. The next task is to merge and validate that change on Windows, install the model with explicit Apache-2.0 acceptance, then run real Turkish ASR on CPU followed by CUDA.
+**Purpose:** Finish the experimental Windows x64 audio.cpp/Qwen3-ASR pilot, then publish through the one canonical release process. Do not spend time on non-critical Chat/Markdown polish. The latest published release remains `v0.1.31-alpha`; all Stage 13 audio work described here is unreleased until the publisher confirms a new GitHub Release.
 
 ## Read these files first
 
-1. `docs/next-session-handoff.md` — current state and immediate task.
-2. `docs/engine-integration-research.md` — dated engine selection, upstream findings, architecture gap and acceptance gates.
-3. `docs/roadmap.md` — official stage order and open checks.
-4. `docs/engine-adapter-architecture.md` — Chat adapter v1, typed task-adapter contract and audio.cpp lifecycle boundary.
-5. `docs/engine-distribution.md` and `docs/catalog-authoring.md` — installer, manifest and checksum constraints.
-6. `docs/stage-13a-cpu-windows-acceptance.md` — exact manual Windows CPU package, managed installer and lifecycle evidence.
+1. `docs/roadmap.md` — current stage states and release gates.
+2. `docs/stage-13-asr-windows-acceptance.md` — manual CPU/CUDA evidence and limits.
+3. `docs/engine-integration-research.md` — upstream selection and pins.
+4. `docs/engine-adapter-architecture.md` — keep Chat EngineAdapter separate from typed audio tasks.
+5. `docs/engine-distribution.md` and `docs/catalog-authoring.md` — fail-closed installer/catalogue rules.
 
 ## Repository and release baseline
 
-- Latest user-confirmed published baseline: **`v0.1.31-alpha`**, commit **`e18a084`** (`docs(plan): record engine roadmap and next-session handoff`).
-- The user's Windows PowerShell 5.1 transcript confirmed the single unified main pipeline passed and published the exact artifact set. Workflow: <https://github.com/azmisahin-ai/local-ai-runtime/actions/runs/41234340882>.
-- Release: <https://github.com/azmisahin-ai/local-ai-runtime/releases/tag/v0.1.31-alpha>.
-- `v0.1.31-alpha` publication is confirmed. Local Stage 13A commits through `2e1d101` remain unpushed/unpublished; the user has manually validated managed CPU and CUDA package install/lifecycle against those changes. Stage 13B Qwen3-ASR source changes are unmerged on the Windows checkout.
-- Routine release process remains build once / publish once. `Publish-LocalAIRuntime.ps1` pushes fast-forward-only `main`, waits for the single main CI, and reports release. Git bundles are only used for one-time source transfer; they are not part of normal publishing.
-- The supplied PowerShell transcript showed a clean tree before the one-time fast-forward to `e18a084`; this handoff branch started from that published baseline. When resuming, verify repo branch and `git status --short`; never overwrite uncommitted user work.
+- Latest user-confirmed published baseline: `v0.1.31-alpha`, commit `e18a084`.
+- User's Windows checkout was last confirmed at `e6155e6` with successful Windows Release build and 10/10 CTests. Subsequent working-tree changes in this handoff (requested-language fallback and five-sample test helper) are not yet merged into that checkout.
+- Do not publish by pushing/tagging manually. Run `Publish-LocalAIRuntime.ps1` once from a clean, current `main`; it fast-forwards, waits for the single unified workflow, and verifies the tag/Release created from those same artifacts.
+- Do not publish until the new language-fallback regression and five-sample script syntax check pass on Windows.
 
-## User's target hardware / local setup
+## User's target machine
 
-- Windows PowerShell 5.1, Windows x64; exact Windows release/build not yet captured (`winver` needed before selecting WinML).
-- NVIDIA GeForce RTX 3060 Laptop GPU, 6 GiB VRAM, PCI `10de:2520`, compute capability 8.6.
-- NVIDIA driver 616.92; `nvidia-smi` available at `C:\Windows\System32\nvidia-smi.exe`.
-- Intel UHD iGPU also present.
-- 16 GB system RAM, 16 logical CPUs.
-- Previous `llama.cpp` CUDA 13 runtime package: b12020; installed under `%LOCALAPPDATA%\LocalAIRuntime\engines\llama.cpp\b12020-cuda13`.
-- Previous target model: Qwen3 4B Q4_K_M, pinned digest `7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5`.
-- Previous Qwen3 CUDA runs showed about 85–91 generated tokens/s in llama.cpp timing lines. One Activity report measured system GPU memory/use while an engine was running, but Local AI Runtime still reported `gpu_execution_evidence: not-verified`, `cuda_runtime_reported:false`, and no offloaded-layer count. Keep system-wide NVIDIA telemetry separate from engine-specific offload evidence.
+- Windows x64, PowerShell 5.1.
+- NVIDIA GeForce RTX 3060 Laptop GPU, 6 GiB VRAM, compute capability 8.6, driver 616.92.
+- 16 GiB system RAM and 16 logical CPU processors.
+- Exact Windows edition/build and CPU model have not been captured.
 
-## What has been proven / what is still open
+## Verified Windows evidence
 
-### LLM / Chat
+### audio.cpp v0.9.3 runtime
 
-- Qwen3 4B + llama.cpp CUDA 13 was downloaded, SHA-256 verified, profile-applied, engine-started and used for actual local inference.
-- The `v0.1.27-alpha` UI initially showed an empty response even though the upstream engine logs showed token generation. Root cause was the UI's incomplete SSE field handling and success fallback.
-- `v0.1.28-alpha` fixed the normal Qwen3 final-answer path; the user manually confirmed a visible response and a two-paragraph C++ AI article.
-- `v0.1.29-alpha` added safe assistant Markdown rendering; user manually confirmed headings, emphasis, lists and C++ fenced code blocks render.
-- `v0.1.30-alpha` added bounded character-entity normalization and stronger locale instruction. `v0.1.31-alpha` subsequently published the engine roadmap/handoff update. No post-v0.1.31 manual installation check is recorded.
-- Do not spend another iteration on minor Markdown, whitespace, inline-code or model-language style unless a concrete correctness/security defect appears. Basic Chat is good enough to move on.
+- CPU package installed and managed in the isolated data root `%TEMP%\LAR-Stage13A-CPU-1035bd5851c448fc813dd02e02071c21` (runtime port 64702).
+- CUDA 13.3 server+CUDART installed and managed in `%TEMP%\LAR-Stage13A-CUDA-f95fccefc0a048d0a1389236b7dc1c54`.
+- Both managed engines passed readiness and `/health`; final stop removed the engine process and listening port. CPU and CUDA tests used isolated roots because a managed install must not overwrite an existing engine component.
+- Package pins are recorded in `docs/stage-13-asr-windows-acceptance.md`.
 
-### Hardware / UI residuals
+### Qwen3-ASR model
 
-- Stage 12 is not fully closed: app-side GPU layer-offload count/current-session CUDA evidence and KV-cache restore/context behavior remain open. This is follow-up work, not a blocker for audio integration.
-- Stage 12.5 has shipped key onboarding, first-run flow, hardware evidence labels, curated text model shortlist, Qwen3 streaming correction and safe Markdown. Full manual responsive/accessibility/screen-reader review and v0.1.30 post-release visual check remain. These low-priority UI checks must not block Stage 13A.
-- The manifest has a fail-closed `audio-cpp-release-set` strategy for a CPU archive and the paired CUDA server+CUDART bundle. Exact official v0.9.3 release API byte sizes and SHA-256 digests are enforced in code/tests: CPU `30547092`; CUDA server `277336614`; CUDA runtime `575457454`. On Windows x64, the native CPU binary was verified (`audio.cpp 0.9.3`, MSVC/AMD64); `/health` returned `status=ok`, `backend=cpu`, `models=0`; `/v1/models` returned an empty list; restart and final process/port cleanup succeeded. The Local AI Runtime installer downloaded exactly `30547092` bytes, safely extracted and atomically activated the CPU package in an isolated test data root, registered the `audio.cpp` task adapter with `default_for_chat=false`, and successfully managed start/readiness/stop/restart/stop. The managed process returned `status=ok`, `backend=cpu`, version `0.9.3`; Chat remained untouched.
-- CUDA v0.9.3 server+CUDART was installed as a separate isolated data root. Aggregate bytes were exactly `852794068`; package `--version` reported `backends: cpu,cuda`; managed process PID `13448` reached ready and `/health` reported `status=ok`, `backend=cuda`, version `0.9.3`. The subsequent stop verified `status=stopped`, process gone and listener gone. `nvidia-smi` showed no compute process and the health endpoint reported `models=0`; this is expected before model loading, and is not CUDA inference evidence. CPU and CUDA managed package lifecycle checks are accepted.
-- Stage 13B implementation now pins Qwen3-ASR 0.6B Q8_0 from audio-cpp-gguf revision `4c9a3098d552a0f3d9b2adc11638a11022c07d7e`, filename `qwen3-asr-0.6b-q8_0.gguf`, size `1151272416`, SHA-256 `6c44ec2fb4cee513892d7863c1fcc3ea6b699ffa4d899b0ef4ab19956d9544f7`, Apache-2.0. Installer/config code verifies byte size, SHA-256 and GGUF header, then registers the same catalog model ID in audio.cpp config as `family=qwen3_asr`, `task=asr`, `mode=offline`. It handles either install order (model before engine or engine before model), updates config atomically, and fails closed on conflicting model IDs. Linux Release build and all 10/10 CTests pass for this unmerged work. The new commit has not yet been built or tested on Windows. Real Turkish ASR and CUDA inference are still open.
-- Existing `EngineAdapter` v1 exposes lifecycle/readiness and an upstream Chat completions path. It is not a generic task API. Do not register audio.cpp under `openai-compatible-process` or pretend that audio routes are Chat completions.
+- Model ID `qwen3-asr-0.6b-q8_0`, Apache-2.0 (the user explicitly accepted the model license separately from audio.cpp's Apache-2.0 license).
+- Exact file size `1,151,272,416` bytes; SHA-256 `6c44ec2fb4cee513892d7863c1fcc3ea6b699ffa4d899b0ef4ab19956d9544f7`.
+- CPU installation hit Windows error 5 while atomically replacing audio.cpp config. Commit `e6155e6` fixed it by closing the config input stream before replace. A retry reused the existing verified model and registered `family=qwen3_asr`, `task=asr`, `mode=offline`.
+- Model was copied to CUDA test root, size/hash reverified, and the managed installer recognized the already-installed model and registered it without a second network download.
 
-## Immediate next-session mission: Stage 13B — Qwen3-ASR Turkish transcription
+### Real CPU and CUDA ASR
 
-**Selected:** `0xShug0/audio.cpp` v0.9.3 with Qwen3-ASR 0.6B Q8_0. CPU and CUDA managed engine package installation/lifecycle are verified on Windows; neither ASR nor CUDA inference has been measured. New unmerged Stage 13B source adds the exact-pinned model catalog entry, safe nested Hugging Face path support, and automatic registration in the managed audio.cpp model configuration. Its Linux Release build and 10/10 CTests passed. Windows Release build/CTest is the immediate validation gate before installing the new model. Research and decisions are in `docs/engine-integration-research.md`.
+- CPU engine loaded the model (`configured=true`, `loaded=true`) and returned a non-empty transcript through `POST /v1/tasks/asr/transcribe` using `X-LAR-Language: tr`.
+- Controlled seven-second Turkish WAV reference: `Bugün hava güzel. Türkçe konuşma tanıma testi yapıyorum.`
+- CPU hypothesis: `Bugün hava güzel. Türkçe konuşmak tanımı testi yapıyorum.`; 2 substitutions / 8 reference words = 25% single-sample WER; latency 4.34 seconds.
+- The same WAV on CUDA returned the same hypothesis in 4.79 seconds. `/health` reported `backend=cuda`; model was loaded. `nvidia-smi` listed the actual `audiocpp_server.exe` process during inference; system GPU memory was 1,723/6,144 MiB at 40% utilization. The per-process memory field was `N/A` under WDDM. After stop, GPU memory returned to 0 MiB and compute-process list was empty.
+- This is a real experimental Windows x64 ASR pilot, not a broad Turkish quality benchmark. One scored sentence yielded 25% WER. The first exploratory 15-second clip was transcribed, but its exact spoken words were not independently confirmed and it must not be included in scored accuracy results.
+- The real upstream response omitted its `language` field even though `tr` was sent. The new unreleased server change returns the explicitly requested language if the upstream omits it; this means “requested language”, not language detection. Windows Release/CTest must validate this regression.
+- Real TTS has not been tested with a real TTS model. The fake HTTP TTS contract test is not evidence of usable TTS. Do not advertise TTS as supported in this release.
 
-### Why this is the first engine
+## Immediate release-preparation work
 
-- Pure C++/ggml runtime with ASR, TTS, VAD, audio enhancement/separation, voice conversion and music tasks.
-- Official Windows CUDA runtime + profile package path exists.
-- Published CUDA package prerequisites are compute capability >=7.5 and NVIDIA driver >=580; the user's 8.6 / 616.92 meets those prerequisites.
-- Upstream server has health/models and audio task endpoints; the typed task adapter and HTTP routes are implemented locally, while native package and model execution remain unverified.
-- Qwen3-ASR-0.6B is listed with Turkish support; Chatterbox 0.5B multilingual TTS lists Turkish. Their model licenses are separate from the audio.cpp Apache-2.0 software license (Qwen3-ASR Apache-2.0; Chatterbox model MIT according to the model card checked 2026-10-31).
+1. Merge the next bundle containing: requested-language fallback in `src/server.cpp`, an HTTP regression where fake audio.cpp omits `language`, and `scripts/Test-TurkishAsrAcceptance.ps1`.
+2. Run `cmake --build build --config Release --parallel 4` and `ctest --test-dir build -C Release --output-on-failure` on Windows. Require all tests green, including the new language fallback smoke.
+3. Run five controlled Turkish sentences with `scripts/Test-TurkishAsrAcceptance.ps1` against the CPU runtime. It records WAVs locally and reports per-utterance and aggregate WER. Then run the same WAV directory against CUDA using `-UseExistingAudioDirectory` so CPU/CUDA comparisons are fair.
+4. Review the WER and reference/hypothesis pairs. No threshold was previously established; treat the result as an experimental quality record, not a guarantee. Do not commit WAV files or reports.
+5. Verify docs, `git status --short`, and `git diff --check`; commit to `main`.
+6. Publish exactly once with `Publish-LocalAIRuntime.ps1`. The automatic planner should select the next alpha after `v0.1.31-alpha`; don't hand-create a tag.
+7. In release notes and README, describe the Windows audio.cpp/Qwen3-ASR pilot as experimental and state that TTS is not yet available.
 
-### Remaining implementation and target acceptance sequence
+## Five-sample acceptance helper
 
-1. Verified official v0.9.3 release asset names, SHA-256 pins and exact byte sizes using the GitHub release API output supplied by the user (see `docs/engine-integration-research.md`). The compiled allowlist and tests require exact matches; do not install from floating `latest`.
-2. Implemented: separate typed `TaskEngineAdapter`, `asr.transcribe` / `tts.synthesize`, typed WAV/transcript results and capability declarations. Chat v1 remains unchanged. Per-task cancellation is not yet supported and is advertised as false.
-3. Implemented: `audio-cpp-release-set` strategy and staged downloader for CPU `audio-v0.9.3-bin-windows-x64-cpu.zip` or CUDA 13.3 server+CUDART pair. Exact byte sizes are now pinned. The CPU and CUDA package entries are enabled after native server lifecycle acceptance; engine packages do not embed model files. The installer creates the API-only server config in staging, enables `ui_management` so audio.cpp v0.9.3 accepts an initially empty model list, and chooses a loopback ephemeral port before atomic activation.
-4. Completed on Windows: exact-pinned CPU and CUDA packages installed through the Local AI Runtime catalog installer in separate isolated data roots. CPU and CUDA managed start/readiness/health/stop checks passed; CPU restart and final process/port cleanup passed; CUDA final process/port cleanup passed. The Windows Release build after Stage 13A and 10/10 CTests passed. No ASR model or CUDA inference was tested yet.
-5. Merge the new Stage 13B bundle into the Windows checkout, then run the existing Release build and all CTests. Do not publish this work.
-6. In an isolated CPU test data root, install `qwen3-asr-0.6b-q8_0` from `/v1/catalog` and `/v1/downloads/{id}`. The model's Apache-2.0 license is a separate acknowledgement from the audio.cpp engine license; the user must explicitly accept it. Verify the downloaded file is exactly `1151272416` bytes and SHA-256 `6c44ec2fb4cee513892d7863c1fcc3ea6b699ffa4d899b0ef4ab19956d9544f7`, then inspect the generated config contains id `qwen3-asr-0.6b-q8_0`, family `qwen3_asr`, task `asr`, mode `offline`, and the verified model path.
-7. Start the CPU engine and POST one small, non-sensitive, licensed WAV fixture to the typed ASR route with the exact model ID and `language=tr`. Compare output with a human-reviewed Turkish reference transcript. Capture output, elapsed time/RTF, process RSS and logs. CPU transcription must succeed before the CUDA ASR run.
-8. Repeat model install/config registration in the separate CUDA test data root (or copy only after independently verifying exact size/SHA-256), start CUDA engine, and run the same WAV with `language=tr`. Capture `nvidia-smi` before/peak/after plus engine logs or process-specific evidence. A CUDA `/health` response alone is not evidence of GPU inference; no model was loaded during the previous CUDA lifecycle test.
-9. Stop/restart audio.cpp before loading another model family if needed: upstream lazy-load keeps models resident until process exit. Do not keep llama.cpp, audio.cpp ASR and TTS concurrently loaded in 6 GB VRAM.
-10. Only after ASR is accepted, add Chatterbox 0.5B TTS and generate a short Turkish WAV. Confirm actual output is playable and evaluate speech quality; record memory separately.
-11. Compare whisper.cpp only after the first ASR path succeeds. Add sherpa-onnx only if it offers a measurable model/quality/compatibility advantage.
-12. Update roadmap status and commit only after automated tests plus real Windows task tests. Build once and publish once through the canonical publisher.
+The new helper accepts a loopback runtime URL and requires `audio-cpp` to be Ready with the Qwen model configured. Example CPU run:
 
-### Required task acceptance record
+```powershell
+& .\scripts\Test-TurkishAsrAcceptance.ps1 -BaseUrl $cpuBaseUrl -OutputDirectory "$env:TEMP\lar-asr-cpu"
+```
 
-For each task, record: runtime version, engine release/commit, archive names/sizes/SHA-256, model repo/revision/files/sizes/SHA-256/license, OS build, CPU/GPU/driver/VRAM, backend requested and reported, input fixture + reference, task success, text/audio output integrity, latency/RTF, peak RAM/RSS/VRAM, engine-specific offload evidence, and known limitations. Store only non-sensitive test fixtures/results in repository artifacts; do not place private user recordings, prompts or local filesystem paths in committed logs.
+Use the WAVs it recorded for a matching CUDA run:
 
-## Working style for the next session
+```powershell
+& .\scripts\Test-TurkishAsrAcceptance.ps1 -BaseUrl $cudaBaseUrl -OutputDirectory "$env:TEMP\lar-asr-cuda" -UseExistingAudioDirectory "$env:TEMP\lar-asr-cpu\audio"
+```
 
-- Focus on the next concrete engine and a runnable end-to-end task, not broad UI redesign.
-- Prefer one engine family and one model at a time. Do not ask the user to install several experimental engines in one batch.
-- Ask the user for a local PowerShell action only when it is needed to verify a real Windows package or task; provide exact PowerShell 5.1 commands.
-- Preserve `%LOCALAPPDATA%\LocalAIRuntime` model/config data across runtime updates. Never request a destructive reset to debug engine packages.
-- Keep engine packages, models and app release version independent.
-- Update catalog/UI claims only after exact real-task evidence exists. Hosted CI remains a contract/build test, not target-hardware proof.
-- The next task is **not** to polish Markdown or start MCP. It is the Windows validation of the new Qwen3-ASR model installer/configuration path, followed by real Turkish CPU transcription and then actual CUDA inference evidence.
+The script calls only the supplied `127.0.0.1` runtime URL, writes its report locally, normalizes text using Turkish casing, computes word-level edit distance/WER, and never uploads test audio to a remote service. Do not commit the WAV files or reports.
 
-## Hosted validation for current Stage 13A / 13B changes
+## Later work — not release blockers for the ASR pilot
 
-- CMake/Ninja Linux Debug build completed successfully in the handoff environment.
-- CTest covers the existing nine tests plus `lar_task_http_smoke`; the fake CPU lifecycle is part of `lar_core_tests`.
-- The fake ASR/TTS HTTP test checks multipart `tr`, rejected unsafe model IDs, binary WAV output, Activity persistence and Chat isolation. These do not validate audio.cpp native inference.
-- The real Windows CPU and CUDA engine package installation/process lifecycle checks are accepted. Qwen3-ASR is pinned and wired into managed audio.cpp config in the unmerged Stage 13B source change, but has not yet been installed or run on the target. No CPU transcription, CUDA transcription or Turkish speech-quality acceptance is claimed.
+- Real Turkish TTS: pin Chatterbox (or another justified model), license/revision/files/hashes, then test playable output on CPU and CUDA with VRAM measured. Do not infer TTS support from the task route or fake engine.
+- ASR alternatives: compare whisper.cpp only after the initial ASR pilot ships; use sherpa-onnx only if it offers a measurable advantage.
+- Stage 12 app-side GPU layer evidence, KV-cache/context restore, full accessibility review, signing/provenance and Linux/macOS update parity remain tracked separately.
 
 ## Direct upstream links
 
@@ -107,7 +90,7 @@ For each task, record: runtime version, engine release/commit, archive names/siz
 - [audio.cpp Windows packages and requirements](https://github.com/0xShug0/audio.cpp/blob/main/docs/build/windows.md)
 - [audio.cpp server API/model configuration](https://github.com/0xShug0/audio.cpp#server)
 - [Qwen3-ASR-0.6B model card](https://huggingface.co/Qwen/Qwen3-ASR-0.6B)
-- [Pinned Qwen3-ASR 0.6B Q8_0 GGUF file](https://huggingface.co/audio-cpp/audio.cpp-gguf/blob/4c9a3098d552a0f3d9b2adc11638a11022c07d7e/Qwen3-ASR-0.6B-GGUF/qwen3-asr-0.6b-q8_0.gguf)
+- [Pinned Qwen3-ASR GGUF file](https://huggingface.co/audio-cpp/audio.cpp-gguf/blob/4c9a3098d552a0f3d9b2adc11638a11022c07d7e/Qwen3-ASR-0.6B-GGUF/qwen3-asr-0.6b-q8_0.gguf)
 - [Chatterbox multilingual model card](https://huggingface.co/ResembleAI/chatterbox)
 - [whisper.cpp](https://github.com/ggml-org/whisper.cpp)
 - [sherpa-onnx v2.0.1](https://github.com/k2-fsa/sherpa-onnx/releases/tag/v2.0.1)

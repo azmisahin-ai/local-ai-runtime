@@ -89,7 +89,9 @@ void respond(tcp::socket& socket, const http::request<http::string_body>& reques
             response.result(http::status::bad_request);
             response.body() = R"({"error":{"message":"invalid multipart ASR fixture"}})";
         } else {
-            response.body() = R"({"text":"Merhaba dünya","language":"tr"})";
+            // Match audio.cpp responses that do not echo the requested
+            // language. Local AI Runtime should preserve X-LAR-Language.
+            response.body() = R"({"text":"Merhaba dünya"})";
         }
     } else if (request.method() == http::verb::post && request.target() == "/v1/audio/speech") {
         response.set(http::field::content_type, "audio/wav");

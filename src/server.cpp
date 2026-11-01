@@ -1855,12 +1855,14 @@ http::response<http::string_body> handle_request(const http::request<http::strin
             };
             TaskUpstreamRequest upstream;
             std::string validation_error;
+            std::string requested_asr_language;
             if (asr_task) {
                 const auto model_header = request["X-LAR-Model"];
                 const auto language_header = request["X-LAR-Language"];
                 AsrTranscriptionRequest task_request;
                 task_request.model_id.assign(model_header.data(), model_header.size());
                 task_request.language.assign(language_header.data(), language_header.size());
+                requested_asr_language = task_request.language;
                 task_request.wav_bytes = request.body();
                 if (request.body().size() > max_task_audio_input_bytes) {
                     return fail_task(http::status::payload_too_large, "ASR WAV input exceeds the 24 MiB task limit.");
@@ -1910,6 +1912,11 @@ http::response<http::string_body> handle_request(const http::request<http::strin
                     return fail_task(http::status::bad_gateway, validation_error.empty()
                         ? "audio.cpp ASR request failed." : validation_error);
                 }
+                // audio.cpp's standard transcription response may omit the
+                // language field even when the request explicitly supplied
+                // one. Preserve that caller-selected language in our normalized
+                // response; this is the requested language, not a detected one.
+                if (task_result.language.empty()) task_result.language = requested_asr_language;
                 activity_jobs.succeed(operation_id, "Local ASR transcription completed");
                 const auto model_header = request["X-LAR-Model"];
                 std::string json = "{\"task\":\"asr.transcribe\",\"engine\":\"audio.cpp\",\"model_id\":" +

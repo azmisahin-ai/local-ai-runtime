@@ -108,6 +108,8 @@ def main() -> None:
             assert status == 200 and result.get("task") == "asr.transcribe", result
             assert result.get("engine") == "audio.cpp" and result.get("model_id") == "qwen3-asr", result
             assert result.get("language") == "tr" and result.get("text") == "Merhaba dünya", result
+            # The fake upstream deliberately omits language. The normalized
+            # API must return the caller's explicit requested language.
             assert "application/json" in content_type
 
             status, body, content_type = request(

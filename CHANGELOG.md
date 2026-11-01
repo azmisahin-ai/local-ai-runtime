@@ -1,3 +1,13 @@
+## Unreleased — experimental Windows audio.cpp Turkish ASR pilot
+
+- Add a separately managed `audio.cpp` v0.9.3 task engine with fail-closed, exact-pinned Windows x64 CPU and CUDA 13.3 server/runtime package sets; keep it separate from the Chat engine adapter and default Chat selection.
+- Add typed ASR/TTS API contracts, safe bounded WAV handling, model/language token validation, Activity task records, and Chat isolation.
+- Pin Qwen3-ASR 0.6B Q8_0 to an immutable model revision with exact file size, SHA-256 and Apache-2.0 license acknowledgement; register the verified model in managed audio.cpp configs without re-downloading an already verified file.
+- Fix Windows atomic replacement of the audio.cpp model config by closing the input stream before replacing the file.
+- Preserve the explicitly requested ASR language in the normalized response when audio.cpp omits its optional `language` field; the fallback describes the requested language, not automatic language detection.
+- Add `scripts/Test-TurkishAsrAcceptance.ps1` for local five-utterance word-error-rate evaluation and reuse of identical WAV fixtures across CPU and CUDA.
+- Windows x64 manual pilot: real Qwen3-ASR transcriptions completed on CPU and CUDA; NVIDIA observed the audio.cpp process as a compute process. One controlled short sample produced 25% WER on both backends. Treat Turkish ASR as experimental and review transcripts. Real TTS output has not been validated and is not advertised as available.
+
 ## Unreleased — Markdown entity compatibility and language-consistent replies
 
 - Decode a small, explicit set of named and numeric HTML character references before Markdown tokenization, so references such as `&#x20;` render as their intended characters instead of leaking into assistant text.
