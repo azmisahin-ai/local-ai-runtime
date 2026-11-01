@@ -660,7 +660,7 @@ std::string activity_snapshot_json(const std::vector<EngineStatus>& engines,
                 const bool cancellable = component_cancellable || operation_cancellable;
                 const bool active = cancellable || state == "running";
                 if (active) ++active_jobs;
-                const bool runtime_operation = kind == "engine-start" || kind == "engine-stop" || kind == "inference";
+                const bool runtime_operation = kind == "engine-start" || kind == "engine-stop" || kind == "inference" || kind == "audio-task";
                 const std::string item_type = runtime_operation ? "operation" : (kind == "update" ? "update" : "component");
                 if (!first) out << ',';
                 first = false;

@@ -170,6 +170,10 @@ if(LAR_BUILD_TESTS)
                 COMMAND "${NODE_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models_ui_contract.js"
             )
             add_test(
+                NAME lar_audio_workspace_contract
+                COMMAND "${NODE_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/audio_workspace_contract.js"
+            )
+            add_test(
                 NAME lar_chat_stream_contract
                 COMMAND "${NODE_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/chat_stream_contract.js"
             )

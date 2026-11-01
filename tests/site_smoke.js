@@ -122,7 +122,7 @@ async function main() {
   assert(siteHtml.includes('Start-LocalAIRuntime.cmd') && siteHtml.includes('Start-LocalAIRuntime.command'), 'site should explain the platform launchers');
   assert(siteHtml.includes('Moving from the portable archive:'), 'site should explain migration from a portable package to the installed desktop app');
   assert(dashboardHtml.includes('id="check-updates"'), 'dashboard should expose a manual update check');
-  for (const view of ['overview', 'chat', 'models', 'activity', 'settings']) {
+  for (const view of ['overview', 'chat', 'audio', 'models', 'activity', 'settings']) {
     assert(dashboardHtml.includes(`id="view-${view}"`) && dashboardHtml.includes(`data-view-target="${view}"`), `dashboard should expose the ${view} workspace`);
   }
   assert(dashboardHtml.includes('id="language-select"') && dashboardScript.includes('/locales/'), 'dashboard should expose persisted English/Turkish language selection');

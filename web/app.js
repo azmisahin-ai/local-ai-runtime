@@ -77,6 +77,23 @@ const firstRunProgressLabel = document.querySelector('#first-run-progress-label'
 const firstRunStatus = document.querySelector('#first-run-status');
 const firstRunDismissButton = document.querySelector('#first-run-dismiss');
 const onboardingShowButton = document.querySelector('#onboarding-show');
+const audioEngineState = document.querySelector('#audio-engine-state');
+const audioEngineDetail = document.querySelector('#audio-engine-detail');
+const audioModelSelect = document.querySelector('#audio-model-select');
+const audioLanguageSelect = document.querySelector('#audio-language-select');
+const audioFileInput = document.querySelector('#audio-file-input');
+const audioDropzone = document.querySelector('#audio-dropzone');
+const audioFileSummary = document.querySelector('#audio-file-summary');
+const audioTranscribeButton = document.querySelector('#audio-transcribe');
+const audioProgress = document.querySelector('#audio-progress');
+const audioTaskStatus = document.querySelector('#audio-task-status');
+const audioTranscript = document.querySelector('#audio-transcript');
+const audioResultMeta = document.querySelector('#audio-result-meta');
+const audioCopyButton = document.querySelector('#audio-copy');
+const audioDownloadButton = document.querySelector('#audio-download');
+const audioRefreshButton = document.querySelector('#audio-refresh');
+const audioOpenModelsButton = document.querySelector('#audio-open-models');
+const audioOpenActivityButton = document.querySelector('#audio-open-activity');
 
 const SUPPORTED_LOCALES = ['en', 'tr'];
 const CHAT_HISTORY_KEY = 'lar.chat.history.v1';
@@ -87,6 +104,7 @@ const MAX_CHAT_CONTEXT_MESSAGES = 24;
 const VIEW_COPY_KEYS = {
   overview: ['page.overview.title', 'page.overview.description'],
   chat: ['page.chat.title', 'page.chat.description'],
+  audio: ['page.audio.title', 'page.audio.description'],
   models: ['page.models.title', 'page.models.description'],
   activity: ['page.activity.title', 'page.activity.description'],
   settings: ['page.settings.title', 'page.settings.description'],
@@ -102,6 +120,11 @@ let activeAssistantMessageElement = null;
 let hardwareInventoryLoaded = false;
 let lastHardwareSnapshot = null;
 let engineSnapshot = [];
+let selectedAudioFile = null;
+let selectedAudioModelId = '';
+let audioTaskController = null;
+let audioTaskRunning = false;
+let lastAudioTranscript = '';
 let runtimeProfile = null;
 let runtimeProfileDraft = { engine_component_id: '', model_component_id: '', context_size: 2048 };
 let runtimeProfileDraftDirty = false;
@@ -248,6 +271,7 @@ async function setLocale(locale) {
     applyLocale();
     renderCatalog();
     renderChatWorkspace();
+    renderAudioWorkspace();
     updateFirstRunGuide();
     if (changed) {
       void refreshEngines();
@@ -294,6 +318,9 @@ function setActiveView(view, updateHash = true) {
     void refreshActivitySnapshot();
   } else if (view === 'models') {
     void refreshCatalog();
+  } else if (view === 'audio') {
+    void refreshCatalog();
+    void refreshEngines();
   }
 }
 
@@ -1244,12 +1271,14 @@ async function refreshCatalog() {
     updateFirstRunGuide();
     if (modelCountBadge) { modelCountBadge.textContent = String(installedModels); modelCountBadge.hidden = installedModels === 0; }
     renderCatalog();
+    renderAudioWorkspace();
     await refreshRuntimeProfile();
   } catch (error) {
     catalogItems = [];
     renderCatalog();
     catalogList.replaceChildren(make('div', 'empty', translation('models.catalogCouldNotLoad', 'Could not load the component catalog.')));
     catalogError.textContent = formatError(error);
+    renderAudioWorkspace();
   } finally {
     catalogRefreshButton.disabled = false;
   }
@@ -1290,6 +1319,7 @@ function downloadJobCard(job) {
     'engine-start': translation('activity.operation.engineStart', 'Start engine'),
     'engine-stop': translation('activity.operation.engineStop', 'Stop engine'),
     inference: translation('activity.operation.inference', 'Chat inference'),
+    'audio-task': translation('activity.operation.audioTask', 'Audio transcription'),
   };
   const isOperation = Object.prototype.hasOwnProperty.call(operationTitles, job.kind);
   const jobTitle = operationTitles[job.kind] || (job.item_id === 'runtime-update' ? translation('activity.runtimeUpdate', 'Local AI Runtime update') : job.item_id);
@@ -1923,6 +1953,7 @@ async function refreshEngines() {
       if (overviewRuntimeDetail) overviewRuntimeDetail.textContent = translation('engine.noChatEngine', 'No chat engine is configured');
       if (overviewModelState) overviewModelState.textContent = translation('engine.noModel', 'No model yet');
       if (overviewModelDetail) overviewModelDetail.textContent = translation('overview.modelDetail');
+      renderAudioWorkspace();
       return;
     }
     for (const engine of result.data) engineList.append(engineCard(engine));
@@ -1953,6 +1984,7 @@ async function refreshEngines() {
     else if (defaultChat.ready) chatReadiness.textContent = translation('engine.chatReady', 'Model server ready. Chat requests stay on this machine.');
     else if (defaultChat.status === 'running') chatReadiness.textContent = translation('engine.chatLoading', 'The model is loading or the server is not ready yet.');
     else chatReadiness.textContent = translation('chat.startEngineFirst', 'Your profile is ready. Start the engine from Activity to continue.');
+    renderAudioWorkspace();
   } catch (error) {
     activeChatEngineReady = false;
     if (chatSetupActions) chatSetupActions.hidden = false;
@@ -1961,7 +1993,332 @@ async function refreshEngines() {
     engineList.replaceChildren(make('div', 'empty', translation('engine.loadFailed', 'Could not load engine status.')));
     gpuObservationButton.disabled = true;
     renderRuntimeProfile();
+    renderAudioWorkspace();
   }
+}
+
+function audioEngineStatus() {
+  return engineSnapshot.find((engine) => engine && engine.id === 'audio-cpp' &&
+    Array.isArray(engine.capabilities) && engine.capabilities.includes('asr.transcribe')) || null;
+}
+
+function installedAudioAsrModels() {
+  return catalogItems.filter((item) => item && item.type === 'model' && item.installed &&
+    Array.isArray(item.tasks) && item.tasks.includes('asr.transcribe'));
+}
+
+function audioBackendLabel(engine) {
+  if (!engine) return translation('audio.backendUnknown', 'Not configured');
+  if (engine.backend_package === 'cuda13-package') return translation('audio.backendCuda', 'CUDA 13.3 package');
+  if (engine.backend_package === 'cpu-package') return translation('audio.backendCpu', 'CPU package');
+  return translation('audio.backendUnknown', 'Backend not identified');
+}
+
+function renderAudioWorkspace() {
+  if (!audioEngineState || !audioModelSelect || !audioTranscribeButton) return;
+  const engine = audioEngineStatus();
+  const models = installedAudioAsrModels();
+  const preferredModel = models.find((item) => item.id === selectedAudioModelId) || models[0] || null;
+  const currentModelId = preferredModel?.id || '';
+  if (audioModelSelect.value !== currentModelId || audioModelSelect.options.length !== models.length + 1) {
+    audioModelSelect.replaceChildren();
+    const placeholder = make('option', '', models.length
+      ? translation('audio.selectModel', 'Select an installed ASR model')
+      : translation('audio.noModel', 'No installed ASR model'));
+    placeholder.value = '';
+    audioModelSelect.append(placeholder);
+    for (const model of models) {
+      const option = make('option', '', `${model.name || model.id}${model.model_profile?.quantization ? ` · ${model.model_profile.quantization}` : ''}`);
+      option.value = model.id;
+      audioModelSelect.append(option);
+    }
+    audioModelSelect.value = currentModelId;
+    selectedAudioModelId = currentModelId;
+  }
+  audioModelSelect.disabled = audioTaskRunning || models.length === 0;
+  audioLanguageSelect.disabled = audioTaskRunning;
+  audioFileInput.disabled = audioTaskRunning;
+  audioDropzone?.classList.toggle('disabled', audioTaskRunning);
+
+  const packageItems = catalogItems.filter((item) => item && item.type === 'engine' &&
+    String(item.id || '').startsWith('audio.cpp-') && item.installed);
+  audioOpenModelsButton.textContent = (!engine || !engine.executable_configured || !models.length)
+    ? translation('audio.installComponents', 'Install audio components')
+    : translation('audio.openModels', 'Open Models');
+  audioOpenActivityButton.hidden = !engine;
+  if (!engine || !engine.executable_configured) {
+    audioEngineState.textContent = translation('audio.engineMissing', 'Audio runtime not installed');
+    audioEngineDetail.textContent = packageItems.length
+      ? translation('audio.engineRegistering', 'An audio package is installed; refresh status or check Activity for setup details.')
+      : translation('audio.engineInstallHint', 'Install an audio.cpp CPU or CUDA runtime package from Models.');
+  } else if (!models.length) {
+    audioEngineState.textContent = translation('audio.modelMissing', 'Speech model not installed');
+    audioEngineDetail.textContent = formatMessage('audio.modelInstallHint', { backend: audioBackendLabel(engine) }, `Engine package: ${audioBackendLabel(engine)}. Install a reviewed ASR model from Models.`);
+  } else if (engine.ready) {
+    audioEngineState.textContent = translation('audio.engineReady', 'Ready to transcribe');
+    audioEngineDetail.textContent = formatMessage('audio.engineReadyDetail', { backend: audioBackendLabel(engine), model: preferredModel?.name || preferredModel?.id || '' }, `${audioBackendLabel(engine)} · ${preferredModel?.name || preferredModel?.id || ''}`);
+  } else if (engine.status === 'running') {
+    audioEngineState.textContent = translation('audio.engineLoading', 'Audio engine is starting');
+    audioEngineDetail.textContent = translation('audio.engineLoadingDetail', 'The local server is loading. Transcription will start when it reports Ready.');
+  } else if (engine.status === 'failed') {
+    audioEngineState.textContent = translation('audio.engineFailed', 'Audio engine failed');
+    audioEngineDetail.textContent = engine.last_error || translation('audio.engineFailedDetail', 'Open Activity and inspect the audio.cpp engine details.');
+  } else {
+    audioEngineState.textContent = translation('audio.engineStopped', 'Installed · starts when needed');
+    audioEngineDetail.textContent = formatMessage('audio.engineStoppedDetail', { backend: audioBackendLabel(engine) }, `${audioBackendLabel(engine)} · The engine starts automatically when you transcribe.`);
+  }
+
+  audioTranscribeButton.disabled = audioTaskRunning || !selectedAudioFile || !engine?.executable_configured || !preferredModel;
+  audioProgress.hidden = !audioTaskRunning;
+  audioCopyButton.disabled = !String(audioTranscript.value || '').trim() || audioTaskRunning;
+  audioDownloadButton.disabled = !String(audioTranscript.value || '').trim() || audioTaskRunning;
+  if (!audioTaskRunning && !lastAudioTranscript && !selectedAudioFile) {
+    audioTaskStatus.className = 'status-message';
+    audioTaskStatus.textContent = (!engine || !engine.executable_configured || !models.length)
+      ? translation('audio.installPrompt', 'Install an audio.cpp runtime and an ASR model in Models to begin.')
+      : translation('audio.chooseFilePrompt', 'Choose a WAV file, then select Transcribe audio.');
+  }
+}
+
+function openAudioCatalog() {
+  activeCatalogFilter = 'all';
+  activeCatalogTask = 'speech';
+  catalogSearch.value = '';
+  setActiveView('models');
+  renderCatalog();
+  const target = document.querySelector('#catalog-panel');
+  if (target) target.scrollIntoView({ block: 'start', behavior: 'auto' });
+}
+
+function setAudioTaskStatus(message, state = '') {
+  audioTaskStatus.className = state === 'success' ? 'status-message success'
+    : state === 'failure' ? 'status-message failure' : 'status-message';
+  audioTaskStatus.textContent = message;
+}
+
+async function waitForAudioEngineReady(timeoutMs = 180000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const result = await api('/v1/engines');
+    engineSnapshot = Array.isArray(result.data) ? result.data : [];
+    const engine = audioEngineStatus();
+    renderAudioWorkspace();
+    if (!engine) throw new Error(translation('audio.engineMissing', 'Audio runtime not installed'));
+    if (engine.ready) return engine;
+    if (engine.status === 'failed') throw new Error(engine.last_error || translation('audio.engineFailedDetail', 'The audio engine failed to start. Open Activity for details.'));
+    setAudioTaskStatus(engine.status === 'running'
+      ? translation('audio.waitingReady', 'Audio engine started. Waiting for Ready status…')
+      : translation('audio.startingEngine', 'Starting the local audio engine…'));
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  throw new Error(translation('audio.engineTimeout', 'The audio engine did not become ready in time. Open Activity and inspect its status.'));
+}
+
+async function waitForEngineStopped(id, timeoutMs = 60000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const result = await api('/v1/engines');
+    engineSnapshot = Array.isArray(result.data) ? result.data : [];
+    const engine = engineSnapshot.find((item) => item.id === id);
+    if (!engine || engine.status === 'stopped' || engine.status === 'failed') return;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error(formatMessage('audio.engineStopTimeout', { id }, `Could not stop ${id} before starting the audio task.`));
+}
+
+async function prepareAudioEngine(onEngineStopped = () => {}) {
+  let result = await api('/v1/engines');
+  engineSnapshot = Array.isArray(result.data) ? result.data : [];
+  let engine = audioEngineStatus();
+  if (!engine || !engine.executable_configured) {
+    throw new Error(translation('audio.engineInstallHint', 'Install an audio.cpp CPU or CUDA runtime package from Models.'));
+  }
+
+  // The target machine has 6 GiB VRAM / 16 GiB RAM. Serialize managed
+  // inference engines rather than silently loading ASR beside an active Chat model.
+  const otherRunning = engineSnapshot.filter((item) => item.id !== engine.id && item.status === 'running');
+  if (otherRunning.length) {
+    const names = otherRunning.map((item) => item.display_name || item.id).join(', ');
+    const accepted = window.confirm(formatMessage('audio.stopOtherEnginesConfirm', { names }, `To keep local memory available, stop these running engines before transcription? ${names}`));
+    if (!accepted) throw new Error(translation('audio.stopOtherEnginesCanceled', 'Transcription canceled. Stop the other engine in Activity, then try again.'));
+    for (const other of otherRunning) {
+      setAudioTaskStatus(formatMessage('audio.stoppingOtherEngine', { name: other.display_name || other.id }, `Stopping ${other.display_name || other.id}…`));
+      await api(`/v1/engines/${encodeURIComponent(other.id)}/stop`, { method: 'POST', body: '{}' });
+      await waitForEngineStopped(other.id);
+      onEngineStopped(other.display_name || other.id);
+    }
+  }
+
+  result = await api('/v1/engines');
+  engineSnapshot = Array.isArray(result.data) ? result.data : [];
+  engine = audioEngineStatus();
+  if (!engine) throw new Error(translation('audio.engineMissing', 'Audio runtime not installed'));
+  if (!engine.ready && engine.status !== 'running') {
+    setAudioTaskStatus(translation('audio.startingEngine', 'Starting the local audio engine…'));
+    await api('/v1/engines/audio-cpp/start', { method: 'POST', body: '{}' });
+  }
+  if (!engine.ready) engine = await waitForAudioEngineReady();
+  await refreshEngines();
+  return engine;
+}
+
+function validateSelectedWav(file, bytes) {
+  if (!file || !bytes || bytes.byteLength < 12) throw new Error(translation('audio.invalidWav', 'Choose a valid WAV audio file.'));
+  if (file.size > 24 * 1024 * 1024) throw new Error(translation('audio.fileTooLarge', 'The WAV file exceeds the 24 MiB limit.'));
+  const name = String(file.name || '').toLowerCase();
+  if (!name.endsWith('.wav')) throw new Error(translation('audio.wavOnly', 'Only WAV files are accepted in this preview.'));
+  const view = new DataView(bytes);
+  const riff = String.fromCharCode(view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3));
+  const wave = String.fromCharCode(view.getUint8(8), view.getUint8(9), view.getUint8(10), view.getUint8(11));
+  const declaredSize = view.getUint32(4, true) + 8;
+  if (riff !== 'RIFF' || wave !== 'WAVE' || declaredSize !== bytes.byteLength) {
+    throw new Error(translation('audio.invalidWav', 'Choose a valid WAV audio file.'));
+  }
+}
+
+function setSelectedAudioFile(file) {
+  selectedAudioFile = file || null;
+  // Keep the File object in memory but clear the picker so the same WAV can
+  // be selected again after a failed or completed transcription.
+  if (audioFileInput) audioFileInput.value = '';
+  lastAudioTranscript = '';
+  if (audioTranscript) audioTranscript.value = '';
+  if (audioResultMeta) audioResultMeta.textContent = translation('audio.resultEmpty', 'No transcription yet');
+  if (!selectedAudioFile) {
+    audioFileSummary.textContent = translation('audio.noFile', 'No audio file selected.');
+  } else {
+    audioFileSummary.textContent = `${selectedAudioFile.name} · ${formatBytes(selectedAudioFile.size)}`;
+  }
+  setAudioTaskStatus(selectedAudioFile
+    ? translation('audio.fileSelected', 'WAV selected. Ready to transcribe when the engine and model are installed.')
+    : translation('audio.chooseFilePrompt', 'Choose a WAV file, then select Transcribe audio.'));
+  renderAudioWorkspace();
+}
+
+async function runAudioTranscription() {
+  if (audioTaskRunning) return;
+  const file = selectedAudioFile;
+  const modelId = audioModelSelect.value;
+  const language = audioLanguageSelect.value;
+  if (!file) {
+    setAudioTaskStatus(translation('audio.chooseFilePrompt', 'Choose a WAV file, then select Transcribe audio.'), 'failure');
+    return;
+  }
+  if (!modelId) {
+    setAudioTaskStatus(translation('audio.noModel', 'No installed ASR model'), 'failure');
+    return;
+  }
+
+  audioTaskRunning = true;
+  audioTranscribeButton.disabled = true;
+  audioCopyButton.disabled = true;
+  audioDownloadButton.disabled = true;
+  audioModelSelect.disabled = true;
+  audioLanguageSelect.disabled = true;
+  audioFileInput.disabled = true;
+  audioDropzone.classList.add('disabled');
+  audioProgress.hidden = false;
+  audioProgress.removeAttribute('value');
+  const startedAt = performance.now();
+  const stoppedEngineNames = [];
+  let inputBytes = 0;
+  let controller = null;
+  let timeoutId = null;
+  try {
+    setAudioTaskStatus(translation('audio.readingFile', 'Reading the WAV file…'));
+    const wavBytes = await file.arrayBuffer();
+    inputBytes = wavBytes.byteLength;
+    validateSelectedWav(file, wavBytes);
+    await prepareAudioEngine((name) => stoppedEngineNames.push(name));
+
+    setAudioTaskStatus(translation('audio.transcribing', 'Transcribing locally. This may take a little while for the first request…'));
+    controller = new AbortController();
+    audioTaskController = controller;
+    timeoutId = window.setTimeout(() => controller.abort(), 15 * 60 * 1000);
+    const response = await fetch('/v1/tasks/asr/transcribe', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'audio/wav',
+        'X-LAR-Model': modelId,
+        'X-LAR-Language': language,
+      },
+      body: wavBytes,
+      signal: controller.signal,
+      cache: 'no-store',
+    });
+    const contentType = response.headers.get('content-type') || '';
+    const result = contentType.includes('application/json') ? await response.json() : { error: { message: await response.text() } };
+    if (!response.ok) {
+      const message = result?.error?.message || translation('audio.taskFailed', 'The transcription request failed.');
+      const error = new Error(message);
+      error.httpStatus = response.status;
+      throw error;
+    }
+    if (result?.task !== 'asr.transcribe' || typeof result.text !== 'string' || !result.text.trim()) {
+      throw new Error(translation('audio.emptyResult', 'The audio engine returned no transcript text.'));
+    }
+    audioTranscript.value = result.text;
+    lastAudioTranscript = result.text;
+    const elapsedSeconds = ((performance.now() - startedAt) / 1000).toFixed(2);
+    audioResultMeta.textContent = formatMessage('audio.resultMeta', { model: modelId, seconds: elapsedSeconds }, `${modelId} · ${elapsedSeconds} s`);
+    const successMessage = formatMessage('audio.taskSucceeded', { seconds: elapsedSeconds }, `Transcription completed in ${elapsedSeconds} s.`);
+    const engineNote = stoppedEngineNames.length
+      ? ` ${formatMessage('audio.enginesRemainStopped', { names: stoppedEngineNames.join(', ') }, `Stopped engines remain off: ${stoppedEngineNames.join(', ')}. Start them again from Activity when you return to Chat.`)}`
+      : '';
+    setAudioTaskStatus(successMessage + engineNote, 'success');
+    reportDiagnosticEvent('ui.audio.asr.completed', `model=${modelId}; language=${language || 'auto'}; elapsed_ms=${Math.round(performance.now() - startedAt)}; input_bytes=${inputBytes}`);
+  } catch (error) {
+    const detail = error?.name === 'AbortError'
+      ? translation('audio.taskTimeout', 'The transcription was canceled or timed out.')
+      : String(error?.message || error);
+    const engineNote = stoppedEngineNames.length
+      ? ` ${formatMessage('audio.enginesRemainStopped', { names: stoppedEngineNames.join(', ') }, `Stopped engines remain off: ${stoppedEngineNames.join(', ')}. Start them again from Activity when you return to Chat.`)}`
+      : '';
+    setAudioTaskStatus(formatError(detail) + engineNote, 'failure');
+    reportDiagnosticEvent('ui.audio.asr.failed', `model=${modelId}; language=${language || 'auto'}; elapsed_ms=${Math.round(performance.now() - startedAt)}; input_bytes=${inputBytes}; http_status=${Number.isInteger(error?.httpStatus) ? error.httpStatus : 0}; error_type=${String(error?.name || 'Error').slice(0, 40)}`);
+  } finally {
+    if (timeoutId !== null) window.clearTimeout(timeoutId);
+    if (audioTaskController === controller) audioTaskController = null;
+    audioTaskRunning = false;
+    audioProgress.hidden = true;
+    audioProgress.setAttribute('value', '0');
+    audioModelSelect.disabled = false;
+    audioLanguageSelect.disabled = false;
+    audioFileInput.disabled = false;
+    audioDropzone.classList.remove('disabled');
+    renderAudioWorkspace();
+    await refreshDownloads();
+    await refreshEngines();
+  }
+}
+
+function copyAudioTranscript() {
+  const value = String(audioTranscript.value || '').trim();
+  if (!value) return;
+  const copied = (typeof navigator.clipboard?.writeText === 'function')
+    ? navigator.clipboard.writeText(value)
+    : Promise.reject(new Error('Clipboard API is unavailable.'));
+  copied.then(() => setAudioTaskStatus(translation('audio.copied', 'Transcript copied to clipboard.'), 'success'))
+    .catch(() => {
+      audioTranscript.focus();
+      audioTranscript.select();
+      const ok = document.execCommand('copy');
+      setAudioTaskStatus(ok ? translation('audio.copied', 'Transcript copied to clipboard.') : translation('audio.copyFailed', 'Select the transcript and copy it manually.'), ok ? 'success' : 'failure');
+    });
+}
+
+function downloadAudioTranscript() {
+  const value = String(audioTranscript.value || '').trim();
+  if (!value) return;
+  const blob = new Blob([value], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = make('a');
+  link.href = url;
+  link.download = 'local-ai-transcript.txt';
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 async function waitForEngineReady(id, timeoutMs = 180000) {
@@ -2653,6 +3010,48 @@ gpuObservationButton.addEventListener('click', async () => {
     await refreshEngines();
   }
 });
+
+audioModelSelect.addEventListener('change', () => {
+  selectedAudioModelId = audioModelSelect.value;
+  renderAudioWorkspace();
+});
+audioFileInput.addEventListener('change', () => setSelectedAudioFile(audioFileInput.files?.[0] || null));
+audioDropzone.addEventListener('click', (event) => {
+  if (event.target !== audioFileInput && !audioTaskRunning) audioFileInput.click();
+});
+audioDropzone.addEventListener('keydown', (event) => {
+  if ((event.key === 'Enter' || event.key === ' ') && !audioTaskRunning) {
+    event.preventDefault();
+    audioFileInput.click();
+  }
+});
+for (const eventName of ['dragenter', 'dragover']) {
+  audioDropzone.addEventListener(eventName, (event) => {
+    event.preventDefault();
+    if (!audioTaskRunning) audioDropzone.classList.add('drag-over');
+  });
+}
+for (const eventName of ['dragleave', 'drop']) {
+  audioDropzone.addEventListener(eventName, (event) => {
+    event.preventDefault();
+    audioDropzone.classList.remove('drag-over');
+    if (eventName === 'drop' && !audioTaskRunning) setSelectedAudioFile(event.dataTransfer?.files?.[0] || null);
+  });
+}
+audioTranscribeButton.addEventListener('click', runAudioTranscription);
+audioCopyButton.addEventListener('click', copyAudioTranscript);
+audioDownloadButton.addEventListener('click', downloadAudioTranscript);
+audioRefreshButton.addEventListener('click', async () => {
+  audioRefreshButton.disabled = true;
+  try {
+    await Promise.all([refreshCatalog(), refreshEngines()]);
+    setAudioTaskStatus(translation('audio.statusRefreshed', 'Audio setup status refreshed.'));
+  } finally {
+    audioRefreshButton.disabled = false;
+  }
+});
+audioOpenModelsButton.addEventListener('click', openAudioCatalog);
+audioOpenActivityButton.addEventListener('click', () => setActiveView('activity'));
 
 hardwareRefreshButton.addEventListener('click', refreshHardware);
 resourcesRefreshButton.addEventListener('click', refreshResources);

@@ -112,6 +112,15 @@ def main() -> None:
             # API must return the caller's explicit requested language.
             assert "application/json" in content_type
 
+            # ASR/TTS tasks are first-class runtime operations in Activity,
+            # not generic component downloads.
+            status, body, _ = request(base + "/v1/activity")
+            activity = json.loads(body)
+            assert status == 200 and any(
+                job.get("kind") == "audio-task" and job.get("type") == "operation"
+                for job in activity.get("data", [])
+            ), activity
+
             status, body, content_type = request(
                 base + "/v1/tasks/asr/transcribe", method="POST", body=wav,
                 headers={"Content-Type": "audio/wav", "X-LAR-Model": "../unsafe", "X-LAR-Language": "tr"},

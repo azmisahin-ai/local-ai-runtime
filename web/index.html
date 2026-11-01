@@ -27,6 +27,9 @@
         <button class="nav-item" type="button" data-view-target="chat">
           <span class="nav-icon" aria-hidden="true">▤</span><span data-i18n="nav.chat">Chat</span>
         </button>
+        <button class="nav-item" type="button" data-view-target="audio">
+          <span class="nav-icon" aria-hidden="true">♫</span><span data-i18n="nav.audio">Speech &amp; audio</span>
+        </button>
         <button class="nav-item" type="button" data-view-target="models">
           <span class="nav-icon" aria-hidden="true">◫</span><span data-i18n="nav.models">Models</span>
           <span class="nav-count" id="model-count" hidden></span>
@@ -142,7 +145,9 @@
               </button>
               <article class="workspace-card planned"><span class="workspace-icon" aria-hidden="true">◈</span><span class="workspace-copy"><strong data-i18n="workspace.image">Image generation</strong><small data-i18n="workspace.imageDescription">Create and edit images</small></span><span class="workspace-state" data-i18n="common.comingSoon">Coming later</span></article>
               <article class="workspace-card planned"><span class="workspace-icon" aria-hidden="true">▧</span><span class="workspace-copy"><strong data-i18n="workspace.vision">Vision &amp; OCR</strong><small data-i18n="workspace.visionDescription">Understand images and documents</small></span><span class="workspace-state" data-i18n="common.comingSoon">Coming later</span></article>
-              <article class="workspace-card planned"><span class="workspace-icon" aria-hidden="true">≋</span><span class="workspace-copy"><strong data-i18n="workspace.audio">Speech &amp; audio</strong><small data-i18n="workspace.audioDescription">Transcribe and work with voice</small></span><span class="workspace-state" data-i18n="common.comingSoon">Coming later</span></article>
+              <button class="workspace-card available" type="button" data-view-target="audio">
+                <span class="workspace-icon" aria-hidden="true">≋</span><span class="workspace-copy"><strong data-i18n="workspace.audio">Speech &amp; audio</strong><small data-i18n="workspace.audioDescription">Transcribe and work with voice</small></span><span class="workspace-state available-state" data-i18n="common.preview">Preview</span>
+              </button>
             </div>
             <p class="hint workspace-footnote" data-i18n="overview.workspaceNote">Only available workspaces are interactive. Planned areas are not presented as working features.</p>
           </section>
@@ -202,6 +207,71 @@
                 <p id="chat-error" class="error" role="status" aria-live="polite"></p>
                 <p class="chat-local-note" data-i18n="chat.localStorageNote">Chat history stays on this device. It is not included in diagnostics.</p>
               </div>
+            </div>
+          </section>
+        </section>
+
+        <section id="view-audio" class="app-view" data-view="audio" aria-labelledby="page-title" hidden>
+          <section class="panel audio-intro-panel">
+            <div class="section-heading">
+              <div><p class="eyebrow" data-i18n="audio.eyebrow">LOCAL SPEECH WORKSPACE</p><h2 data-i18n="audio.title">Speech to text</h2></div>
+              <div class="audio-heading-actions">
+                <button id="audio-refresh" class="button secondary" type="button" data-i18n="common.refresh">Refresh</button>
+                <span class="tag" data-i18n="common.localOnly">Runs on this device</span>
+              </div>
+            </div>
+            <p class="hint" data-i18n="audio.description">Transcribe a WAV recording with a reviewed local audio model. Your recording stays on this computer.</p>
+            <div class="audio-engine-status" aria-live="polite">
+              <div><span class="audio-status-label" data-i18n="audio.engineLabel">Audio engine</span><strong id="audio-engine-state" data-i18n="audio.checking">Checking audio setup…</strong><small id="audio-engine-detail" data-i18n="audio.engineChecking">Checking installed audio.cpp runtime and speech model.</small></div>
+              <div class="audio-engine-actions">
+                <button id="audio-open-models" class="button secondary" type="button" data-i18n="audio.openModels">Open Models</button>
+                <button id="audio-open-activity" class="button ghost" type="button" data-i18n="audio.openActivity">Engine details</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel audio-task-panel" aria-labelledby="audio-asr-title">
+            <div class="section-heading"><div><p class="eyebrow" data-i18n="audio.asrEyebrow">SPEECH RECOGNITION</p><h2 id="audio-asr-title" data-i18n="audio.asrTitle">Transcribe an audio file</h2></div><span class="tag" data-i18n="audio.asrPreview">ASR preview</span></div>
+            <div class="audio-task-grid">
+              <div class="audio-input-column">
+                <label for="audio-model-select" data-i18n="audio.modelLabel">Speech recognition model</label>
+                <select id="audio-model-select"><option value="" data-i18n="audio.noModel">No installed ASR model</option></select>
+                <label for="audio-language-select" data-i18n="audio.languageLabel">Spoken language</label>
+                <select id="audio-language-select">
+                  <option value="tr" data-i18n="audio.languageTurkish">Turkish</option>
+                  <option value="en" data-i18n="audio.languageEnglish">English</option>
+                  <option value="" data-i18n="audio.languageAuto">Auto detect</option>
+                </select>
+                <label for="audio-file-input" data-i18n="audio.fileLabel">WAV audio file</label>
+                <div id="audio-dropzone" class="audio-dropzone" tabindex="0" role="button" aria-controls="audio-file-input" aria-label="Choose a WAV audio file" data-i18n-aria="audio.fileChooseAria">
+                  <input id="audio-file-input" type="file" accept=".wav,audio/wav,audio/x-wav" hidden>
+                  <span class="audio-drop-icon" aria-hidden="true">⇧</span>
+                  <strong data-i18n="audio.dropTitle">Choose or drop a WAV file</strong>
+                  <small data-i18n="audio.dropDescription">WAV only · maximum 24 MiB</small>
+                </div>
+                <p id="audio-file-summary" class="audio-file-summary hint" aria-live="polite" data-i18n="audio.noFile">No audio file selected.</p>
+                <button id="audio-transcribe" class="button primary audio-submit" type="button" disabled data-i18n="audio.transcribe">Transcribe audio</button>
+                <progress id="audio-progress" class="audio-progress" hidden></progress>
+                <p id="audio-task-status" class="status-message" role="status" aria-live="polite" data-i18n="audio.installPrompt">Install an audio.cpp runtime and an ASR model in Models to begin.</p>
+              </div>
+              <div class="audio-result-column">
+                <div class="audio-result-heading"><label for="audio-transcript" data-i18n="audio.resultLabel">Transcript</label><span id="audio-result-meta" class="hint" data-i18n="audio.resultEmpty">No transcription yet</span></div>
+                <textarea id="audio-transcript" rows="14" spellcheck="true" data-i18n-placeholder="audio.resultPlaceholder" placeholder="Your transcript will appear here…" aria-label="Transcription result" data-i18n-aria="audio.resultLabel"></textarea>
+                <div class="audio-result-actions">
+                  <button id="audio-copy" class="button secondary" type="button" disabled data-i18n="audio.copy">Copy text</button>
+                  <button id="audio-download" class="button secondary" type="button" disabled data-i18n="audio.downloadText">Download TXT</button>
+                </div>
+              </div>
+            </div>
+            <p class="audio-privacy-note hint" data-i18n="audio.privacy">Audio is sent only to the local runtime on 127.0.0.1. It is not uploaded to a cloud service or included in diagnostics.</p>
+          </section>
+
+          <section class="panel audio-next-panel">
+            <div class="section-heading"><div><p class="eyebrow" data-i18n="audio.nextEyebrow">NEXT AUDIO TASKS</p><h2 data-i18n="audio.nextTitle">More audio tools are coming</h2></div><span class="tag" data-i18n="common.comingSoon">Coming later</span></div>
+            <div class="audio-next-grid">
+              <article><strong data-i18n="audio.ttsTitle">Text to speech</strong><p class="hint" data-i18n="audio.ttsDescription">Generate a Turkish voice from text with a separately reviewed TTS model.</p></article>
+              <article><strong data-i18n="audio.voiceTitle">Voice and speaker tools</strong><p class="hint" data-i18n="audio.voiceDescription">Speaker separation, voice conversion and related tools will appear after their models pass installation and task checks.</p></article>
+              <article><strong data-i18n="audio.processingTitle">Audio processing</strong><p class="hint" data-i18n="audio.processingDescription">Noise reduction and source separation will be added as distinct, model-aware workflows.</p></article>
             </div>
           </section>
         </section>
