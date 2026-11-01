@@ -594,5 +594,7 @@
   "profile.openActivity": "Continue to Activity",
   "profile.draftNotApplied": "Your selection has changed but is not active yet. Apply the profile before starting the engine.",
   "catalog.audio.cpp-v0.9.3-cpu.description": "Installs the pinned audio.cpp v0.9.3 Windows x64 CPU task server. Model weights are separate; this CPU profile is for portability and testing.",
-  "catalog.audio.cpp-v0.9.3-cpu.limits": "The native CPU server passed startup and lifecycle checks, but real ASR/TTS tasks and transcription quality are not validated. No speech model is included."
+  "catalog.audio.cpp-v0.9.3-cpu.limits": "The native CPU server passed startup and lifecycle checks, but real ASR/TTS tasks and transcription quality are not validated. No speech model is included.",
+  "catalog.qwen3-asr-0.6b-q8_0.description": "Qwen3-ASR 0.6B Q8_0 is an offline audio.cpp GGUF speech-recognition model. Use an explicit Turkish language hint (tr) for the Turkish transcription workflow.",
+  "catalog.qwen3-asr-0.6b-q8_0.limits": "The pinned model package and installation integrity are verified by exact size and SHA-256. Real CPU/CUDA transcription, output quality, memory use and performance have not yet been validated on the target PC."
 }

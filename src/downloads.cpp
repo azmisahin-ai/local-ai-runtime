@@ -82,6 +82,7 @@ constexpr std::uint64_t kMaximumArchiveExpandedBytes = 3ULL * 1024ULL * 1024ULL 
 constexpr std::uint64_t kMaximumReleaseAssetBytes = 2ULL * 1024ULL * 1024ULL * 1024ULL;
 constexpr std::uint64_t kMaximumRuntimeUpdateBytes = 256ULL * 1024ULL * 1024ULL;
 constexpr std::size_t kMaximumOutstandingInstallJobs = 16;
+constexpr char kQwen3AsrModelId[] = "qwen3-asr-0.6b-q8_0";
 
 unsigned short select_loopback_port() {
     boost::asio::io_context io;
@@ -2125,6 +2126,9 @@ void DownloadManager::download_model(const std::shared_ptr<Job>& job) {
                 current.phase = "Model already installed and verified";
             });
             log_diagnostic("INFO", "model.install.already_verified", "job=" + job->id);
+            if (job->item_id == kQwen3AsrModelId) {
+                configure_audio_cpp_asr_model_if_available(final_path);
+            }
             // Installing or re-verifying a model must never change the active chat model.
             // Selection is an explicit Runtime Profile action.
             return;
@@ -2188,6 +2192,9 @@ void DownloadManager::download_model(const std::shared_ptr<Job>& job) {
         throw std::runtime_error("The model downloaded completely and passed SHA-256 verification, but Windows could not move it into place. The verified staging file was kept; close programs that may be using this GGUF file and select Download & install again. It will retry finalization without downloading the model again. Details: " + os_error);
     }
     mutate_job(job, [&](DownloadManager::Job& current) { current.installed_path = path_to_utf8(final_path); });
+    if (job->item_id == kQwen3AsrModelId) {
+        configure_audio_cpp_asr_model_if_available(final_path);
+    }
     log_diagnostic("INFO", "model.install.finalized", "job=" + job->id + " bytes=" + std::to_string(model.size_bytes));
     // Downloading a model only installs a verified artifact. It does not silently
     // replace the model currently selected for Chat.
@@ -2448,7 +2455,6 @@ void DownloadManager::download_audio_cpp_release_set(const std::shared_ptr<Job>&
             output.flush();
             if (!output) throw std::runtime_error("Could not finish writing the audio.cpp server configuration.");
         }
-
         std::filesystem::rename(merged, final_dir, fs_error);
         if (fs_error) throw std::runtime_error("Could not atomically activate the verified audio.cpp package: " + fs_error.message());
         try {
@@ -2481,6 +2487,91 @@ void DownloadManager::download_audio_cpp_release_set(const std::shared_ptr<Job>&
     }
 }
 
+void DownloadManager::configure_audio_cpp_asr_model(const std::filesystem::path& config_file,
+                                                       const std::filesystem::path& model_file) {
+    const auto& model = pinned_model_component(kQwen3AsrModelId);
+    std::error_code fs_error;
+    if (!std::filesystem::is_regular_file(model_file, fs_error) || fs_error) {
+        throw std::runtime_error("The Qwen3-ASR GGUF file is missing; audio.cpp model registration was not changed.");
+    }
+    const auto actual_size = std::filesystem::file_size(model_file, fs_error);
+    if (fs_error || actual_size != model.size_bytes || sha256_file(model_file) != model.sha256 ||
+        !has_gguf_header(model_file)) {
+        throw std::runtime_error("The Qwen3-ASR model failed its exact byte-size, SHA-256 or GGUF verification; audio.cpp model registration was not changed.");
+    }
+    if (!std::filesystem::is_regular_file(config_file, fs_error) || fs_error) {
+        throw std::runtime_error("The managed audio.cpp server configuration is missing; the ASR model was not registered.");
+    }
+
+    std::ifstream input(config_file, std::ios::binary);
+    if (!input) throw std::runtime_error("Could not read the managed audio.cpp server configuration.");
+    std::ostringstream contents;
+    contents << input.rdbuf();
+    if (!input.good() && !input.eof()) {
+        throw std::runtime_error("Could not read the complete managed audio.cpp server configuration.");
+    }
+    const auto absolute_model_path = std::filesystem::absolute(model_file, fs_error).lexically_normal();
+    if (fs_error) throw std::runtime_error("Could not resolve the installed Qwen3-ASR model path: " + fs_error.message());
+    const auto updated_json = register_audio_cpp_asr_model_config_json(
+        contents.str(), kQwen3AsrModelId, path_to_utf8(absolute_model_path));
+
+    auto temporary = config_file;
+    temporary += ".lar-tmp";
+    {
+        std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+        if (!output) throw std::runtime_error("Could not create a temporary audio.cpp config for ASR model registration.");
+        output.write(updated_json.data(), static_cast<std::streamsize>(updated_json.size()));
+        output.flush();
+        if (!output) {
+            output.close();
+            std::filesystem::remove(temporary, fs_error);
+            throw std::runtime_error("Could not write the complete audio.cpp config for ASR model registration.");
+        }
+    }
+#ifdef _WIN32
+    if (!MoveFileExW(temporary.c_str(), config_file.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        const auto code = GetLastError();
+        std::filesystem::remove(temporary, fs_error);
+        throw std::runtime_error("Could not atomically update the audio.cpp server config for Qwen3-ASR; Windows error=" + std::to_string(code));
+    }
+#else
+    std::filesystem::rename(temporary, config_file, fs_error);
+    if (fs_error) {
+        const auto reason = fs_error.message();
+        std::filesystem::remove(temporary, fs_error);
+        throw std::runtime_error("Could not atomically update the audio.cpp server config for Qwen3-ASR: " + reason);
+    }
+#endif
+    log_diagnostic("INFO", "model.audio_cpp.asr_registered",
+                   "model_id=" + std::string(kQwen3AsrModelId) + " task=asr mode=offline");
+}
+
+void DownloadManager::configure_audio_cpp_asr_model_if_available(const std::filesystem::path& model_file) {
+    const auto configs = engines_.configurations();
+    const auto engine = std::find_if(configs.begin(), configs.end(), [](const EngineConfig& item) {
+        return item.id == "audio-cpp";
+    });
+    if (engine == configs.end() || engine->executable_path.empty() ||
+        !std::filesystem::is_regular_file(engine->executable_path)) {
+        return;
+    }
+
+    const auto statuses = engines_.statuses();
+    const auto status = std::find_if(statuses.begin(), statuses.end(), [](const EngineStatus& item) {
+        return item.config.id == "audio-cpp";
+    });
+    if (status != statuses.end() && status->state == ProcessState::running) {
+        throw std::runtime_error("Stop the managed audio.cpp engine before installing/registering a speech model, then retry the model install.");
+    }
+
+    const auto config_arg = std::find(engine->args.begin(), engine->args.end(), "--config");
+    if (config_arg == engine->args.end() || std::next(config_arg) == engine->args.end()) {
+        throw std::runtime_error("The configured audio.cpp engine does not contain its managed --config path; refusing to guess a configuration file.");
+    }
+    const auto config_file = path_from_utf8(*std::next(config_arg));
+    configure_audio_cpp_asr_model(config_file, model_file);
+}
+
 void DownloadManager::configure_audio_cpp_engine(const std::filesystem::path& executable,
                                                  const std::filesystem::path& config_file,
                                                  const std::string& backend,
@@ -2500,6 +2591,15 @@ void DownloadManager::configure_audio_cpp_engine(const std::filesystem::path& ex
         std::filesystem::exists(existing->executable_path)) {
         throw std::runtime_error("An audio.cpp engine is already configured; refusing to replace user-owned engine settings.");
     }
+    const auto& asr_model = pinned_model_component(kQwen3AsrModelId);
+    const auto existing_asr_model = existing_model_component_path(user_data_directory(), asr_model);
+    std::error_code model_error;
+    if (std::filesystem::is_regular_file(existing_asr_model, model_error) && !model_error) {
+        // The shared configurator performs exact byte-size, SHA-256 and GGUF
+        // verification before modifying the generated server config.
+        configure_audio_cpp_asr_model(config_file, existing_asr_model);
+    }
+
     EngineConfig engine;
     if (existing != candidates.end()) engine = *existing;
     engine.id = "audio-cpp";

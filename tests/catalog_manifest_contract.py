@@ -30,12 +30,16 @@ def validate_pinned_gguf_contract(component_id: str, entry: dict, metadata: dict
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,254}", filename) or filename in {".", ".."}:
         fail(f"{component_id}: unsafe model filename")
     match = re.fullmatch(
-        r"https://huggingface\.co/([A-Za-z0-9][A-Za-z0-9._-]{0,95})/([A-Za-z0-9][A-Za-z0-9._-]{0,95})/resolve/([a-fA-F0-9]{40})/([A-Za-z0-9][A-Za-z0-9._-]{0,254})",
+        r"https://huggingface\.co/([A-Za-z0-9][A-Za-z0-9._-]{0,95})/([A-Za-z0-9][A-Za-z0-9._-]{0,95})/resolve/([a-fA-F0-9]{40})/(.+)",
         url,
     )
     if not match:
         fail(f"{component_id}: model URL must be a single-file immutable Hugging Face revision URL")
-    owner, repository, revision, url_filename = match.groups()
+    owner, repository, revision, url_path = match.groups()
+    url_segments = url_path.split("/")
+    if any(not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,254}", segment) or segment in {".", ".."} for segment in url_segments):
+        fail(f"{component_id}: model URL contains an unsafe or encoded path segment")
+    url_filename = url_segments[-1]
     expected_source = f"https://huggingface.co/{owner}/{repository}"
     provenance = metadata.get("provenance", {})
     if url_filename != filename:
@@ -272,6 +276,25 @@ def main() -> None:
     cuda_metadata = json.loads(cuda_catalog["metadata_json"])
     if cuda_metadata.get("evidence", {}).get("real_task_test") != "not-verified" or cuda_metadata.get("evidence", {}).get("profile_validation") != "not-validated":
         fail("CUDA package must not claim a real task or target profile has already passed")
+
+    qwen_asr = next((entry for entry in components if entry.get("id") == "qwen3-asr-0.6b-q8_0"), None)
+    if qwen_asr is None:
+        fail("the exact-pinned Qwen3-ASR 0.6B Q8_0 model must be present in the catalog")
+    qwen_asr_metadata = json.loads(qwen_asr["metadata_json"])
+    qwen_asr_install = qwen_asr.get("install", {})
+    if (qwen_asr_install.get("filename") != "qwen3-asr-0.6b-q8_0.gguf" or
+        qwen_asr_install.get("url") != "https://huggingface.co/audio-cpp/audio.cpp-gguf/resolve/4c9a3098d552a0f3d9b2adc11638a11022c07d7e/Qwen3-ASR-0.6B-GGUF/qwen3-asr-0.6b-q8_0.gguf" or
+        qwen_asr_install.get("sha256") != "6c44ec2fb4cee513892d7863c1fcc3ea6b699ffa4d899b0ef4ab19956d9544f7" or
+        qwen_asr_install.get("size_bytes") != 1151272416):
+        fail("Qwen3-ASR model must retain the reviewed immutable revision, exact filename, byte size and SHA-256")
+    if (qwen_asr_metadata.get("license") != "Apache-2.0" or
+        qwen_asr_metadata.get("provenance", {}).get("revision") != "4c9a3098d552a0f3d9b2adc11638a11022c07d7e" or
+        qwen_asr_metadata.get("tasks") != ["asr.transcribe"] or
+        qwen_asr_metadata.get("model_profile", {}).get("quantization") != "Q8_0" or
+        qwen_asr_metadata.get("compatibility", {}).get("backends") != ["audio.cpp-cpu", "audio.cpp-cuda13.3"]):
+        fail("Qwen3-ASR metadata must declare reviewed Apache-2.0 provenance, ASR task, Q8_0 and audio.cpp targets")
+    if qwen_asr_metadata.get("evidence", {}).get("real_task_test") != "not-verified-on-target":
+        fail("Qwen3-ASR catalog metadata must not claim the target transcription task has already passed")
 
     # Prove that a second, non-default model from another reviewed HF repository
     # is accepted without changing the single default-model invariant.

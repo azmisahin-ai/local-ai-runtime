@@ -117,7 +117,7 @@ int main() {
                     "audio.cpp task capabilities should use stable typed operation IDs");
 
             lar::AsrTranscriptionRequest asr_request;
-            asr_request.model_id = "qwen3-asr";
+            asr_request.model_id = "qwen3-asr-0.6b-q8_0";
             asr_request.language = "tr";
             asr_request.wav_bytes = std::string("RIFF", 4) + std::string(4, '\0') + "WAVE" + std::string(32, '\0');
             const auto wav_length = static_cast<std::uint32_t>(asr_request.wav_bytes.size() - 8U);
@@ -129,7 +129,7 @@ int main() {
             require(upstream_request.path == "/v1/audio/transcriptions" &&
                     upstream_request.content_type.find("multipart/form-data; boundary=") == 0 &&
                     upstream_request.body.find("name=\"model\"") != std::string::npos &&
-                    upstream_request.body.find("qwen3-asr") != std::string::npos &&
+                    upstream_request.body.find("qwen3-asr-0.6b-q8_0") != std::string::npos &&
                     upstream_request.body.find("name=\"language\"") != std::string::npos &&
                     upstream_request.body.find("\r\ntr\r\n") != std::string::npos,
                     "typed ASR request should carry only validated model/language fields and in-memory WAV bytes");
@@ -193,6 +193,32 @@ int main() {
             require(cuda_json.find("\"backend\": \"cuda\"") != std::string::npos &&
                     cuda_json.find("\"ui_management\": true") != std::string::npos,
                     "CUDA installer config must select CUDA and keep API-only UI management enabled");
+            const auto asr_registered = lar::register_audio_cpp_asr_model_config_json(
+                cpu_json, "qwen3-asr-0.6b-q8_0", "C:/LAR/models/qwen3-asr-0.6b-q8_0.gguf");
+            require(asr_registered.find("\"id\": \"qwen3-asr-0.6b-q8_0\"") != std::string::npos &&
+                    asr_registered.find("\"family\": \"qwen3_asr\"") != std::string::npos &&
+                    asr_registered.find("\"task\": \"asr\"") != std::string::npos &&
+                    asr_registered.find("\"mode\": \"offline\"") != std::string::npos &&
+                    asr_registered.find("C:/LAR/models/qwen3-asr-0.6b-q8_0.gguf") != std::string::npos,
+                    "Qwen3-ASR registration must add the exact model id, family, path, task and offline mode");
+            const auto asr_registered_again = lar::register_audio_cpp_asr_model_config_json(
+                asr_registered, "qwen3-asr-0.6b-q8_0", "C:/LAR/models/qwen3-asr-0.6b-q8_0.gguf");
+            const auto first_model_id = asr_registered_again.find("\"id\": \"qwen3-asr-0.6b-q8_0\"");
+            require(first_model_id != std::string::npos &&
+                    asr_registered_again.find("\"id\": \"qwen3-asr-0.6b-q8_0\"", first_model_id + 1U) == std::string::npos,
+                    "Qwen3-ASR registration must be idempotent and not duplicate models");
+            bool rejected_conflicting_asr = false;
+            try {
+                (void)lar::register_audio_cpp_asr_model_config_json(
+                    asr_registered, "qwen3-asr-0.6b-q8_0", "C:/different/model.gguf");
+            } catch (const std::invalid_argument&) { rejected_conflicting_asr = true; }
+            require(rejected_conflicting_asr,
+                    "Qwen3-ASR registration must fail closed on a conflicting id/path");
+            bool rejected_bad_asr_id = false;
+            try {
+                (void)lar::register_audio_cpp_asr_model_config_json(cpu_json, "../bad", "C:/model.gguf");
+            } catch (const std::invalid_argument&) { rejected_bad_asr_id = true; }
+            require(rejected_bad_asr_id, "Qwen3-ASR registration must reject unsafe model identifiers");
             bool rejected_bad_backend = false;
             try { (void)lar::build_audio_cpp_server_config_json("arbitrary", 18432U); }
             catch (const std::invalid_argument&) { rejected_bad_backend = true; }
@@ -297,7 +323,7 @@ int main() {
 
         stage("compiled reviewed component manifest");
         const auto& manifest_components = lar::catalog::components();
-        require(manifest_components.size() == 8, "compiled catalog manifest should contain three llama.cpp variants, audio.cpp CPU and CUDA 13.3 engines and three reviewed chat models");
+        require(manifest_components.size() == 9, "compiled catalog manifest should contain three llama.cpp variants, audio.cpp CPU and CUDA 13.3 engines, three reviewed chat models and one Qwen3-ASR model");
         const auto* cpu_catalog_item = lar::catalog::find_component("llama.cpp-cpu");
         const auto* cuda12_catalog_item = lar::catalog::find_component("llama.cpp-cuda12");
         const auto* cuda13_catalog_item = lar::catalog::find_component("llama.cpp-cuda13");
@@ -306,10 +332,16 @@ int main() {
         const auto* starter_model = lar::catalog::default_model_component();
         const auto* qwen3_model = lar::catalog::find_component("qwen3-4b-q4km");
         const auto* gemma4_model = lar::catalog::find_component("gemma4-e2b-q4");
+        const auto* qwen3_asr_model = lar::catalog::find_component("qwen3-asr-0.6b-q8_0");
         require(qwen3_model && qwen3_model->installer == "pinned-gguf" && qwen3_model->filename == "Qwen3-4B-Q4_K_M.gguf",
                 "the balanced Qwen3 model should resolve from the compiled manifest");
         require(gemma4_model && gemma4_model->installer == "pinned-gguf" && gemma4_model->filename == "gemma-4-E2B_q4_0-it.gguf",
                 "the alternative Gemma 4 model should resolve from the compiled manifest");
+        require(qwen3_asr_model && qwen3_asr_model->installer == "pinned-gguf" &&
+                qwen3_asr_model->filename == "qwen3-asr-0.6b-q8_0.gguf" &&
+                qwen3_asr_model->size_bytes == 1151272416ULL &&
+                qwen3_asr_model->sha256 == "6c44ec2fb4cee513892d7863c1fcc3ea6b699ffa4d899b0ef4ab19956d9544f7",
+                "Qwen3-ASR must resolve with the exact pinned GGUF artifact in the compiled manifest");
         require(cpu_catalog_item && cpu_catalog_item->installer == "llama-release" && cpu_catalog_item->variant == "cpu",
                 "CPU engine should resolve through the compiled manifest");
         require(cuda12_catalog_item && cuda12_catalog_item->installer == "llama-release" && cuda12_catalog_item->variant == "cuda12",
@@ -353,6 +385,17 @@ int main() {
                     sample_url, sample_filename, sample_revision,
                     "https://huggingface.co/ExampleOrg/Example-GGUF"),
                 "a reviewed GGUF from a second immutable Hugging Face repository should be accepted");
+        const auto nested_sample_url = "https://huggingface.co/ExampleOrg/Example-GGUF/resolve/" +
+            std::string(sample_revision) + "/models/asr/" + std::string(sample_filename);
+        require(lar::catalog::is_supported_pinned_gguf_url(
+                    nested_sample_url, sample_filename, sample_revision,
+                    "https://huggingface.co/ExampleOrg/Example-GGUF"),
+                "a reviewed single GGUF in safe nested Hugging Face subdirectories should be accepted");
+        require(!lar::catalog::is_supported_pinned_gguf_url(
+                    "https://huggingface.co/ExampleOrg/Example-GGUF/resolve/" +
+                        std::string(sample_revision) + "/models/../" + std::string(sample_filename),
+                    sample_filename, sample_revision, "https://huggingface.co/ExampleOrg/Example-GGUF"),
+                "nested GGUF URL traversal segments must be rejected");
         require(!lar::catalog::is_supported_pinned_gguf_url(
                     "https://huggingface.co.evil.invalid/ExampleOrg/Example-GGUF/resolve/" +
                         std::string(sample_revision) + "/" + std::string(sample_filename),

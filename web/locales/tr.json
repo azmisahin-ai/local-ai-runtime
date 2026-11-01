@@ -594,5 +594,7 @@
   "profile.openActivity": "Etkinliklere devam et",
   "profile.draftNotApplied": "Seçimin değişti ancak henüz etkin değil. Motoru başlatmadan önce profili uygula.",
   "catalog.audio.cpp-v0.9.3-cpu.description": "Sabitlenmiş audio.cpp v0.9.3 Windows x64 CPU görev sunucusunu kurar. Model ağırlıkları ayrıdır; bu CPU profili taşınabilirlik ve test içindir.",
-  "catalog.audio.cpp-v0.9.3-cpu.limits": "Yerel CPU sunucusunun başlatma ve yaşam döngüsü testleri geçti; gerçek ASR/TTS görevleri ve transkripsiyon kalitesi henüz doğrulanmadı. Konuşma modeli içermez."
+  "catalog.audio.cpp-v0.9.3-cpu.limits": "Yerel CPU sunucusunun başlatma ve yaşam döngüsü testleri geçti; gerçek ASR/TTS görevleri ve transkripsiyon kalitesi henüz doğrulanmadı. Konuşma modeli içermez.",
+  "catalog.qwen3-asr-0.6b-q8_0.description": "Qwen3-ASR 0.6B Q8_0, audio.cpp ile çevrimdışı çalışan GGUF konuşma tanıma modelidir. Türkçe transkripsiyon akışında dil ipucunu açıkça tr olarak gönderin.",
+  "catalog.qwen3-asr-0.6b-q8_0.limits": "Sabitlenmiş model paketi kurulumda tam dosya boyutu ve SHA-256 ile doğrulanır. Hedef bilgisayarda gerçek CPU/CUDA transkripsiyonu, çıktı kalitesi, bellek kullanımı ve performans henüz doğrulanmamıştır."
 }

@@ -1,8 +1,8 @@
 # Engine Integration Research and Selection
 
-**Research checked:** 2026-10-31  
-**Target machine:** Windows x64, NVIDIA GeForce RTX 3060 Laptop GPU (6 GB VRAM), 16 GB system RAM, 16 logical CPUs, NVIDIA driver 616.92, compute capability 8.6.  
-**Decision status:** research and architecture plan only. None of the engines below, except `llama.cpp`, is currently integrated into Local AI Runtime.
+**Research checked:** 2026-11-01
+**Target machine:** Windows x64, NVIDIA GeForce RTX 3060 Laptop GPU (6 GB VRAM), 16 GB system RAM, 16 logical CPUs, NVIDIA driver 616.92, compute capability 8.6.
+**Decision status:** `audio.cpp` v0.9.3 is integrated as a non-Chat task runtime; the managed Windows x64 CPU and CUDA 13.3 package lifecycles are verified. Qwen3-ASR 0.6B Q8_0 is now pinned as a separate model component, but real ASR and CUDA inference remain unverified. The later engine families below remain research/architecture plans.
 
 This document records the recommended engine families, why they were selected, known limitations, and the order in which they should be integrated. Upstream capabilities and model compatibility are not the same as Local AI Runtime support. A component must not be advertised as supported until its exact artifact, model, target, and real task have passed the runtime's acceptance checks.
 
@@ -108,11 +108,13 @@ This is a task-oriented audio API, not the current Local AI Runtime OpenAI-compa
 
 ### 1.5 Catalog and installer work required
 
-The current Local AI Runtime manifest-v1 installer allowlist only supports the constrained `llama-release` and `pinned-gguf` strategies. The public component-v1 schema describes engines/models but this does not make an installer available for a new component. Current `pinned-gguf` supports one file; ASR/TTS model packages may require a pinned set of files or a model-directory bundle.
+The manifest-v1 installer allowlist supports the constrained `llama-release`, `pinned-gguf` and narrowly allowlisted `audio-cpp-release-set` strategies. The public component-v1 schema describes engines/models but does not itself make an installer available. The `pinned-gguf` strategy supports one file per model, with safe nested Hugging Face repository subdirectories, immutable revision, exact file name, byte size and SHA-256.
 
-Stage 13A implemented the first fail-closed `audio-cpp-release-set` manifest strategy and installer path. It currently represents a pinned v0.9.3 Windows x64 CPU server archive, or the pinned CUDA 13.3 server + CUDART pair; validates exact upstream filenames, URLs, SHA-256 and exact API-reported byte sizes; downloads into per-user staging; safely extracts and merges regular files/directories only; then atomically activates and registers the non-Chat task engine with rollback. After the user verified the native Windows x64 CPU archive version, startup, health/models, restart and final process/port cleanup on 2026-10-31, one exact-pinned CPU catalog record is enabled for the managed installer acceptance test. The Local AI Runtime generated config sets `ui_management: true` because audio.cpp v0.9.3 rejects an empty model list otherwise. The managed download/activation path and all CUDA/model tasks remain unverified. This first strategy does not install model weights.
+Stage 13A implemented the fail-closed `audio-cpp-release-set` manifest strategy for the pinned v0.9.3 Windows x64 CPU archive and CUDA 13.3 server + CUDART pair. It validates exact upstream filenames, URLs, SHA-256 and exact release API byte sizes; downloads into per-user staging; safely extracts and merges regular files/directories only; then atomically activates and registers the non-Chat task engine with rollback. On the target Windows machine, both CPU and CUDA package sets were installed by the managed installer in separate isolated data roots. Both managed processes started, passed readiness and `/health` (`backend=cpu` and `backend=cuda` respectively), and stopped with their process and listening port gone. The CPU and CUDA runtime package lifecycle is therefore accepted. The CUDA health test had `models=0`; `nvidia-smi` showed no compute process, so no CUDA inference claim is made. The Local AI Runtime generated config sets `ui_management: true` because audio.cpp v0.9.3 rejects an empty model list otherwise. This strategy installs engine packages only; model weights are separate components.
 
-Remaining catalog/distribution work includes a pinned immutable model repository revision and explicit file list (safe relative paths, exact sizes and SHA-256) or a verifiable upstream model bundle; separately reviewed engine/model license identifiers and URLs; and dependency/model-install progress under a parent job. Do not execute an upstream Python model-manager script as an installer. The native `audiocpp_model_manager` exists in certain native builds, but Local AI Runtime owns a reviewed, declarative, digest-verified download plan rather than running repository-provided commands from a model or engine package.
+Stage 13B now pins Qwen3-ASR 0.6B Q8_0 as a separate single-file GGUF model: audio-cpp-gguf revision `4c9a3098d552a0f3d9b2adc11638a11022c07d7e`, file `qwen3-asr-0.6b-q8_0.gguf`, exact size `1151272416`, SHA-256 `6c44ec2fb4cee513892d7863c1fcc3ea6b699ffa4d899b0ef4ab19956d9544f7`, Apache-2.0. The install workflow verifies exact size, SHA-256 and GGUF magic, then adds `id`, `family=qwen3_asr`, `path`, `task=asr`, `mode=offline` to the managed audio.cpp server config. If the model is installed first, the engine installer registers it when configuring the new server; if the engine is already installed, the model installer updates the config only while the engine is stopped. Conflicting registrations fail closed. The real Turkish ASR task is still unverified and should be run with explicit `language=tr`.
+
+Do not execute an upstream Python model-manager script as an installer. The native `audiocpp_model_manager` exists in certain native builds, but Local AI Runtime owns a reviewed, declarative, digest-verified download plan rather than running repository-provided commands from a model or engine package.
 ## 2. Speech alternatives (defer until audio.cpp comparison)
 
 ### whisper.cpp
@@ -186,8 +188,8 @@ ACE-Step 1.5 is listed by audio.cpp for music/edit tasks and supports a broad se
 | Stage | Work | Selected implementation | First acceptance task |
 |---|---|---|---|
 | 12 / 12.5 residuals | Keep existing LLM stable; only critical fixes | llama.cpp + current UI | Do not block audio work on cosmetic polish; preserve security and basic-chat quality gates. |
-| 13A | Task-engine adapter and audio runtime package | audio.cpp v0.9.3 pilot | CPU package or CUDA package installation, `/health`, `/v1/models`, clean stop/restart. |
-| 13B | Turkish speech recognition | Qwen3-ASR-0.6B via audio.cpp | Same fixed WAV and reference transcript on CPU, then CUDA. |
+| 13A | Task-engine adapter and audio runtime package | audio.cpp v0.9.3 pilot | Windows x64 CPU and CUDA 13.3 managed install, readiness/health and clean stop are verified; inference is separate. |
+| 13B | Turkish speech recognition | Qwen3-ASR-0.6B Q8_0 via audio.cpp | Install exact-pinned model; same fixed WAV and reference transcript on CPU, then CUDA. |
 | 13C | Turkish text-to-speech | Chatterbox 0.5B via audio.cpp | Generate WAV from fixed Turkish text, listen, inspect duration/sample rate and memory. |
 | 13D | ASR comparison | whisper.cpp, optionally sherpa-onnx | Same WAV, compare CER/WER, latency, quality and memory; only add a second runtime if it wins materially. |
 | 14 | Image generation | stable-diffusion.cpp | SD 1.5, 512x512, single image. |

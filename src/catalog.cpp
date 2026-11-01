@@ -343,25 +343,36 @@ bool is_supported_pinned_gguf_url(std::string_view url, std::string_view filenam
     }
 
     auto remainder = url.substr(prefix.size());
-    std::string_view segments[5];
-    for (std::size_t index = 0; index < 5U; ++index) {
+    std::string_view segments[4];
+    for (std::size_t index = 0; index < 4U; ++index) {
         const auto slash = remainder.find('/');
-        if (index < 4U) {
-            if (slash == std::string_view::npos) return false;
-            segments[index] = remainder.substr(0, slash);
-            remainder.remove_prefix(slash + 1U);
-        } else {
-            if (slash != std::string_view::npos) return false;
-            segments[index] = remainder;
-        }
+        if (slash == std::string_view::npos) return false;
+        segments[index] = remainder.substr(0, slash);
+        remainder.remove_prefix(slash + 1U);
     }
 
     const auto owner = segments[0];
     const auto repository = segments[1];
     if (!safe_segment(owner) || !safe_segment(repository) || segments[2] != "resolve" ||
-        !is_hex(segments[3], 40U) || segments[3] != revision || segments[4] != filename) {
+        !is_hex(segments[3], 40U) || segments[3] != revision || remainder.empty()) {
         return false;
     }
+
+    // Hugging Face repositories may keep a single GGUF artifact in a nested
+    // directory. Permit only safe, unencoded path segments and still pin the
+    // final basename independently from the URL.
+    std::string_view final_segment;
+    while (!remainder.empty()) {
+        const auto slash = remainder.find('/');
+        const auto segment = slash == std::string_view::npos ? remainder : remainder.substr(0, slash);
+        if (!safe_segment(segment)) return false;
+        final_segment = segment;
+        if (slash == std::string_view::npos) break;
+        remainder.remove_prefix(slash + 1U);
+        if (remainder.empty()) return false;
+    }
+    if (final_segment != filename) return false;
+
     const auto expected_source = std::string(prefix) + std::string(owner) + "/" + std::string(repository);
     return source_url == expected_source;
 }

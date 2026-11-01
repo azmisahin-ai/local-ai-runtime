@@ -92,6 +92,9 @@ private:
                                     const std::filesystem::path& config_file,
                                     const std::string& backend,
                                     unsigned short port);
+    void configure_audio_cpp_asr_model(const std::filesystem::path& config_file,
+                                       const std::filesystem::path& model_file);
+    void configure_audio_cpp_asr_model_if_available(const std::filesystem::path& model_file);
 
     RuntimeConfig config_;
     EngineManager& engines_;

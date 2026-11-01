@@ -58,8 +58,10 @@ for (const entry of modelEntries) {
   assert.ok(metadata.model_profile.task_group, `${entry.id} is missing task_group`);
   assert.ok(metadata.model_profile.quantization, `${entry.id} is missing quantization`);
   assert.ok(metadata.model_profile.format, `${entry.id} is missing model format`);
-  assert.ok(metadata.model_profile.recommended_for, `${entry.id} is missing recommendation grouping`);
-  assert.ok(metadata.model_profile.preferred_context_tokens, `${entry.id} is missing a preferred starting context`);
+  if (metadata.model_profile.task_group === 'chat') {
+    assert.ok(metadata.model_profile.recommended_for, `${entry.id} is missing chat recommendation grouping`);
+    assert.ok(metadata.model_profile.preferred_context_tokens, `${entry.id} is missing a preferred starting context`);
+  }
   assert.ok(Object.hasOwn(en, `catalog.${entry.id}.description`), `${entry.id} English description is missing`);
   assert.ok(Object.hasOwn(tr, `catalog.${entry.id}.description`), `${entry.id} Turkish description is missing`);
   assert.ok(Object.hasOwn(en, `catalog.${entry.id}.limits`), `${entry.id} English limitation note is missing`);

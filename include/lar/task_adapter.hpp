@@ -78,5 +78,10 @@ std::shared_ptr<TaskEngineAdapter> create_task_engine_adapter(const EngineConfig
 // Creates the API-only audio.cpp server configuration used by managed installs.
 // ui_management is required by v0.9.3 when the initial models array is empty.
 std::string build_audio_cpp_server_config_json(std::string_view backend, unsigned short port);
+// Adds or verifies one offline Qwen3-ASR model registration in an existing
+// audio.cpp server config. Conflicting registrations fail closed.
+std::string register_audio_cpp_asr_model_config_json(std::string_view config_json,
+                                                     std::string_view model_id,
+                                                     std::string_view model_path);
 
 } // namespace lar
