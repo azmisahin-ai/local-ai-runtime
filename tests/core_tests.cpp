@@ -189,6 +189,10 @@ int main() {
                     "managed audio.cpp config must not invent or download a model during engine installation");
             require(cpu_json.find("\"backend\": \"cpu\"") != std::string::npos,
                     "CPU installer config must select the CPU backend");
+            const auto cuda_json = lar::build_audio_cpp_server_config_json("cuda", 18433U);
+            require(cuda_json.find("\"backend\": \"cuda\"") != std::string::npos &&
+                    cuda_json.find("\"ui_management\": true") != std::string::npos,
+                    "CUDA installer config must select CUDA and keep API-only UI management enabled");
             bool rejected_bad_backend = false;
             try { (void)lar::build_audio_cpp_server_config_json("arbitrary", 18432U); }
             catch (const std::invalid_argument&) { rejected_bad_backend = true; }
@@ -293,11 +297,12 @@ int main() {
 
         stage("compiled reviewed component manifest");
         const auto& manifest_components = lar::catalog::components();
-        require(manifest_components.size() == 7, "compiled catalog manifest should contain three llama.cpp variants, one audio.cpp CPU engine and three reviewed chat models");
+        require(manifest_components.size() == 8, "compiled catalog manifest should contain three llama.cpp variants, audio.cpp CPU and CUDA 13.3 engines and three reviewed chat models");
         const auto* cpu_catalog_item = lar::catalog::find_component("llama.cpp-cpu");
         const auto* cuda12_catalog_item = lar::catalog::find_component("llama.cpp-cuda12");
         const auto* cuda13_catalog_item = lar::catalog::find_component("llama.cpp-cuda13");
         const auto* audio_cpu_catalog_item = lar::catalog::find_component("audio.cpp-v0.9.3-cpu");
+        const auto* audio_cuda_catalog_item = lar::catalog::find_component("audio.cpp-v0.9.3-cuda13.3");
         const auto* starter_model = lar::catalog::default_model_component();
         const auto* qwen3_model = lar::catalog::find_component("qwen3-4b-q4km");
         const auto* gemma4_model = lar::catalog::find_component("gemma4-e2b-q4");
@@ -316,7 +321,13 @@ int main() {
                 "audio.cpp CPU engine should resolve only through its exact-pinned Windows release-set entry");
         require(lar::catalog::supports_target(*audio_cpu_catalog_item, "windows", "x64") &&
                 !lar::catalog::supports_target(*audio_cpu_catalog_item, "linux", "x64"),
-                "audio.cpp pilot must remain Windows x64 only");
+                "audio.cpp CPU package must remain Windows x64 only");
+        require(audio_cuda_catalog_item && audio_cuda_catalog_item->installer == "audio-cpp-release-set" &&
+                audio_cuda_catalog_item->variant == "cuda13.3" && audio_cuda_catalog_item->assets.size() == 2U,
+                "audio.cpp CUDA package must resolve only through its exact-pinned server+CUDART release set");
+        require(lar::catalog::supports_target(*audio_cuda_catalog_item, "windows", "x64") &&
+                !lar::catalog::supports_target(*audio_cuda_catalog_item, "linux", "x64"),
+                "audio.cpp CUDA package must remain Windows x64 only");
         require(cpu_catalog_item->dependencies.empty(), "CPU llama.cpp must not declare a CUDA runtime dependency");
         require(cuda12_catalog_item->dependencies.size() == 1 &&
                 cuda12_catalog_item->dependencies.front().id == "llama.cpp-cudart-cuda12",

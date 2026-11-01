@@ -255,13 +255,23 @@ def main() -> None:
         fail(f"unexpected engine release variant set: {sorted(variants)}")
 
     active_audio = [entry for entry in components if entry.get("install", {}).get("strategy") == "audio-cpp-release-set"]
-    if len(active_audio) != 1 or active_audio[0].get("id") != "audio.cpp-v0.9.3-cpu":
-        fail("the only active audio.cpp catalog record must be the exact-pinned Windows x64 CPU pilot")
-    validate_audio_cpp_contract(
-        active_audio[0]["id"], active_audio[0], json.loads(active_audio[0]["metadata_json"])
-    )
-    if any(entry.get("install", {}).get("variant") == "cuda13.3" for entry in active_audio):
-        fail("CUDA audio.cpp must remain inactive until its native Windows lifecycle gate passes")
+    audio_ids = {entry.get("id") for entry in active_audio}
+    expected_audio_ids = {"audio.cpp-v0.9.3-cpu", "audio.cpp-v0.9.3-cuda13.3"}
+    if len(active_audio) != 2 or audio_ids != expected_audio_ids:
+        fail("audio.cpp catalog must expose only the exact-pinned Windows x64 CPU and CUDA 13.3 packages")
+    audio_variants = {entry.get("install", {}).get("variant") for entry in active_audio}
+    if audio_variants != {"cpu", "cuda13.3"}:
+        fail("audio.cpp catalog must contain exactly one CPU and one CUDA 13.3 package set")
+    for audio_entry in active_audio:
+        audio_metadata = json.loads(audio_entry["metadata_json"])
+        validate_audio_cpp_contract(audio_entry["id"], audio_entry, audio_metadata)
+        expected_total = sum(asset["size_bytes"] for asset in audio_entry["install"]["assets"])
+        if audio_metadata.get("resources", {}).get("download_bytes") != expected_total:
+            fail(f"{audio_entry['id']}: displayed aggregate download bytes must match the exact asset set")
+    cuda_catalog = next(entry for entry in active_audio if entry["id"] == "audio.cpp-v0.9.3-cuda13.3")
+    cuda_metadata = json.loads(cuda_catalog["metadata_json"])
+    if cuda_metadata.get("evidence", {}).get("real_task_test") != "not-verified" or cuda_metadata.get("evidence", {}).get("profile_validation") != "not-validated":
+        fail("CUDA package must not claim a real task or target profile has already passed")
 
     # Prove that a second, non-default model from another reviewed HF repository
     # is accepted without changing the single default-model invariant.
@@ -371,7 +381,7 @@ def main() -> None:
         pass
     else:
         fail("incomplete CUDA package set was accepted")
-    print(f"Catalog manifest contract passed: {len(components)} reviewed components, {len(ids)} unique IDs, {len(variants)} llama.cpp engine variants and one exact-pinned audio.cpp CPU item; GGUF pinning and CPU/CUDA package-set fixtures passed.")
+    print(f"Catalog manifest contract passed: {len(components)} reviewed components, {len(ids)} unique IDs, {len(variants)} llama.cpp engine variants and exact-pinned audio.cpp CPU/CUDA 13.3 package sets; GGUF pinning and tamper fixtures passed.")
 
 
 if __name__ == "__main__":

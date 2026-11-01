@@ -194,6 +194,39 @@
         ]
       },
       "metadata_json": "{\"schema_version\":1,\"id\":\"audio.cpp-v0.9.3-cpu\",\"type\":\"engine\",\"name\":\"audio.cpp v0.9.3 — CPU task runtime\",\"description\":\"Installs the pinned audio.cpp v0.9.3 Windows x64 CPU server. The package contains the task runtime only; speech models are installed separately. This is a portability/testing CPU profile, not a performance claim.\",\"family\":\"audio.cpp\",\"workspaces\":[\"audio\"],\"tasks\":[\"asr.transcribe\",\"tts.synthesize\"],\"modalities\":[\"audio\"],\"input_formats\":[\"audio/wav\",\"application/json\"],\"output_formats\":[\"application/json\",\"audio/wav\"],\"version\":\"v0.9.3\",\"backend\":\"cpu\",\"compatibility\":{\"targets\":[{\"platform\":\"windows\",\"architecture\":\"x64\"}],\"backends\":[\"cpu\"],\"cpu_features\":[],\"driver_requirements\":[],\"known_limits\":[\"The upstream CPU package is intended for portability and testing; performance and model coverage may be lower than CUDA.\",\"No ASR or TTS model weights are included in this engine package.\",\"A successful server lifecycle does not validate real transcription or speech synthesis quality.\"]},\"resources\":{\"download_bytes\":30547092,\"download_size_policy\":\"pinned-exact-size\",\"minimum_system_ram_bytes\":null,\"recommended_system_ram_bytes\":null,\"minimum_vram_bytes\":null,\"recommended_vram_bytes\":null,\"estimate_confidence\":\"not-estimated-for-engine-only\",\"notes\":\"Engine package only. Model memory requirements depend on the separately selected speech model and task.\"},\"provenance\":{\"source_url\":\"https://github.com/0xShug0/audio.cpp\",\"revision_policy\":\"pinned-release\",\"revision\":\"v0.9.3\",\"license_id\":\"Apache-2.0\",\"license_url\":\"https://github.com/0xShug0/audio.cpp/blob/main/LICENSE\",\"digest_policy\":\"pinned-sha256-and-exact-size\",\"dependencies\":[]},\"evidence\":{\"metadata_review\":\"reviewed\",\"package_verification\":\"sha256-and-exact-size-pinned\",\"real_task_test\":\"not-verified\",\"profile_validation\":\"not-validated\"},\"lifecycle\":{\"install_scope\":\"per-user-data-directory\",\"user_data_separate\":true,\"update_policy\":\"pinned-engine-release\",\"automatic_update\":false},\"license\":\"Apache-2.0\",\"license_url\":\"https://github.com/0xShug0/audio.cpp/blob/main/LICENSE\",\"source_url\":\"https://github.com/0xShug0/audio.cpp\",\"size_bytes\":30547092,\"sha256\":\"3ac66f46395b4e92e4f3bb68b200f0032310bd9922f12d97f10ccdadb02dee4b\"}"
+    },
+    {
+      "id": "audio.cpp-v0.9.3-cuda13.3",
+      "kind": "engine",
+      "installable": true,
+      "default_model": false,
+      "install": {
+        "strategy": "audio-cpp-release-set",
+        "variant": "cuda13.3",
+        "assets": [
+          {
+            "role": "server",
+            "filename": "audio-v0.9.3-bin-windows-x64-cuda13.3.zip",
+            "url": "https://github.com/0xShug0/audio.cpp/releases/download/v0.9.3/audio-v0.9.3-bin-windows-x64-cuda13.3.zip",
+            "sha256": "0bd3988be10c31ec078c40df2bd0d4266e660804f6d5083aeb05d1309d091e43",
+            "size_bytes": 277336614
+          },
+          {
+            "role": "runtime",
+            "filename": "audio-v0.9.3-cudart-windows-x64-cuda13.3.zip",
+            "url": "https://github.com/0xShug0/audio.cpp/releases/download/v0.9.3/audio-v0.9.3-cudart-windows-x64-cuda13.3.zip",
+            "sha256": "839eb20f684a8aab64895b1e466b32ce9b29dfc19dc1ce15b2ef35218512ac0a",
+            "size_bytes": 575457454
+          }
+        ],
+        "targets": [
+          {
+            "platform": "windows",
+            "architecture": "x64"
+          }
+        ]
+      },
+      "metadata_json": "{\"schema_version\":1,\"id\":\"audio.cpp-v0.9.3-cuda13.3\",\"type\":\"engine\",\"name\":\"audio.cpp v0.9.3 — CUDA 13.3 task runtime\",\"description\":\"Installs the pinned audio.cpp v0.9.3 Windows x64 CUDA 13.3 server and its matching CUDA runtime archive. Speech models are installed separately. CUDA package eligibility is not proof of a validated model task or VRAM fit.\",\"family\":\"audio.cpp\",\"workspaces\":[\"audio\"],\"tasks\":[\"asr.transcribe\",\"tts.synthesize\"],\"modalities\":[\"audio\"],\"input_formats\":[\"audio/wav\",\"application/json\"],\"output_formats\":[\"application/json\",\"audio/wav\"],\"version\":\"v0.9.3\",\"backend\":\"cuda13.3\",\"compatibility\":{\"targets\":[{\"platform\":\"windows\",\"architecture\":\"x64\"}],\"backends\":[\"cuda13.3\"],\"cpu_features\":[],\"driver_requirements\":[\"NVIDIA driver 580 or newer\",\"NVIDIA GPU compute capability 7.5 or newer\"],\"known_limits\":[\"The server archive and matching CUDA 13.3 runtime archive are installed as one pinned release set.\",\"Package prerequisites do not prove that the installed GPU backend starts successfully or that a specific model fits in available VRAM.\",\"No ASR or TTS model weights are included in this engine package.\",\"Real CUDA task performance and engine-specific GPU execution evidence remain unverified until a real task is measured.\"]},\"resources\":{\"download_bytes\":852794068,\"download_size_policy\":\"pinned-exact-asset-set\",\"minimum_system_ram_bytes\":null,\"recommended_system_ram_bytes\":null,\"minimum_vram_bytes\":null,\"recommended_vram_bytes\":null,\"estimate_confidence\":\"not-estimated-for-engine-only\",\"notes\":\"Engine package only; VRAM use depends on the separately selected model, precision, task and offload settings.\"},\"provenance\":{\"source_url\":\"https://github.com/0xShug0/audio.cpp\",\"revision_policy\":\"pinned-release\",\"revision\":\"v0.9.3\",\"license_id\":\"Apache-2.0\",\"license_url\":\"https://github.com/0xShug0/audio.cpp/blob/v0.9.3/LICENSE\",\"digest_policy\":\"pinned-sha256-and-exact-size\",\"dependencies\":[]},\"evidence\":{\"metadata_review\":\"reviewed\",\"package_verification\":\"sha256-and-exact-size-pinned\",\"real_task_test\":\"not-verified\",\"profile_validation\":\"not-validated\"},\"lifecycle\":{\"install_scope\":\"per-user-data-directory\",\"user_data_separate\":true,\"update_policy\":\"pinned-engine-release\",\"automatic_update\":false},\"license\":\"Apache-2.0\",\"license_url\":\"https://github.com/0xShug0/audio.cpp/blob/v0.9.3/LICENSE\",\"source_url\":\"https://github.com/0xShug0/audio.cpp\",\"size_bytes\":852794068}"
     }
   ]
 }
