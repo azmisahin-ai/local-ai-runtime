@@ -94,8 +94,13 @@
       "status": "preview"
     },
     {
-      "name": "Audio, vision and embeddings",
-      "description": "Add isolated adapters after the first engine lifecycle and security contracts are stable.",
+      "name": "Experimental Turkish speech recognition",
+      "description": "A Windows x64 audio.cpp/Qwen3-ASR pilot exposes local typed ASR on CPU and CUDA. A five-utterance test on one device measured 41.38% CPU WER and 37.93% CUDA WER; transcripts require human review. Real TTS is not available.",
+      "status": "preview"
+    },
+    {
+      "name": "Vision, embeddings and other audio tasks",
+      "description": "Add isolated adapters after task-specific model, license, packaging and real-device acceptance are complete. Real text-to-speech, vision and embeddings are not currently available.",
       "status": "planned"
     },
     {

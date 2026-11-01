@@ -2,7 +2,7 @@
 
 **Prepared:** 2026-11-01
 **Repository:** <https://github.com/azmisahin-ai/local-ai-runtime>
-**Purpose:** Finish the experimental Windows x64 audio.cpp/Qwen3-ASR pilot, then publish through the one canonical release process. Do not spend time on non-critical Chat/Markdown polish. The latest published release remains `v0.1.31-alpha`; all Stage 13 audio work described here is unreleased until the publisher confirms a new GitHub Release.
+**Purpose:** Complete final documentation review for the experimental Windows x64 audio.cpp/Qwen3-ASR pilot, then publish through the one canonical release process. Do not spend time on non-critical Chat/Markdown polish. The latest published release remains `v0.1.31-alpha`; Stage 13 audio work remains unreleased until the publisher confirms a new GitHub Release.
 
 ## Read these files first
 
@@ -15,9 +15,9 @@
 ## Repository and release baseline
 
 - Latest user-confirmed published baseline: `v0.1.31-alpha`, commit `e18a084`.
-- User's Windows checkout was last confirmed at `e6155e6` with successful Windows Release build and 10/10 CTests. Subsequent working-tree changes in this handoff (requested-language fallback and five-sample test helper) are not yet merged into that checkout.
-- Do not publish by pushing/tagging manually. Run `Publish-LocalAIRuntime.ps1` once from a clean, current `main`; it fast-forwards, waits for the single unified workflow, and verifies the tag/Release created from those same artifacts.
-- Do not publish until the new language-fallback regression and five-sample script syntax check pass on Windows.
+- User's Windows `main` contains `db0cd00` plus `4d9dad5`; Windows Release build/CTest passed 10/10 on `db0cd00`. After `4d9dad5`, the Windows PowerShell 5.1 acceptance script was syntax-checked and run successfully with the BOM fix.
+- CPU/CUDA five-sample acceptance is complete. Results and limits are recorded below and in `docs/stage-13-asr-windows-acceptance.md`.
+- Do not publish by pushing/tagging manually. Run the canonical `scripts/Publish-LocalAIRuntime.ps1` once from a clean, current `main`; it fast-forwards, waits for the single unified workflow, and verifies the tag/Release created from those same artifacts.
 
 ## User's target machine
 
@@ -44,23 +44,22 @@
 
 ### Real CPU and CUDA ASR
 
-- CPU engine loaded the model (`configured=true`, `loaded=true`) and returned a non-empty transcript through `POST /v1/tasks/asr/transcribe` using `X-LAR-Language: tr`.
-- Controlled seven-second Turkish WAV reference: `Bugün hava güzel. Türkçe konuşma tanıma testi yapıyorum.`
-- CPU hypothesis: `Bugün hava güzel. Türkçe konuşmak tanımı testi yapıyorum.`; 2 substitutions / 8 reference words = 25% single-sample WER; latency 4.34 seconds.
-- The same WAV on CUDA returned the same hypothesis in 4.79 seconds. `/health` reported `backend=cuda`; model was loaded. `nvidia-smi` listed the actual `audiocpp_server.exe` process during inference; system GPU memory was 1,723/6,144 MiB at 40% utilization. The per-process memory field was `N/A` under WDDM. After stop, GPU memory returned to 0 MiB and compute-process list was empty.
-- This is a real experimental Windows x64 ASR pilot, not a broad Turkish quality benchmark. One scored sentence yielded 25% WER. The first exploratory 15-second clip was transcribed, but its exact spoken words were not independently confirmed and it must not be included in scored accuracy results.
-- The real upstream response omitted its `language` field even though `tr` was sent. The new unreleased server change returns the explicitly requested language if the upstream omits it; this means “requested language”, not language detection. Windows Release/CTest must validate this regression.
-- Real TTS has not been tested with a real TTS model. The fake HTTP TTS contract test is not evidence of usable TTS. Do not advertise TTS as supported in this release.
+- Five 8-second, mono, 16 kHz, 16-bit PCM WAV fixtures were captured once and reused unchanged on CPU and CUDA.
+- Overall WER: CPU **41.38% (12/29 word edits)**; CUDA **37.93% (11/29)**.
+- Mean request latency: CPU **4.31 s**; CUDA **0.84 s**. The first CUDA request took 3.00 s; its remaining four averaged 0.31 s. This is a single-device observation, not a portable performance guarantee.
+- Per-sample WER: sample 01 0% on both; sample 02 CPU 40%, CUDA 20%; sample 03 83.3% on both; sample 04 42.9% on both; sample 05 25% on both. Sample 03 had a severe recognition error. Sample 04's spoken-number versus numeric-unit spelling (`on altı kilohertz` / `16 kHz`) is scored as a surface-text difference by the current WER helper.
+- CUDA readiness health returned `status=ok`, `backend=cuda`. The earlier direct inference test also showed `audiocpp_server.exe` in NVIDIA's compute process list; system GPU memory was 1,723/6,144 MiB at 40% utilization during that earlier test, and returned to 0 MiB after engine stop. WDDM did not expose process-specific GPU memory.
+- Treat this as an experimental Windows x64 integration pilot, not a broad Turkish quality benchmark. The first exploratory 15-second clip remains excluded because its exact reference was not independently confirmed. Users must review transcripts.
+- The upstream response omitted `language` even when `tr` was sent. Commit `db0cd00` returns the explicitly requested language if upstream omits it; this means “requested language”, not language detection. Windows Release/CTest passed 10/10 on that commit.
+- Commit `4d9dad5` adds a UTF-8 BOM to the acceptance helper for Windows PowerShell 5.1; its syntax check and five-sample rerun passed. Real TTS has not been tested with a real model and must not be advertised.
 
 ## Immediate release-preparation work
 
-1. Merge the next bundle containing: requested-language fallback in `src/server.cpp`, an HTTP regression where fake audio.cpp omits `language`, and `scripts/Test-TurkishAsrAcceptance.ps1`.
-2. Run `cmake --build build --config Release --parallel 4` and `ctest --test-dir build -C Release --output-on-failure` on Windows. Require all tests green, including the new language fallback smoke.
-3. Run five controlled Turkish sentences with `scripts/Test-TurkishAsrAcceptance.ps1` against the CPU runtime. It records WAVs locally and reports per-utterance and aggregate WER. Then run the same WAV directory against CUDA using `-UseExistingAudioDirectory` so CPU/CUDA comparisons are fair.
-4. Review the WER and reference/hypothesis pairs. No threshold was previously established; treat the result as an experimental quality record, not a guarantee. Do not commit WAV files or reports.
-5. Verify docs, `git status --short`, and `git diff --check`; commit to `main`.
-6. Publish exactly once with `Publish-LocalAIRuntime.ps1`. The automatic planner should select the next alpha after `v0.1.31-alpha`; don't hand-create a tag.
-7. In release notes and README, describe the Windows audio.cpp/Qwen3-ASR pilot as experimental and state that TTS is not yet available.
+1. Review the updated acceptance record, README, roadmap, product manifest and changelog so the five-sample results and experimental limitations agree.
+2. Run `git diff --check`, review the documentation diff and commit the updates to `main`.
+3. Confirm `git status --short` is empty. The canonical publisher will verify that local `main` is a fast-forward of official `origin/main` before sending anything.
+4. Publish exactly once with `scripts/Publish-LocalAIRuntime.ps1`. Do not run `git push`, create tags, or launch a second workflow manually. The publisher selects the next alpha and waits for the single build-once workflow.
+5. Review the publisher's final Release and Actions URLs. Keep TTS explicitly unavailable and Turkish ASR labelled experimental; do not claim general accuracy from five utterances.
 
 ## Five-sample acceptance helper
 

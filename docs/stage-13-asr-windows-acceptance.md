@@ -1,6 +1,6 @@
 # Stage 13 — Windows audio.cpp / Qwen3-ASR acceptance record
 
-**Status:** Experimental real-task acceptance completed for CPU and CUDA on one Windows x64 machine. A broader five-utterance Turkish WER run remains a release-preparation check. TTS is not accepted or shipped by this record.
+**Status:** Experimental CPU/CUDA real-task acceptance and the five-utterance Turkish WER comparison are complete on one Windows x64 machine. Results support an experimental pilot only, not a general Turkish-accuracy claim. TTS is not accepted or shipped by this record.
 
 ## Target environment
 
@@ -9,7 +9,7 @@
 - RAM: 16 GiB.
 - GPU: NVIDIA GeForce RTX 3060 Laptop GPU, 6 GiB VRAM, compute capability 8.6.
 - NVIDIA driver: 616.92.
-- Runtime source validated on Windows: `52af631` (Qwen3-ASR catalog/installer), then `e6155e6` (Windows atomic config replacement fix). The language-response fallback change and acceptance script are subsequent unreleased working-tree changes and still require Windows build/CTest.
+- Runtime source validated on Windows: `52af631` (Qwen3-ASR catalog/installer), `e6155e6` (Windows atomic config replacement fix), and `db0cd00` (requested-language response fallback, acceptance helper and regression coverage). Windows Release build and CTest passed 10/10 on `db0cd00`. Commit `4d9dad5` adds a UTF-8 BOM to the acceptance script for Windows PowerShell 5.1; the script was syntax-checked and rerun successfully after that fix.
 
 ## Pinned runtime and model artifacts
 
@@ -66,22 +66,38 @@ All requests used the Local AI Runtime typed endpoint `POST /v1/tasks/asr/transc
 - audio.cpp process working set: 19.7 MiB before, 739.9 MiB after.
 - `nvidia-smi` after inference: 1,723 / 6,144 MiB total GPU memory in use and 40% utilization. NVIDIA compute-process query listed the actual `audiocpp_server.exe` PID `1480`; per-process GPU memory was reported as `N/A` by the driver/WDDM view. After engine stop, process and listener were absent and GPU memory returned to 0 MiB.
 
+## Five-sample Turkish WER acceptance — 2026-11-01
+
+Five 8-second, mono, 16 kHz, 16-bit PCM WAV recordings were captured once and reused unchanged on CPU and CUDA. Each backend used the same references, model ID and Local AI Runtime typed ASR endpoint. The CUDA engine health endpoint returned `status=ok`, `backend=cuda` before scoring.
+
+| Sample | CPU WER | CPU latency | CUDA WER | CUDA latency |
+|---|---:|---:|---:|---:|
+| 01 | 0.0% | 3.77 s | 0.0% | 3.00 s |
+| 02 | 40.0% | 4.31 s | 20.0% | 0.32 s |
+| 03 | 83.3% | 4.51 s | 83.3% | 0.33 s |
+| 04 | 42.9% | 4.56 s | 42.9% | 0.29 s |
+| 05 | 25.0% | 4.41 s | 25.0% | 0.28 s |
+| **Overall / mean** | **41.38% (12/29 edits)** | **4.31 s** | **37.93% (11/29 edits)** | **0.84 s** |
+
+The CUDA mean includes its first request (3.00 s); the remaining four CUDA requests averaged 0.31 s. The remaining four CPU requests averaged 4.45 s. The measurements show a substantial latency improvement on this device and fixture set, but do not establish general performance across machines or speakers.
+
+Notable hypotheses: sample 01 was exact on both backends. On sample 02, CPU returned `konuşmak tanımı`, while CUDA returned `konuşmak tanıma`. Both backends made major errors on sample 03 (`Geraldy paize kâsesimi yazıyla dönüştürüyor`). Sample 04 was transcribed as `16 kHz` instead of the reference wording `on altı kilohertz`; the unchanged WER script scores surface-token differences and does not normalize numeric/unit equivalents. Sample 05 began with `Kısacımları` instead of `Kısa cümleleri` on both backends. The JSON reports and WAV files remain in the user's local `%TEMP%` directories and are not committed.
+
 ## Interpretation and limits
 
 - Real ASR requests succeeded through the Local AI Runtime task adapter on both CPU and CUDA. The same fixture produced identical text on both backends.
 - CUDA execution is evidenced by the `audiocpp_server.exe` compute-process entry and contemporaneous system GPU utilization. The reported 1,723 MiB is system-wide GPU memory use, not a process-specific allocation measurement.
-- The one controlled 8-word fixture had 25% WER. This is not enough data to claim general Turkish accuracy or production-grade transcription. Publish the ASR integration as an **experimental Windows x64 pilot**, with users advised to review transcripts.
-- The real audio.cpp response omitted its `language` property despite the request including `language=tr`. The task adapter passed `tr` upstream; the current unreleased server change will fall back to the explicitly requested language in Local AI Runtime's response when upstream omits it. This fallback means “requested language”, not language detection.
+- The five-sample run yielded 41.38% CPU WER (12/29 word edits) and 37.93% CUDA WER (11/29). This small set from one speaker, microphone and device is not enough to claim general Turkish accuracy or production-grade transcription. Publish the ASR integration only as an **experimental Windows x64 pilot**, with users advised to review transcripts.
+- The real audio.cpp response omitted its `language` property despite the request including `language=tr`. The task adapter passes `tr` upstream and the server change in `db0cd00` falls back to the explicitly requested language in Local AI Runtime's response when upstream omits it. This fallback means “requested language”, not language detection; it is not automatic language detection.
 - TTS has not been tested with a real TTS model. The typed TTS contract/fake HTTP smoke is not evidence of real TTS support. Do not advertise TTS as available in this release.
 - The five-sample acceptance helper `scripts/Test-TurkishAsrAcceptance.ps1` records WAV fixtures locally, computes word-level WER (Turkish casing, punctuation removal and circumflex-variant normalization) and emits a JSON summary. It also checks the normalized response preserves the explicit `tr` request. Use identical WAVs on both backends; do not commit recordings or reports.
 
 ## Release gate
 
-Before publishing the next alpha:
+The manual Windows acceptance gates for this experimental pilot are complete: the five identical WAV fixtures were evaluated on CPU and CUDA, Windows Release build/CTest passed 10/10 on `db0cd00`, and the PowerShell 5.1 acceptance script was syntax-checked and rerun after the UTF-8 BOM fix in `4d9dad5`. The observed WER is weak and must remain clearly labelled experimental; no minimum-accuracy threshold was defined, and this small sample set does not establish production-grade accuracy. Before publication:
 
-1. Run the five-sample helper against CPU and CUDA using the same recorded WAV directory; inspect the reference/hypothesis pairs and WER. Do not use the exploratory first recording as a scored sample.
-2. Build the current working tree on Windows Release and run all CTests (including the response-language fallback HTTP regression).
-3. Confirm the working tree is clean and the commit is on `main`.
-4. Publish exactly once via `Publish-LocalAIRuntime.ps1`; let its single unified workflow build, test, package and create the tag/Release from the same artifacts.
+1. Review this record and the user-facing changelog/README wording; keep the transcript-review warning and do not advertise TTS.
+2. Confirm the documentation changes are committed on a clean `main` checkout.
+3. Publish exactly once via `Publish-LocalAIRuntime.ps1`; let its single unified workflow build, test, package and create the tag/Release from the same artifacts. Do not manually push or create a tag.
 
 TTS and ASR-engine alternatives remain separate follow-up stages.

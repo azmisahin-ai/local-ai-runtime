@@ -10,7 +10,7 @@ The runtime, engines, and models remain separate versioned components. The catal
 
 ## Current baseline and visible progress — 2026-11-01
 
-**Latest published baseline:** `v0.1.31-alpha` (`e18a084`). This roadmap update is still unreleased. The working tree has passed Windows Release build/CTest through `e6155e6`, and the user has since manually accepted real Qwen3-ASR CPU/CUDA requests on Windows. The next alpha will be created only by the canonical single-run publisher after the five-sample WER check and Windows regression build.
+**Latest published baseline:** `v0.1.31-alpha` (`e18a084`). The unreleased `main` contains the Windows audio.cpp/Qwen3-ASR pilot. Windows Release build and CTest passed 10/10 on `db0cd00`; five identical Turkish WAV fixtures were scored on CPU and CUDA; and `4d9dad5` fixes Windows PowerShell 5.1 UTF-8 decoding in the acceptance helper. The remaining release step is the canonical single-run publisher after final documentation review.
 
 **Hardware baseline:** On the user's Windows x64 device (RTX 3060 Laptop GPU 6 GB, 16 GB RAM, driver 616.92, compute capability 8.6), Qwen3 4B with llama.cpp CUDA 13 has generated real answers; recent engine timing records are around 85–91 generated tokens/s. Previous NVIDIA process/utilization observations support that CUDA work occurred, but Local AI Runtime still lacks verified per-layer offload evidence in its current-session status, and KV-cache/context restore remains an open follow-up. Do not equate system-wide GPU telemetry with process-specific offload proof.
 
@@ -18,7 +18,7 @@ The runtime, engines, and models remain separate versioned components. The catal
 
 **Stage 13A status:** The Windows x64 audio.cpp v0.9.3 CPU package and CUDA 13.3 server+CUDART pair are installed and managed lifecycle-tested in separate isolated data roots. Both backends passed health/readiness and clean process/port shutdown. The installer verifies exact upstream asset sizes and SHA-256 pins.
 
-**Stage 13B ASR status:** Qwen3-ASR 0.6B Q8_0 is pinned, separately license-accepted, installed and registered. The same 7-second Turkish WAV completed through Local AI Runtime on CPU and CUDA. Both returned the same transcript; one controlled 8-word sample yielded 25% WER (two substitutions). NVIDIA listed `audiocpp_server.exe` as a compute process during the CUDA run; GPU-wide memory/utilization rose during inference and returned to zero after shutdown. Treat this as an experimental Windows x64 ASR pilot, not a general accuracy claim. Five-sample WER acceptance and the language-response fallback regression still precede publication. Real TTS has not been validated and must not be advertised. See [Stage 13 ASR Windows acceptance](stage-13-asr-windows-acceptance.md).
+**Stage 13B ASR status:** Qwen3-ASR 0.6B Q8_0 is pinned, separately license-accepted, installed and registered. Five identical 8-second Turkish WAV fixtures yielded 41.38% WER (12/29 edits) on CPU and 37.93% (11/29) on CUDA; mean request latency was 4.31 s and 0.84 s respectively on one RTX 3060 Laptop GPU system. CUDA health confirmed `backend=cuda`; earlier NVIDIA process/GPU telemetry also showed actual CUDA execution. This small one-speaker result is an experimental Windows x64 pilot, not a general accuracy claim. The requested-language fallback regression passed in Windows CTest; real TTS has not been validated and must not be advertised. See [Stage 13 ASR Windows acceptance](stage-13-asr-windows-acceptance.md).
 
 ### Product delivery checklist
 
@@ -38,7 +38,7 @@ The runtime, engines, and models remain separate versioned components. The catal
 | 12.5 | Product readiness: first-run flow, evidence hierarchy, Chat correctness and safe assistant Markdown | [~] Core onboarding/Chat fixes shipped through `v0.1.30-alpha`; residual responsive/accessibility review and latest-release manual spot-check remain non-blocking for engine work | `v0.1.24-alpha` → `v0.1.30-alpha` |
 | 12.5.1 | Unified build-once release pipeline and one-screen CI report | [x] Build-once/publish-once flow shipped and repeatedly confirmed | `v0.1.25-alpha` onward |
 | 13A | Audio task engine, typed task APIs and safe Windows release-set installer | [x] Windows x64 CPU and CUDA 13.3 package install, managed readiness/health and clean stop verified | Next alpha candidate |
-| 13B.1 | Turkish ASR pilot with audio.cpp + Qwen3-ASR | [~] Real CPU and CUDA transcription verified on RTX 3060; one controlled sample at 25% WER; five-sample WER and response-language fallback regression before publication | Experimental Windows x64 pilot |
+| 13B.1 | Turkish ASR pilot with audio.cpp + Qwen3-ASR | [~] Five identical WAVs scored: CPU 41.38% WER, CUDA 37.93%; Windows language fallback regression passed; accuracy remains experimental | Experimental Windows x64 pilot |
 | 13B.2 | Turkish TTS with audio.cpp / Chatterbox | [ ] Not implemented/validated; real model pin, license, install and playable CPU/CUDA WAV output required | After ASR pilot |
 | 13C | ASR alternatives comparison | [ ] Not started; whisper.cpp first alternative, sherpa-onnx only if justified | After 13B.1 |
 | 14 | Image generation | [ ] Not started; stable-diffusion.cpp, SD 1.5 / 512x512 pilot | Later alpha |
@@ -66,9 +66,9 @@ The runtime, engines, and models remain separate versioned components. The catal
 - [x] On Windows x64, install the exact-pinned CUDA 13.3 server+CUDART pair in a separate isolated data root; verify exact aggregate bytes, package version/backends, managed readiness/health and clean process/port shutdown. Record driver/backend evidence separately.
 - [x] Pin and install Qwen3-ASR 0.6B Q8_0 with a separate Apache-2.0 acknowledgement; verify exact size, SHA-256 and GGUF header; register the model with `family=qwen3_asr`, `task=asr`, `mode=offline` in both CPU and CUDA managed configs.
 - [x] Run the same 7-second Turkish WAV through the Local AI Runtime typed ASR route on CPU and CUDA. Both backends returned the same non-empty transcript; NVIDIA listed the CUDA `audiocpp_server.exe` process during the CUDA run. GPU-wide telemetry returned to 0 MiB after clean stop.
-- [~] Broader Turkish quality evaluation: the one controlled 8-word reference sample had two substitutions (25% WER) on both backends. Run the new five-sample helper on CPU and CUDA with identical WAV files before publication; do not infer general Turkish quality from one sample.
+- [x] Initial five-sample Turkish WER comparison completed with identical CPU/CUDA WAVs: CPU 41.38% (12/29 edits), CUDA 37.93% (11/29 edits). This is a limited one-speaker pilot, not a general Turkish quality benchmark; further corpus-based accuracy evaluation remains future work.
 - [x] Fix the Windows config atomic-replace failure by closing the config input stream before replacing the file; the user rebuilt Windows Release and passed all 10 CTests after this fix.
-- [~] Normalize ASR response language: audio.cpp may omit `language` even when `tr` was sent. The next local change returns the explicitly requested language when upstream omits it; run Windows Release/CTest for the regression before publishing.
+- [x] Normalize ASR response language: audio.cpp may omit `language` even when `tr` was sent. `db0cd00` returns the explicitly requested language when upstream omits it and adds an HTTP regression; Windows Release/CTest passed 10/10.
 
 ### Stage 12.5 acceptance checklist — Product readiness (non-blocking for Stage 13A)
 

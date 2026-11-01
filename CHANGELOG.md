@@ -6,7 +6,7 @@
 - Fix Windows atomic replacement of the audio.cpp model config by closing the input stream before replacing the file.
 - Preserve the explicitly requested ASR language in the normalized response when audio.cpp omits its optional `language` field; the fallback describes the requested language, not automatic language detection.
 - Add `scripts/Test-TurkishAsrAcceptance.ps1` for local five-utterance word-error-rate evaluation and reuse of identical WAV fixtures across CPU and CUDA.
-- Windows x64 manual pilot: real Qwen3-ASR transcriptions completed on CPU and CUDA; NVIDIA observed the audio.cpp process as a compute process. One controlled short sample produced 25% WER on both backends. Treat Turkish ASR as experimental and review transcripts. Real TTS output has not been validated and is not advertised as available.
+- Windows x64 manual pilot: five identical 8-second Turkish WAV fixtures were evaluated on CPU and CUDA. Overall WER was 41.38% (12/29 edits) on CPU and 37.93% (11/29) on CUDA; mean request latency was 4.31 s and 0.84 s respectively on one RTX 3060 Laptop GPU system. This small one-speaker set is not a general accuracy benchmark: treat ASR as experimental and review transcripts. Real TTS output has not been validated and is not advertised as available.
 
 ## Unreleased — Markdown entity compatibility and language-consistent replies
 

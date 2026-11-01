@@ -189,7 +189,7 @@ ACE-Step 1.5 is listed by audio.cpp for music/edit tasks and supports a broad se
 |---|---|---|---|
 | 12 / 12.5 residuals | Keep existing LLM stable; only critical fixes | llama.cpp + current UI | Do not block audio work on cosmetic polish; preserve security and basic-chat quality gates. |
 | 13A | Task-engine adapter and audio runtime package | audio.cpp v0.9.3 pilot | Windows x64 CPU and CUDA 13.3 managed install, readiness/health and clean stop are verified; inference is separate. |
-| 13B | Turkish speech recognition | Qwen3-ASR-0.6B Q8_0 via audio.cpp | Install exact-pinned model; same fixed WAV and reference transcript on CPU, then CUDA. |
+| 13B | Turkish speech recognition | Qwen3-ASR-0.6B Q8_0 via audio.cpp | Completed experimental Windows x64 CPU/CUDA pilot; five identical WAVs yielded 41.38% CPU WER and 37.93% CUDA WER on one speaker/device. |
 | 13C | Turkish text-to-speech | Chatterbox 0.5B via audio.cpp | Generate WAV from fixed Turkish text, listen, inspect duration/sample rate and memory. |
 | 13D | ASR comparison | whisper.cpp, optionally sherpa-onnx | Same WAV, compare CER/WER, latency, quality and memory; only add a second runtime if it wins materially. |
 | 14 | Image generation | stable-diffusion.cpp | SD 1.5, 512x512, single image. |
